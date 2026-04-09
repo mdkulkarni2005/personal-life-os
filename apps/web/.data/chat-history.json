@@ -1,0 +1,70 @@
+{
+  "user_3C7izlD6rYppM4KrNsmXnZWQ4fD": [
+    {
+      "id": "starter",
+      "role": "assistant",
+      "content": "Hi! I can create, list, update, and complete reminders. Example: 'Create reminder tomorrow at 9am for gym'.",
+      "createdAt": "2026-04-09T17:19:46.500Z"
+    },
+    {
+      "id": "596a70f8-0cab-4046-83f3-5200324e223f",
+      "role": "user",
+      "content": "hello",
+      "createdAt": "2026-04-09T17:22:16.040Z"
+    },
+    {
+      "id": "a2687d84-1ea4-436b-b6db-444b1106007d",
+      "role": "assistant",
+      "content": "Hello, you have 1 pending reminder.",
+      "createdAt": "2026-04-09T17:22:19.598Z"
+    },
+    {
+      "id": "bc408d56-cd1e-4b2f-a095-2471698f9790",
+      "role": "user",
+      "content": "my reminder is about what",
+      "createdAt": "2026-04-09T17:22:40.458Z"
+    },
+    {
+      "id": "9e6a6e0a-850c-409c-814a-00161eccfcc2",
+      "role": "assistant",
+      "content": "Your pending reminders: test reminder (due 3/10/2024, 4:30:00 AM)",
+      "createdAt": "2026-04-09T17:22:40.460Z"
+    },
+    {
+      "id": "5c9b329c-d0ad-4c09-a054-1fecab904784",
+      "role": "user",
+      "content": "my reminder is about what tell me about that",
+      "createdAt": "2026-04-09T17:24:10.469Z"
+    },
+    {
+      "id": "83fb7e44-eb46-4dd0-9381-2eb15e3a2760",
+      "role": "assistant",
+      "content": "Your pending reminders: test reminder (due 3/9/2024, 4:30:00 AM)",
+      "createdAt": "2026-04-09T17:24:10.470Z"
+    },
+    {
+      "id": "e7bdcdad-6b9b-40c9-acc6-b052bb89a8c0",
+      "role": "user",
+      "content": "mark that reminder as done",
+      "createdAt": "2026-04-09T17:24:33.587Z"
+    },
+    {
+      "id": "7b1cd9d3-5a24-4bc3-b061-aef360a584b5",
+      "role": "assistant",
+      "content": "Reminder marked as done",
+      "createdAt": "2026-04-09T17:24:37.795Z"
+    },
+    {
+      "id": "7e9d677d-089d-4504-8ea9-7fb020f7f2dd",
+      "role": "user",
+      "content": "hello",
+      "createdAt": "2026-04-09T17:40:33.215Z"
+    },
+    {
+      "id": "73feaf34-938d-4603-bee7-5b6ebf014c61",
+      "role": "assistant",
+      "content": "Hello, you have 1 reminder. Type 'list' to view all reminders.",
+      "createdAt": "2026-04-09T17:40:46.050Z"
+    }
+  ]
+}

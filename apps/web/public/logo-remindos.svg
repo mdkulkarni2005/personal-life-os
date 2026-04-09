@@ -1,0 +1,14 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">RemindOS Logo</title>
+  <desc id="desc">Rounded square logo with chat bubble and clock indicator</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="30" fill="url(#bg)"/>
+  <path d="M37 44h54c6 0 11 5 11 11v19c0 6-5 11-11 11H65l-13 11c-3 2-7 0-7-4V85h-8c-6 0-11-5-11-11V55c0-6 5-11 11-11z" fill="#ffffff" fill-opacity="0.95"/>
+  <circle cx="85" cy="59" r="9" fill="#7c3aed"/>
+  <path d="M85 54v5l4 2" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
