@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import {
   appendChatMessages,
+  clearChatHistory,
   getChatHistory,
   type StoredChatMessage,
 } from "../../../../lib/server/chat-history";
@@ -26,5 +27,12 @@ export async function POST(request: Request) {
   }
 
   await appendChatMessages(userId, messages);
+  return NextResponse.json({ ok: true });
+}
+
+export async function DELETE() {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  await clearChatHistory(userId);
   return NextResponse.json({ ok: true });
 }

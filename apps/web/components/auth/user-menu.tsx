@@ -1,8 +1,8 @@
 "use client";
 
 import { UserButton } from "@clerk/nextjs";
-import { useTheme } from "next-themes";
 import { useMemo } from "react";
+import { useTheme } from "../theme/theme-provider";
 
 export function UserMenu() {
   const { theme, setTheme } = useTheme();

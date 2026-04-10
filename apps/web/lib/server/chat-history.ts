@@ -63,3 +63,9 @@ export async function appendChatMessages(userId: string, messages: StoredChatMes
   store[userId] = next;
   await writeStore(store);
 }
+
+export async function clearChatHistory(userId: string) {
+  const store = await readStore();
+  store[userId] = [];
+  await writeStore(store);
+}

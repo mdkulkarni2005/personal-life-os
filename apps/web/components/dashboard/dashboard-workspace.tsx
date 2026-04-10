@@ -1,8 +1,12 @@
 "use client";
 
 import {
+  buildListRemindersReply,
   buildReminderSnapshot,
   getReminderBucket,
+  inferListScopeFromMessage,
+  isCompoundReminderQuestion,
+  tryGroundedReminderAnswer,
   type ReminderRecurrence,
   type ReminderItem,
 } from "@repo/reminder";
@@ -53,6 +57,14 @@ const loadingTexts = [
   "Preparing the best response for you...",
   "Almost there, finalizing your reminder assistant reply...",
 ];
+
+const STARTER_MESSAGE = {
+  id: "starter",
+  role: "assistant" as const,
+  content:
+    "Hi! Ask me anything about your reminders—what's next, times, notes, or compare your day. I can also create or complete them. Example: 'Create reminder tomorrow at 9am for gym'.",
+  createdAt: new Date().toISOString(),
+};
 
 function usePersistentReminders(userId: string) {
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
@@ -124,6 +136,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isListOpen, setIsListOpen] = useState(false);
   const [isSnapshotOpen, setIsSnapshotOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [importJson, setImportJson] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [isClearingChat, setIsClearingChat] = useState(false);
+  const [isBatchOpen, setIsBatchOpen] = useState(false);
+  const [batchJson, setBatchJson] = useState("");
+  const [isBatchRunning, setIsBatchRunning] = useState(false);
+  const [batchStatus, setBatchStatus] = useState<string | null>(null);
   const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
   const [loadingTextIndex, setLoadingTextIndex] = useState(0);
   const [newTitle, setNewTitle] = useState("");
@@ -161,26 +182,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         if (parsed.length > 0) {
           setMessages(dedupeMessagesById(parsed));
         } else {
-          setMessages([
-            {
-              id: "starter",
-              role: "assistant",
-              content:
-                "Hi! I can create, list, update, and complete reminders. Example: 'Create reminder tomorrow at 9am for gym'.",
-              createdAt: new Date().toISOString(),
-            },
-          ]);
+          setMessages([{ ...STARTER_MESSAGE, createdAt: new Date().toISOString() }]);
         }
       } catch {
-        setMessages([
-          {
-            id: "starter",
-            role: "assistant",
-            content:
-              "Hi! I can create, list, update, and complete reminders. Example: 'Create reminder tomorrow at 9am for gym'.",
-            createdAt: new Date().toISOString(),
-          },
-        ]);
+        setMessages([{ ...STARTER_MESSAGE, createdAt: new Date().toISOString() }]);
       } finally {
         setIsHistoryLoaded(true);
       }
@@ -298,38 +303,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     || /\b\d{1,2}(:\d{2})?\s?([ap]\.?m\.?)\b/i.test(value)
     || /\b\d{1,2}:\d{2}\b/.test(value);
 
-  const getReminderDetailReply = (query: string) => {
-    const normalized = query.toLowerCase();
-    const activeReminders = reminders.filter((item) => item.status === "pending");
-    if (activeReminders.length === 0) return "You currently have no pending reminders.";
-
-    const scored = activeReminders
-      .map((reminder) => {
-        const title = reminder.title.toLowerCase();
-        if (normalized.includes(title)) return { reminder, score: 100 };
-        const tokens = title.split(/\s+/).filter((token) => token.length > 2);
-        const score = tokens.reduce(
-          (sum, token) => (normalized.includes(token) ? sum + 1 : sum),
-          0
-        );
-        return { reminder, score };
-      })
-      .sort((a, b) => b.score - a.score);
-
-    if (scored[0] && scored[0].score > 0) {
-      const target = scored[0].reminder;
-      return `Reminder "${target.title}" is pending, due ${new Date(
-        target.dueAt
-      ).toLocaleString()}${target.notes ? `. Notes: ${target.notes}` : "."}`;
-    }
-
-    const summary = activeReminders
-      .slice(0, 3)
-      .map((reminder) => `${reminder.title} (${new Date(reminder.dueAt).toLocaleString()})`)
-      .join(", ");
-    return `I found ${activeReminders.length} pending reminders: ${summary}. Tell me which one you want details for.`;
-  };
-
   const handleChatSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = input.trim();
@@ -347,7 +320,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setLoadingTextIndex(0);
 
     try {
-      const normalized = prompt.toLowerCase();
       const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant")?.content ?? "";
 
       if (pendingCreateDraft && looksLikeYes(prompt)) {
@@ -428,20 +400,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         return;
       }
 
-      if (
-        (normalized.includes("about my reminder")
-          || normalized.includes("my reminder")
-          || normalized.includes("tell me about")
-          || normalized.includes("details"))
-        && reminders.length > 0
-      ) {
-        const detailReply = getReminderDetailReply(prompt);
+      const listScope = inferListScopeFromMessage(prompt);
+      if (listScope && !isCompoundReminderQuestion(prompt)) {
+        const listReply = buildListRemindersReply(reminders, listScope);
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
             role: "assistant",
-            content: detailReply,
+            content: listReply,
             createdAt: new Date().toISOString(),
           },
         ]);
@@ -467,12 +434,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         },
       ]);
     } catch {
+      const grounded = tryGroundedReminderAnswer(prompt, reminders);
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: "I could not process that request. Please try again.",
+          content:
+            grounded
+            ?? "I could not reach the assistant. Check your connection and try again.",
           createdAt: new Date().toISOString(),
         },
       ]);
@@ -488,6 +458,178 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setNewRecurrence("none");
     setNewNotes("");
     setEditingReminderId(null);
+  };
+
+  const handleJsonImport = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const payload = importJson.trim();
+    if (!payload || isImporting) return;
+
+    setIsImporting(true);
+    setImportStatus(null);
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(payload) as unknown;
+      } catch {
+        setImportStatus("Invalid JSON. Please paste a valid JSON object or array.");
+        return;
+      }
+
+      const response = await fetch("/api/reminders/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed),
+      });
+      const data = (await response.json()) as {
+        error?: string;
+        createdCount?: number;
+      };
+      if (!response.ok) {
+        setImportStatus(data.error ?? "Import failed.");
+        return;
+      }
+
+      setImportStatus(`Imported ${data.createdCount ?? 0} reminders.`);
+      await refreshReminders();
+      setImportJson("");
+    } catch {
+      setImportStatus("Import failed. Please try again.");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (isClearingChat) return;
+    setIsClearingChat(true);
+    try {
+      await fetch("/api/chat/history", { method: "DELETE" });
+      setPendingCreateDraft(null);
+      setMessages([{ ...STARTER_MESSAGE, createdAt: new Date().toISOString() }]);
+    } finally {
+      setIsClearingChat(false);
+    }
+  };
+
+  const handleExportChat = () => {
+    if (messages.length === 0) return;
+    const lines = messages.map((message) => {
+      const date = new Date(message.createdAt);
+      const timestamp = date.toLocaleString();
+      const sender = message.role === "user" ? "You" : "RemindOS (System)";
+      return `[${timestamp}] ${sender}: ${message.content}`;
+    });
+    const content = lines.join("\n\n");
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const now = new Date();
+    const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+      now.getDate()
+    ).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(
+      2,
+      "0"
+    )}`;
+    anchor.href = url;
+    anchor.download = `remindos-chat-${stamp}.txt`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const parseBatchQuestions = (payload: unknown): string[] => {
+    if (Array.isArray(payload)) {
+      return payload
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    if (!payload || typeof payload !== "object") return [];
+    const obj = payload as { questions?: unknown; items?: unknown; prompts?: unknown };
+    const candidate = obj.questions ?? obj.items ?? obj.prompts;
+    if (!Array.isArray(candidate)) return [];
+    return candidate
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  };
+
+  const handleBatchQuestions = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const raw = batchJson.trim();
+    if (!raw || isBatchRunning) return;
+
+    setIsBatchRunning(true);
+    setBatchStatus(null);
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw) as unknown;
+      } catch {
+        setBatchStatus("Invalid JSON. Please paste a valid JSON object or array.");
+        return;
+      }
+
+      const questions = parseBatchQuestions(parsed);
+      if (questions.length === 0) {
+        setBatchStatus("No valid questions found. Use an array or { questions: [...] }.");
+        return;
+      }
+
+      let processed = 0;
+      for (const question of questions) {
+        const userMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "user",
+          content: question,
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, userMessage]);
+        setBatchStatus(`Processing ${processed + 1}/${questions.length}...`);
+
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: question, reminders }),
+          });
+          const data = (await response.json()) as AgentResponse;
+          applyAction(data.action);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: data.reply || "Done.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        } catch {
+          const grounded = tryGroundedReminderAnswer(question, reminders);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content:
+                grounded
+                ?? "I could not process this item right now. Continuing with next question.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        }
+
+        processed += 1;
+      }
+
+      setBatchStatus(`Completed ${processed}/${questions.length} questions.`);
+      setBatchJson("");
+    } finally {
+      setIsBatchRunning(false);
+    }
   };
 
   const openCreateModal = () => {
@@ -571,6 +713,35 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
                 Fast WhatsApp-style reminders, built for mobile first.
               </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setBatchStatus(null);
+                  setIsBatchOpen(true);
+                }}
+                disabled={isBatchRunning || isLoading}
+                className="rounded-full border border-indigo-300 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30"
+              >
+                Batch questions
+              </button>
+              <button
+                type="button"
+                onClick={handleExportChat}
+                disabled={isLoading || messages.length === 0}
+                className="rounded-full border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-900/30"
+              >
+                Export chat
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleClearChat()}
+                disabled={isClearingChat || isLoading}
+                className="rounded-full border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-800 dark:text-rose-200 dark:hover:bg-rose-900/30"
+              >
+                {isClearingChat ? "Clearing..." : "Clear chat"}
+              </button>
             </div>
           </div>
           <div
@@ -667,6 +838,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             >
               View reminders
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setImportStatus(null);
+                setIsImportOpen(true);
+              }}
+              className="rounded-full border border-violet-300 px-4 py-2 text-sm font-semibold text-violet-700 transition hover:bg-violet-50 dark:border-violet-700 dark:text-violet-200 dark:hover:bg-violet-900/40"
+            >
+              Import JSON
+            </button>
           </div>
         </article>
       </section>
@@ -719,6 +900,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               >
                 View reminders
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSnapshotOpen(false);
+                  setImportStatus(null);
+                  setIsImportOpen(true);
+                }}
+                className="rounded-full border border-violet-300 px-4 py-2 text-sm font-semibold text-violet-700 transition hover:bg-violet-50 dark:border-violet-700 dark:text-violet-200 dark:hover:bg-violet-900/40"
+              >
+                Import JSON
+              </button>
             </div>
           </aside>
         </div>
@@ -727,7 +919,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       <button
         type="button"
         onClick={() => setIsListOpen(true)}
-        className="fixed bottom-20 right-4 z-40 rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-violet-500 lg:hidden"
+        className="fixed bottom-24 right-4 z-40 rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-violet-500 sm:bottom-28 lg:hidden"
       >
         Reminders
       </button>
@@ -897,6 +1089,94 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 </div>
               </section>
             ))}
+          </div>
+        </div>
+      )}
+
+      {isImportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <h3 className="text-lg font-semibold">Import reminders JSON</h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Paste either an array or an object with <code>reminders</code>.
+              </p>
+            </div>
+            <form className="grid gap-4 px-5 py-5" onSubmit={handleJsonImport}>
+              <textarea
+                value={importJson}
+                onChange={(event) => setImportJson(event.target.value)}
+                rows={12}
+                placeholder='{"reminders":[{"title":"Gym","dueAt":"2026-04-12T08:00:00.000Z"}]}'
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
+              />
+              {importStatus ? (
+                <p className="text-sm text-slate-600 dark:text-slate-300">{importStatus}</p>
+              ) : null}
+              <div className="mt-1 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={!importJson.trim() || isImporting}
+                  className="rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isImporting ? "Importing..." : "Import"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsImportOpen(false);
+                    setImportStatus(null);
+                  }}
+                  className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold"
+                >
+                  Close
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isBatchOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <h3 className="text-lg font-semibold">Batch questions</h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Paste an array of questions or an object with <code>questions</code>.
+              </p>
+            </div>
+            <form className="grid gap-4 px-5 py-5" onSubmit={handleBatchQuestions}>
+              <textarea
+                value={batchJson}
+                onChange={(event) => setBatchJson(event.target.value)}
+                rows={12}
+                placeholder='{"questions":["What is due today?","Show missed reminders","What is next?"]}'
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
+              />
+              {batchStatus ? (
+                <p className="text-sm text-slate-600 dark:text-slate-300">{batchStatus}</p>
+              ) : null}
+              <div className="mt-1 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={!batchJson.trim() || isBatchRunning}
+                  className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isBatchRunning ? "Running..." : "Run batch"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBatchOpen(false);
+                    setBatchStatus(null);
+                  }}
+                  className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold"
+                >
+                  Close
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

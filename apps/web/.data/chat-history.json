@@ -3,224 +3,980 @@
     {
       "id": "starter",
       "role": "assistant",
-      "content": "Hi! I can create, list, update, and complete reminders. Example: 'Create reminder tomorrow at 9am for gym'.",
-      "createdAt": "2026-04-09T17:19:46.500Z"
+      "content": "Hi! Ask me anything about your reminders—what's next, times, notes, or compare your day. I can also create or complete them. Example: 'Create reminder tomorrow at 9am for gym'.",
+      "createdAt": "2026-04-10T12:49:23.675Z"
     },
     {
-      "id": "596a70f8-0cab-4046-83f3-5200324e223f",
+      "id": "ed175fd2-1bba-49eb-aff5-b9125d7dc9d0",
       "role": "user",
-      "content": "hello",
-      "createdAt": "2026-04-09T17:22:16.040Z"
+      "content": "What are my upcoming reminders?",
+      "createdAt": "2026-04-10T12:49:28.830Z"
     },
     {
-      "id": "a2687d84-1ea4-436b-b6db-444b1106007d",
-      "role": "assistant",
-      "content": "Hello, you have 1 pending reminder.",
-      "createdAt": "2026-04-09T17:22:19.598Z"
-    },
-    {
-      "id": "bc408d56-cd1e-4b2f-a095-2471698f9790",
+      "id": "1d0fa297-4dfe-4fb6-b554-e313116d0e36",
       "role": "user",
-      "content": "my reminder is about what",
-      "createdAt": "2026-04-09T17:22:40.458Z"
+      "content": "What’s my next reminder?",
+      "createdAt": "2026-04-10T12:49:29.815Z"
     },
     {
-      "id": "9e6a6e0a-850c-409c-814a-00161eccfcc2",
+      "id": "8261787a-1141-44ee-8195-f18e311641a2",
       "role": "assistant",
-      "content": "Your pending reminders: test reminder (due 3/10/2024, 4:30:00 AM)",
-      "createdAt": "2026-04-09T17:22:40.460Z"
+      "content": "Here are your 50 reminders:\n1. Kids school drop reminder — Sat, Apr 11, 9:00 AM (tomorrow). Repeats daily\n2. Morning priority planning — Sat, Apr 11, 9:30 AM (tomorrow). Repeats daily\n3. Investor call with VC firm — Sat, Apr 11, 10:00 AM (tomorrow). Notes: Prepare pitch deck\n4. Organize calendar — Sat, Apr 11, 10:30 AM (tomorrow). Repeats daily\n5. Check emails and respond — Sat, Apr 11, 11:00 AM (tomorrow). Repeats daily\n6. Read industry news — Sat, Apr 11, 11:15 AM (tomorrow). Repeats daily\n7. Check startup metrics dashboard — Sat, Apr 11, 11:30 AM (tomorrow). Repeats daily\n8. Check overdue tasks — Sat, Apr 11, 12:00 PM (tomorrow). Repeats daily\n9. Check bank balances — Sat, Apr 11, 12:15 PM (tomorrow). Repeats daily\n10. Team standup meeting — Sat, Apr 11, 12:30 PM (tomorrow). Repeats daily\n11. Check team blockers — Sat, Apr 11, 12:45 PM (tomorrow). Repeats daily\n12. Review app performance logs — Sat, Apr 11, 1:00 PM (tomorrow). Repeats daily\n13. Check competitor updates — Sat, Apr 11, 1:30 PM (tomorrow). Repeats daily\n14. Call hospital for mom status — Sat, Apr 11, 2:00 PM (tomorrow). Repeats daily\n15. Call co-founder — Sat, Apr 11, 2:15 PM (tomorrow). Repeats daily\n16. Send invoices — Sat, Apr 11, 2:30 PM (tomorrow). Repeats weekly\n17. Fix car puncture — Sat, Apr 11, 3:00 PM (tomorrow)\n18. Review hiring candidates — Sat, Apr 11, 3:30 PM (tomorrow)\n19. Fix urgent bug in app — Sat, Apr 11, 4:00 PM (tomorrow). Notes: Critical issue\n20. Product roadmap planning — Sat, Apr 11, 4:30 PM (tomorrow). Repeats weekly\n21. Call marketing team — Sat, Apr 11, 5:00 PM (tomorrow)\n22. Lunch break reminder — Sat, Apr 11, 5:15 PM (tomorrow). Repeats daily\n23. Client project review meeting — Sat, Apr 11, 5:30 PM (tomorrow)\n24. Review customer feedback — Sat, Apr 11, 6:00 PM (tomorrow). Repeats daily\n25. Call dad (travel check) — Sat, Apr 11, 6:30 PM (tomorrow). Repeats daily\n26. Investor follow-up emails — Sat, Apr 11, 7:00 PM (tomorrow)\n27. Workout session — Sat, Apr 11, 8:00 PM (tomorrow). Repeats daily\n28. Kids homework check — Sat, Apr 11, 9:00 PM (tomorrow). Repeats daily\n29. Clean inbox — Sat, Apr 11, 9:30 PM (tomorrow). Repeats daily\n30. Dinner with family — Sat, Apr 11, 10:00 PM (tomorrow). Repeats daily\n31. Plan tomorrow tasks — Sat, Apr 11, 10:30 PM (tomorrow). Repeats daily\n32. Meditation / cooldown — Sat, Apr 11, 11:00 PM (tomorrow). Repeats daily\n33. Evening reflection notes — Sat, Apr 11, 11:30 PM (tomorrow). Repeats daily\n34. Evening walk — Sun, Apr 12, 12:00 AM (later). Repeats daily\n35. Recharge phone and devices — Sun, Apr 12, 12:30 AM (later). Repeats daily\n36. Pay salaries to employees — Sun, Apr 12, 10:30 AM (later). Repeats monthly. Notes: High priority\n37. Review marketing analytics — Sun, Apr 12, 12:00 PM (later). Repeats weekly\n38. Backup important data — Sun, Apr 12, 12:30 PM (later). Repeats weekly\n39. Review financial reports — Sun, Apr 12, 1:30 PM (later). Repeats weekly\n40. Check hospital bills — Sun, Apr 12, 2:30 PM (later)\n41. Schedule social media posts — Sun, Apr 12, 3:00 PM (later). Repeats weekly\n42. Plan next product launch — Sun, Apr 12, 3:30 PM (later)\n43. Call legal advisor — Sun, Apr 12, 5:00 PM (later)\n44. Review contracts — Sun, Apr 12, 5:30 PM (later)\n45. Call school teacher — Sun, Apr 12, 6:30 PM (later)\n46. Prepare board meeting notes — Mon, Apr 13, 11:30 AM (later)\n47. Weekly business strategy session — Mon, Apr 13, 1:00 PM (later). Repeats weekly\n48. Team performance review — Mon, Apr 13, 2:00 PM (later). Repeats weekly\n49. Dentist appointment — Mon, Apr 13, 2:30 PM (later)\n50. Plan kids weekend activity — Mon, Apr 13, 4:00 PM (later). Repeats weekly",
+      "createdAt": "2026-04-10T12:49:29.816Z"
     },
     {
-      "id": "5c9b329c-d0ad-4c09-a054-1fecab904784",
+      "id": "6c45997e-bae3-4d5c-ae21-6b1eca4e9e3c",
       "role": "user",
-      "content": "my reminder is about what tell me about that",
-      "createdAt": "2026-04-09T17:24:10.469Z"
+      "content": "Show me all reminders for today.",
+      "createdAt": "2026-04-10T12:49:30.159Z"
     },
     {
-      "id": "83fb7e44-eb46-4dd0-9381-2eb15e3a2760",
+      "id": "43d39b76-c6e5-4158-898e-023a516c9ec8",
       "role": "assistant",
-      "content": "Your pending reminders: test reminder (due 3/9/2024, 4:30:00 AM)",
-      "createdAt": "2026-04-09T17:24:10.470Z"
+      "content": "Here are your 50 reminders:\n1. Kids school drop reminder — Sat, Apr 11, 9:00 AM (tomorrow). Repeats daily\n2. Morning priority planning — Sat, Apr 11, 9:30 AM (tomorrow). Repeats daily\n3. Investor call with VC firm — Sat, Apr 11, 10:00 AM (tomorrow). Notes: Prepare pitch deck\n4. Organize calendar — Sat, Apr 11, 10:30 AM (tomorrow). Repeats daily\n5. Check emails and respond — Sat, Apr 11, 11:00 AM (tomorrow). Repeats daily\n6. Read industry news — Sat, Apr 11, 11:15 AM (tomorrow). Repeats daily\n7. Check startup metrics dashboard — Sat, Apr 11, 11:30 AM (tomorrow). Repeats daily\n8. Check overdue tasks — Sat, Apr 11, 12:00 PM (tomorrow). Repeats daily\n9. Check bank balances — Sat, Apr 11, 12:15 PM (tomorrow). Repeats daily\n10. Team standup meeting — Sat, Apr 11, 12:30 PM (tomorrow). Repeats daily\n11. Check team blockers — Sat, Apr 11, 12:45 PM (tomorrow). Repeats daily\n12. Review app performance logs — Sat, Apr 11, 1:00 PM (tomorrow). Repeats daily\n13. Check competitor updates — Sat, Apr 11, 1:30 PM (tomorrow). Repeats daily\n14. Call hospital for mom status — Sat, Apr 11, 2:00 PM (tomorrow). Repeats daily\n15. Call co-founder — Sat, Apr 11, 2:15 PM (tomorrow). Repeats daily\n16. Send invoices — Sat, Apr 11, 2:30 PM (tomorrow). Repeats weekly\n17. Fix car puncture — Sat, Apr 11, 3:00 PM (tomorrow)\n18. Review hiring candidates — Sat, Apr 11, 3:30 PM (tomorrow)\n19. Fix urgent bug in app — Sat, Apr 11, 4:00 PM (tomorrow). Notes: Critical issue\n20. Product roadmap planning — Sat, Apr 11, 4:30 PM (tomorrow). Repeats weekly\n21. Call marketing team — Sat, Apr 11, 5:00 PM (tomorrow)\n22. Lunch break reminder — Sat, Apr 11, 5:15 PM (tomorrow). Repeats daily\n23. Client project review meeting — Sat, Apr 11, 5:30 PM (tomorrow)\n24. Review customer feedback — Sat, Apr 11, 6:00 PM (tomorrow). Repeats daily\n25. Call dad (travel check) — Sat, Apr 11, 6:30 PM (tomorrow). Repeats daily\n26. Investor follow-up emails — Sat, Apr 11, 7:00 PM (tomorrow)\n27. Workout session — Sat, Apr 11, 8:00 PM (tomorrow). Repeats daily\n28. Kids homework check — Sat, Apr 11, 9:00 PM (tomorrow). Repeats daily\n29. Clean inbox — Sat, Apr 11, 9:30 PM (tomorrow). Repeats daily\n30. Dinner with family — Sat, Apr 11, 10:00 PM (tomorrow). Repeats daily\n31. Plan tomorrow tasks — Sat, Apr 11, 10:30 PM (tomorrow). Repeats daily\n32. Meditation / cooldown — Sat, Apr 11, 11:00 PM (tomorrow). Repeats daily\n33. Evening reflection notes — Sat, Apr 11, 11:30 PM (tomorrow). Repeats daily\n34. Evening walk — Sun, Apr 12, 12:00 AM (later). Repeats daily\n35. Recharge phone and devices — Sun, Apr 12, 12:30 AM (later). Repeats daily\n36. Pay salaries to employees — Sun, Apr 12, 10:30 AM (later). Repeats monthly. Notes: High priority\n37. Review marketing analytics — Sun, Apr 12, 12:00 PM (later). Repeats weekly\n38. Backup important data — Sun, Apr 12, 12:30 PM (later). Repeats weekly\n39. Review financial reports — Sun, Apr 12, 1:30 PM (later). Repeats weekly\n40. Check hospital bills — Sun, Apr 12, 2:30 PM (later)\n41. Schedule social media posts — Sun, Apr 12, 3:00 PM (later). Repeats weekly\n42. Plan next product launch — Sun, Apr 12, 3:30 PM (later)\n43. Call legal advisor — Sun, Apr 12, 5:00 PM (later)\n44. Review contracts — Sun, Apr 12, 5:30 PM (later)\n45. Call school teacher — Sun, Apr 12, 6:30 PM (later)\n46. Prepare board meeting notes — Mon, Apr 13, 11:30 AM (later)\n47. Weekly business strategy session — Mon, Apr 13, 1:00 PM (later). Repeats weekly\n48. Team performance review — Mon, Apr 13, 2:00 PM (later). Repeats weekly\n49. Dentist appointment — Mon, Apr 13, 2:30 PM (later)\n50. Plan kids weekend activity — Mon, Apr 13, 4:00 PM (later). Repeats weekly",
+      "createdAt": "2026-04-10T12:49:30.160Z"
     },
     {
-      "id": "e7bdcdad-6b9b-40c9-acc6-b052bb89a8c0",
+      "id": "9b5e3e8c-49d5-46d3-87bf-8d44531efaaf",
       "role": "user",
-      "content": "mark that reminder as done",
-      "createdAt": "2026-04-09T17:24:33.587Z"
+      "content": "Do I have anything overdue?",
+      "createdAt": "2026-04-10T12:49:30.514Z"
     },
     {
-      "id": "7b1cd9d3-5a24-4bc3-b061-aef360a584b5",
+      "id": "befa060e-151c-4551-b9d6-61d290f40dbb",
       "role": "assistant",
-      "content": "Reminder marked as done",
-      "createdAt": "2026-04-09T17:24:37.795Z"
+      "content": "You have no reminders in this view (today).",
+      "createdAt": "2026-04-10T12:49:30.515Z"
     },
     {
-      "id": "7e9d677d-089d-4504-8ea9-7fb020f7f2dd",
+      "id": "1c0971dd-edb4-4ce1-bcad-367d1774a125",
       "role": "user",
-      "content": "hello",
-      "createdAt": "2026-04-09T17:40:33.215Z"
+      "content": "What did I miss today morning?",
+      "createdAt": "2026-04-10T12:50:08.617Z"
     },
     {
-      "id": "73feaf34-938d-4603-bee7-5b6ebf014c61",
+      "id": "e96f4394-316b-42b9-8721-f5d56ac31fe7",
       "role": "assistant",
-      "content": "Hello, you have 1 reminder. Type 'list' to view all reminders.",
-      "createdAt": "2026-04-09T17:40:46.050Z"
+      "content": "No, you don't have any overdue reminders.",
+      "createdAt": "2026-04-10T12:50:08.618Z"
     },
     {
-      "id": "23ec0a35-3876-4b2d-acd7-d5ad34b6e623",
+      "id": "b03cee18-820d-43b5-a4f3-a83a94865a98",
       "role": "user",
-      "content": "how many reminder i have remaing",
-      "createdAt": "2026-04-09T18:35:00.762Z"
+      "content": "List reminders related to investor.",
+      "createdAt": "2026-04-10T12:50:14.004Z"
     },
     {
-      "id": "36f0d3fb-0021-476e-a75f-16b84cf7ea4e",
+      "id": "4a14ede9-bf1f-460d-8505-467a43741bbf",
       "role": "assistant",
-      "content": "You have 0 pending reminders.",
-      "createdAt": "2026-04-09T18:35:04.143Z"
+      "content": "I don't see that you missed any reminders today morning. According to your reminders, all of them are scheduled for tomorrow.",
+      "createdAt": "2026-04-10T12:50:14.006Z"
     },
     {
-      "id": "a257704b-c54b-476e-a3de-a880d7511366",
+      "id": "ed322de2-353e-49bc-a2d0-14d56bf9dbbc",
       "role": "user",
-      "content": "create the cli testing reminder tommaraw at 8PM",
-      "createdAt": "2026-04-09T18:35:27.308Z"
+      "content": "When is my dentist appointment?",
+      "createdAt": "2026-04-10T12:50:14.444Z"
     },
     {
-      "id": "7a2535e8-9dfd-4052-84e1-66ddbad76c40",
+      "id": "74b4c984-f592-4213-980a-e52f5aaa8c53",
       "role": "assistant",
-      "content": "Reminder created",
-      "createdAt": "2026-04-09T18:35:49.037Z"
+      "content": "Here are your 50 reminders:\n1. Kids school drop reminder — Sat, Apr 11, 9:00 AM (tomorrow). Repeats daily\n2. Morning priority planning — Sat, Apr 11, 9:30 AM (tomorrow). Repeats daily\n3. Investor call with VC firm — Sat, Apr 11, 10:00 AM (tomorrow). Notes: Prepare pitch deck\n4. Organize calendar — Sat, Apr 11, 10:30 AM (tomorrow). Repeats daily\n5. Check emails and respond — Sat, Apr 11, 11:00 AM (tomorrow). Repeats daily\n6. Read industry news — Sat, Apr 11, 11:15 AM (tomorrow). Repeats daily\n7. Check startup metrics dashboard — Sat, Apr 11, 11:30 AM (tomorrow). Repeats daily\n8. Check overdue tasks — Sat, Apr 11, 12:00 PM (tomorrow). Repeats daily\n9. Check bank balances — Sat, Apr 11, 12:15 PM (tomorrow). Repeats daily\n10. Team standup meeting — Sat, Apr 11, 12:30 PM (tomorrow). Repeats daily\n11. Check team blockers — Sat, Apr 11, 12:45 PM (tomorrow). Repeats daily\n12. Review app performance logs — Sat, Apr 11, 1:00 PM (tomorrow). Repeats daily\n13. Check competitor updates — Sat, Apr 11, 1:30 PM (tomorrow). Repeats daily\n14. Call hospital for mom status — Sat, Apr 11, 2:00 PM (tomorrow). Repeats daily\n15. Call co-founder — Sat, Apr 11, 2:15 PM (tomorrow). Repeats daily\n16. Send invoices — Sat, Apr 11, 2:30 PM (tomorrow). Repeats weekly\n17. Fix car puncture — Sat, Apr 11, 3:00 PM (tomorrow)\n18. Review hiring candidates — Sat, Apr 11, 3:30 PM (tomorrow)\n19. Fix urgent bug in app — Sat, Apr 11, 4:00 PM (tomorrow). Notes: Critical issue\n20. Product roadmap planning — Sat, Apr 11, 4:30 PM (tomorrow). Repeats weekly\n21. Call marketing team — Sat, Apr 11, 5:00 PM (tomorrow)\n22. Lunch break reminder — Sat, Apr 11, 5:15 PM (tomorrow). Repeats daily\n23. Client project review meeting — Sat, Apr 11, 5:30 PM (tomorrow)\n24. Review customer feedback — Sat, Apr 11, 6:00 PM (tomorrow). Repeats daily\n25. Call dad (travel check) — Sat, Apr 11, 6:30 PM (tomorrow). Repeats daily\n26. Investor follow-up emails — Sat, Apr 11, 7:00 PM (tomorrow)\n27. Workout session — Sat, Apr 11, 8:00 PM (tomorrow). Repeats daily\n28. Kids homework check — Sat, Apr 11, 9:00 PM (tomorrow). Repeats daily\n29. Clean inbox — Sat, Apr 11, 9:30 PM (tomorrow). Repeats daily\n30. Dinner with family — Sat, Apr 11, 10:00 PM (tomorrow). Repeats daily\n31. Plan tomorrow tasks — Sat, Apr 11, 10:30 PM (tomorrow). Repeats daily\n32. Meditation / cooldown — Sat, Apr 11, 11:00 PM (tomorrow). Repeats daily\n33. Evening reflection notes — Sat, Apr 11, 11:30 PM (tomorrow). Repeats daily\n34. Evening walk — Sun, Apr 12, 12:00 AM (later). Repeats daily\n35. Recharge phone and devices — Sun, Apr 12, 12:30 AM (later). Repeats daily\n36. Pay salaries to employees — Sun, Apr 12, 10:30 AM (later). Repeats monthly. Notes: High priority\n37. Review marketing analytics — Sun, Apr 12, 12:00 PM (later). Repeats weekly\n38. Backup important data — Sun, Apr 12, 12:30 PM (later). Repeats weekly\n39. Review financial reports — Sun, Apr 12, 1:30 PM (later). Repeats weekly\n40. Check hospital bills — Sun, Apr 12, 2:30 PM (later)\n41. Schedule social media posts — Sun, Apr 12, 3:00 PM (later). Repeats weekly\n42. Plan next product launch — Sun, Apr 12, 3:30 PM (later)\n43. Call legal advisor — Sun, Apr 12, 5:00 PM (later)\n44. Review contracts — Sun, Apr 12, 5:30 PM (later)\n45. Call school teacher — Sun, Apr 12, 6:30 PM (later)\n46. Prepare board meeting notes — Mon, Apr 13, 11:30 AM (later)\n47. Weekly business strategy session — Mon, Apr 13, 1:00 PM (later). Repeats weekly\n48. Team performance review — Mon, Apr 13, 2:00 PM (later). Repeats weekly\n49. Dentist appointment — Mon, Apr 13, 2:30 PM (later)\n50. Plan kids weekend activity — Mon, Apr 13, 4:00 PM (later). Repeats weekly",
+      "createdAt": "2026-04-10T12:50:14.445Z"
     },
     {
-      "id": "546a3ddb-00b5-4a67-ba2b-6aa63bb94c13",
+      "id": "620713ca-9d16-4d74-803f-ac27fa55c952",
       "role": "user",
-      "content": "mark that reminder done",
-      "createdAt": "2026-04-09T18:39:10.575Z"
+      "content": "How many reminders do I have today?",
+      "createdAt": "2026-04-10T12:50:19.765Z"
     },
     {
-      "id": "abe3f6a6-cc11-4ad8-bceb-bfd27dd54035",
+      "id": "618f8135-8e27-4a32-b722-ca74e1b13e06",
       "role": "assistant",
-      "content": "Reminder marked as done",
-      "createdAt": "2026-04-09T18:39:14.983Z"
+      "content": "Your dentist appointment is scheduled for Monday, April 13, at 2:30 PM.",
+      "createdAt": "2026-04-10T12:50:19.766Z"
     },
     {
-      "id": "c642f09a-035d-4954-8573-089570f2dce5",
+      "id": "fe138a09-72f4-4bf9-b172-eb4f2861b863",
       "role": "user",
-      "content": "create the cli testing reminder tommaraw at 8PM",
-      "createdAt": "2026-04-09T18:39:29.561Z"
+      "content": "What’s scheduled tomorrow?",
+      "createdAt": "2026-04-10T12:50:25.640Z"
     },
     {
-      "id": "d0e985d8-8eab-4c90-80f0-d4f2209292c5",
+      "id": "3f554e57-aa9b-4ff6-9625-a7aef9877f4a",
       "role": "assistant",
-      "content": "Reminder created",
-      "createdAt": "2026-04-09T18:40:07.203Z"
+      "content": "You have 0 reminders today.",
+      "createdAt": "2026-04-10T12:50:25.641Z"
     },
     {
-      "id": "815f1930-62a9-4b3c-97e7-c63f434790cd",
+      "id": "478bb940-20be-4e63-b732-15d20fd271df",
       "role": "user",
-      "content": "how many pending reminder i have",
-      "createdAt": "2026-04-09T18:53:36.384Z"
+      "content": "Show only recurring reminders",
+      "createdAt": "2026-04-10T12:50:26.408Z"
     },
     {
-      "id": "fdfe15db-ce82-43a5-aed8-780d0114455e",
+      "id": "2d7a6364-b784-4957-a956-791783a238d2",
       "role": "assistant",
-      "content": "You have 0 pending reminders.",
-      "createdAt": "2026-04-09T18:53:39.333Z"
+      "content": "Here are your 33 reminders:\n1. Kids school drop reminder — Sat, Apr 11, 9:00 AM (tomorrow). Repeats daily\n2. Morning priority planning — Sat, Apr 11, 9:30 AM (tomorrow). Repeats daily\n3. Investor call with VC firm — Sat, Apr 11, 10:00 AM (tomorrow). Notes: Prepare pitch deck\n4. Organize calendar — Sat, Apr 11, 10:30 AM (tomorrow). Repeats daily\n5. Check emails and respond — Sat, Apr 11, 11:00 AM (tomorrow). Repeats daily\n6. Read industry news — Sat, Apr 11, 11:15 AM (tomorrow). Repeats daily\n7. Check startup metrics dashboard — Sat, Apr 11, 11:30 AM (tomorrow). Repeats daily\n8. Check overdue tasks — Sat, Apr 11, 12:00 PM (tomorrow). Repeats daily\n9. Check bank balances — Sat, Apr 11, 12:15 PM (tomorrow). Repeats daily\n10. Team standup meeting — Sat, Apr 11, 12:30 PM (tomorrow). Repeats daily\n11. Check team blockers — Sat, Apr 11, 12:45 PM (tomorrow). Repeats daily\n12. Review app performance logs — Sat, Apr 11, 1:00 PM (tomorrow). Repeats daily\n13. Check competitor updates — Sat, Apr 11, 1:30 PM (tomorrow). Repeats daily\n14. Call hospital for mom status — Sat, Apr 11, 2:00 PM (tomorrow). Repeats daily\n15. Call co-founder — Sat, Apr 11, 2:15 PM (tomorrow). Repeats daily\n16. Send invoices — Sat, Apr 11, 2:30 PM (tomorrow). Repeats weekly\n17. Fix car puncture — Sat, Apr 11, 3:00 PM (tomorrow)\n18. Review hiring candidates — Sat, Apr 11, 3:30 PM (tomorrow)\n19. Fix urgent bug in app — Sat, Apr 11, 4:00 PM (tomorrow). Notes: Critical issue\n20. Product roadmap planning — Sat, Apr 11, 4:30 PM (tomorrow). Repeats weekly\n21. Call marketing team — Sat, Apr 11, 5:00 PM (tomorrow)\n22. Lunch break reminder — Sat, Apr 11, 5:15 PM (tomorrow). Repeats daily\n23. Client project review meeting — Sat, Apr 11, 5:30 PM (tomorrow)\n24. Review customer feedback — Sat, Apr 11, 6:00 PM (tomorrow). Repeats daily\n25. Call dad (travel check) — Sat, Apr 11, 6:30 PM (tomorrow). Repeats daily\n26. Investor follow-up emails — Sat, Apr 11, 7:00 PM (tomorrow)\n27. Workout session — Sat, Apr 11, 8:00 PM (tomorrow). Repeats daily\n28. Kids homework check — Sat, Apr 11, 9:00 PM (tomorrow). Repeats daily\n29. Clean inbox — Sat, Apr 11, 9:30 PM (tomorrow). Repeats daily\n30. Dinner with family — Sat, Apr 11, 10:00 PM (tomorrow). Repeats daily\n31. Plan tomorrow tasks — Sat, Apr 11, 10:30 PM (tomorrow). Repeats daily\n32. Meditation / cooldown — Sat, Apr 11, 11:00 PM (tomorrow). Repeats daily\n33. Evening reflection notes — Sat, Apr 11, 11:30 PM (tomorrow). Repeats daily",
+      "createdAt": "2026-04-10T12:50:26.410Z"
     },
     {
-      "id": "d33a5ebd-f887-4aae-9d1f-2b6381568249",
+      "id": "434f6e03-5af2-4624-8b30-164858e34496",
       "role": "user",
-      "content": "create the cli testing reminder tommaraw at 8PM",
-      "createdAt": "2026-04-09T18:53:49.411Z"
+      "content": "What should I be doing right now?",
+      "createdAt": "2026-04-10T12:50:26.680Z"
     },
     {
-      "id": "f50cde3d-8bdb-46fb-a5b8-5130232cdfbf",
+      "id": "1b17b979-fdb8-416a-bcc7-ce06244ad23c",
       "role": "assistant",
-      "content": "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
-      "createdAt": "2026-04-09T18:53:55.018Z"
+      "content": "Here are your 50 reminders:\n1. Kids school drop reminder — Sat, Apr 11, 9:00 AM (tomorrow). Repeats daily\n2. Morning priority planning — Sat, Apr 11, 9:30 AM (tomorrow). Repeats daily\n3. Investor call with VC firm — Sat, Apr 11, 10:00 AM (tomorrow). Notes: Prepare pitch deck\n4. Organize calendar — Sat, Apr 11, 10:30 AM (tomorrow). Repeats daily\n5. Check emails and respond — Sat, Apr 11, 11:00 AM (tomorrow). Repeats daily\n6. Read industry news — Sat, Apr 11, 11:15 AM (tomorrow). Repeats daily\n7. Check startup metrics dashboard — Sat, Apr 11, 11:30 AM (tomorrow). Repeats daily\n8. Check overdue tasks — Sat, Apr 11, 12:00 PM (tomorrow). Repeats daily\n9. Check bank balances — Sat, Apr 11, 12:15 PM (tomorrow). Repeats daily\n10. Team standup meeting — Sat, Apr 11, 12:30 PM (tomorrow). Repeats daily\n11. Check team blockers — Sat, Apr 11, 12:45 PM (tomorrow). Repeats daily\n12. Review app performance logs — Sat, Apr 11, 1:00 PM (tomorrow). Repeats daily\n13. Check competitor updates — Sat, Apr 11, 1:30 PM (tomorrow). Repeats daily\n14. Call hospital for mom status — Sat, Apr 11, 2:00 PM (tomorrow). Repeats daily\n15. Call co-founder — Sat, Apr 11, 2:15 PM (tomorrow). Repeats daily\n16. Send invoices — Sat, Apr 11, 2:30 PM (tomorrow). Repeats weekly\n17. Fix car puncture — Sat, Apr 11, 3:00 PM (tomorrow)\n18. Review hiring candidates — Sat, Apr 11, 3:30 PM (tomorrow)\n19. Fix urgent bug in app — Sat, Apr 11, 4:00 PM (tomorrow). Notes: Critical issue\n20. Product roadmap planning — Sat, Apr 11, 4:30 PM (tomorrow). Repeats weekly\n21. Call marketing team — Sat, Apr 11, 5:00 PM (tomorrow)\n22. Lunch break reminder — Sat, Apr 11, 5:15 PM (tomorrow). Repeats daily\n23. Client project review meeting — Sat, Apr 11, 5:30 PM (tomorrow)\n24. Review customer feedback — Sat, Apr 11, 6:00 PM (tomorrow). Repeats daily\n25. Call dad (travel check) — Sat, Apr 11, 6:30 PM (tomorrow). Repeats daily\n26. Investor follow-up emails — Sat, Apr 11, 7:00 PM (tomorrow)\n27. Workout session — Sat, Apr 11, 8:00 PM (tomorrow). Repeats daily\n28. Kids homework check — Sat, Apr 11, 9:00 PM (tomorrow). Repeats daily\n29. Clean inbox — Sat, Apr 11, 9:30 PM (tomorrow). Repeats daily\n30. Dinner with family — Sat, Apr 11, 10:00 PM (tomorrow). Repeats daily\n31. Plan tomorrow tasks — Sat, Apr 11, 10:30 PM (tomorrow). Repeats daily\n32. Meditation / cooldown — Sat, Apr 11, 11:00 PM (tomorrow). Repeats daily\n33. Evening reflection notes — Sat, Apr 11, 11:30 PM (tomorrow). Repeats daily\n34. Evening walk — Sun, Apr 12, 12:00 AM (later). Repeats daily\n35. Recharge phone and devices — Sun, Apr 12, 12:30 AM (later). Repeats daily\n36. Pay salaries to employees — Sun, Apr 12, 10:30 AM (later). Repeats monthly. Notes: High priority\n37. Review marketing analytics — Sun, Apr 12, 12:00 PM (later). Repeats weekly\n38. Backup important data — Sun, Apr 12, 12:30 PM (later). Repeats weekly\n39. Review financial reports — Sun, Apr 12, 1:30 PM (later). Repeats weekly\n40. Check hospital bills — Sun, Apr 12, 2:30 PM (later)\n41. Schedule social media posts — Sun, Apr 12, 3:00 PM (later). Repeats weekly\n42. Plan next product launch — Sun, Apr 12, 3:30 PM (later)\n43. Call legal advisor — Sun, Apr 12, 5:00 PM (later)\n44. Review contracts — Sun, Apr 12, 5:30 PM (later)\n45. Call school teacher — Sun, Apr 12, 6:30 PM (later)\n46. Prepare board meeting notes — Mon, Apr 13, 11:30 AM (later)\n47. Weekly business strategy session — Mon, Apr 13, 1:00 PM (later). Repeats weekly\n48. Team performance review — Mon, Apr 13, 2:00 PM (later). Repeats weekly\n49. Dentist appointment — Mon, Apr 13, 2:30 PM (later)\n50. Plan kids weekend activity — Mon, Apr 13, 4:00 PM (later). Repeats weekly",
+      "createdAt": "2026-04-10T12:50:26.682Z"
     },
     {
-      "id": "81ca70b5-3665-4f52-b63e-1665c77a5459",
+      "id": "9f721135-f0fd-4ce6-8a4b-2f912ccbea33",
       "role": "user",
-      "content": "tomorrow at 8:00 PM",
-      "createdAt": "2026-04-09T18:54:13.552Z"
+      "content": "What’s coming up in next 1 hour?",
+      "createdAt": "2026-04-10T12:50:31.154Z"
     },
     {
-      "id": "85e4bcc8-ab53-4df1-882c-26a864f98778",
+      "id": "6cf0145e-8ff4-4575-81ce-8b77de366e74",
       "role": "assistant",
-      "content": "You don't have any reminders for tomorrow at 8:00 PM. Would you like to create one?",
-      "createdAt": "2026-04-09T18:54:23.512Z"
+      "content": "You don't have any reminders for today. Your first reminder for tomorrow is \"Kids school drop reminder\" at 9:00 AM.",
+      "createdAt": "2026-04-10T12:50:31.155Z"
     },
     {
-      "id": "6f62d8d1-e9cf-4e52-b2df-ad394afcb1f0",
+      "id": "05b03167-3903-4975-b91e-b286e0493542",
       "role": "user",
-      "content": "yes",
-      "createdAt": "2026-04-09T18:54:35.262Z"
+      "content": "What’s left for today?",
+      "createdAt": "2026-04-10T12:50:44.406Z"
     },
     {
-      "id": "e25d2af5-70fb-41bc-9bd9-e15b61d712bd",
+      "id": "fe429f56-8d68-4356-b889-01fa223be6aa",
       "role": "assistant",
-      "content": "You have no reminders. What would you like to do?",
-      "createdAt": "2026-04-09T18:54:37.977Z"
+      "content": "There are no reminders in the next 1 hour. The next reminder is 'Kids school drop reminder' at 9:00 AM tomorrow.",
+      "createdAt": "2026-04-10T12:50:44.407Z"
     },
     {
-      "id": "e018c2d4-3d03-45d5-a8b2-f758b2eab0ff",
+      "id": "dca9dab8-702e-4d8b-856c-ed193dfe14b1",
       "role": "user",
-      "content": "create the reminder",
-      "createdAt": "2026-04-09T18:55:41.721Z"
+      "content": "Which tasks are overdue right now?",
+      "createdAt": "2026-04-10T12:50:49.936Z"
     },
     {
-      "id": "442d7992-720f-40f6-ac13-2c924f9c076d",
+      "id": "ac7b7bb3-98ee-4180-829e-d94c2bc2c54e",
       "role": "assistant",
-      "content": "What is the title of the reminder?",
-      "createdAt": "2026-04-09T18:56:15.723Z"
+      "content": "You don't have any reminders for today.",
+      "createdAt": "2026-04-10T12:50:49.937Z"
     },
     {
-      "id": "f4748d89-9799-47ab-b3f9-8d65d09ec922",
+      "id": "97560fb9-0339-4c63-84ea-e8fa282f55c2",
       "role": "user",
-      "content": "cli testing",
-      "createdAt": "2026-04-09T18:56:24.383Z"
+      "content": "What can I still complete today?",
+      "createdAt": "2026-04-10T12:51:09.844Z"
     },
     {
-      "id": "5e6d1a71-6786-4f21-a669-0173864742c7",
+      "id": "0544526c-ebf0-4a10-96f0-64296c08d9d3",
       "role": "assistant",
-      "content": "You have no reminders.",
-      "createdAt": "2026-04-09T18:57:19.838Z"
+      "content": "There are no overdue tasks at the moment.",
+      "createdAt": "2026-04-10T12:51:09.845Z"
     },
     {
-      "id": "3d0948da-fb5d-4d85-aad2-a934b6cb3460",
+      "id": "1f273222-ae7a-4669-a026-195da65a4da5",
       "role": "user",
-      "content": "create reminder cli testing tomarrow at 8:00 PM",
-      "createdAt": "2026-04-09T19:04:35.952Z"
+      "content": "What’s the last task of my day?",
+      "createdAt": "2026-04-10T12:52:30.176Z"
     },
     {
-      "id": "69fdb8de-9df3-49cc-8278-b974a727c88c",
+      "id": "900a5849-9d53-45c2-a739-d0bd0c2252b2",
       "role": "assistant",
-      "content": "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
-      "createdAt": "2026-04-09T19:04:53.060Z"
+      "content": "You don't have any reminders due today. All of your reminders are scheduled for tomorrow or later.",
+      "createdAt": "2026-04-10T12:52:30.179Z"
     },
     {
-      "id": "fc6efe32-3954-43dc-b5ec-4cc8fcd83acf",
+      "id": "f77b8b31-4e22-4013-9769-2147a5fe2e4a",
       "role": "user",
-      "content": "yes",
-      "createdAt": "2026-04-09T19:05:26.262Z"
+      "content": "Do I have back-to-back meetings?",
+      "createdAt": "2026-04-10T12:52:39.960Z"
     },
     {
-      "id": "232265a6-f90a-4ca6-9b62-d66c20a36262",
+      "id": "bc68c19c-2142-43d8-83c2-f3cc252d124a",
       "role": "assistant",
-      "content": "Please send date and time in one line, like: tomorrow at 8:00 PM. I will create it directly.",
-      "createdAt": "2026-04-09T19:05:26.263Z"
+      "content": "Your last task of the day is Evening reflection notes at 11:30 PM tomorrow.",
+      "createdAt": "2026-04-10T12:52:39.962Z"
     },
     {
-      "id": "e223009f-6d85-4ed0-8697-7239760610a2",
+      "id": "077e50aa-1e09-4c8e-9f66-e247c1021f7e",
       "role": "user",
-      "content": "yes create the reminder",
-      "createdAt": "2026-04-09T19:05:46.755Z"
+      "content": "Which tasks are clashing?",
+      "createdAt": "2026-04-10T12:52:47.517Z"
     },
     {
-      "id": "4cc0a618-07a2-4965-bbcd-27addb7179af",
+      "id": "5058be11-0e17-42e6-ae40-9d3ab2e049c0",
       "role": "assistant",
-      "content": "Got it. Now send only date and time, for example: tomorrow at 8:00 PM.",
-      "createdAt": "2026-04-09T19:05:46.756Z"
+      "content": "You have several back-to-back meetings tomorrow. Here are a few examples: \n- Investor call with VC firm at 10:00 AM and Organize calendar at 10:30 AM\n- Team standup meeting at 12:30 PM and Check team blockers at 12:45 PM\n- Review app performance logs at 1:00 PM and Check competitor updates at 1:30 PM\n- Call hospital for mom status at 2:00 PM and Call co-founder at 2:15 PM",
+      "createdAt": "2026-04-10T12:52:47.519Z"
+    },
+    {
+      "id": "607a531d-bb3f-422c-9903-00d7a02cf69d",
+      "role": "user",
+      "content": "What can I do in next 15 minutes?",
+      "createdAt": "2026-04-10T12:52:52.091Z"
+    },
+    {
+      "id": "fc492d02-4d96-4950-8ff2-8bd237284092",
+      "role": "assistant",
+      "content": "There are no clashing tasks in your reminders. All tasks have unique times scheduled for tomorrow.",
+      "createdAt": "2026-04-10T12:52:52.092Z"
+    },
+    {
+      "id": "86572639-3b75-4078-82b2-e205b0a60cfb",
+      "role": "user",
+      "content": "What should I finish before dinner?",
+      "createdAt": "2026-04-10T12:52:56.417Z"
+    },
+    {
+      "id": "7419467e-04c9-490d-af12-be832ebc905d",
+      "role": "assistant",
+      "content": "I don't see any reminders for the next 15 minutes. All of your reminders are scheduled for tomorrow or later.",
+      "createdAt": "2026-04-10T12:52:56.419Z"
+    },
+    {
+      "id": "f3d642fb-58ce-4757-ad4a-4d5ab89616c6",
+      "role": "user",
+      "content": "Mark my next task as done",
+      "createdAt": "2026-04-10T12:54:22.261Z"
+    },
+    {
+      "id": "728a28d6-480a-44e1-b488-ac7e24fc7d4b",
+      "role": "assistant",
+      "content": "I don't see any reminders for today. All your reminders are scheduled for tomorrow or later. If you'd like to know what's due tomorrow before dinner, I can help with that.",
+      "createdAt": "2026-04-10T12:54:22.268Z"
+    },
+    {
+      "id": "85dfa4b5-f68e-43e8-bf25-76fa406364b3",
+      "role": "user",
+      "content": "Delete my workout today",
+      "createdAt": "2026-04-10T12:54:45.151Z"
+    },
+    {
+      "id": "d17f13f4-30dc-4151-b15b-a36dee251c58",
+      "role": "assistant",
+      "content": "Your next task is Kids school drop reminder at 9:00 AM tomorrow. Marking it as done.",
+      "createdAt": "2026-04-10T12:54:45.153Z"
+    },
+    {
+      "id": "e1295746-fef6-4f9b-9fb0-fd365409c345",
+      "role": "user",
+      "content": "Reschedule my dentist appointment to tomorrow",
+      "createdAt": "2026-04-10T12:54:51.744Z"
+    },
+    {
+      "id": "5806d88f-f1df-44b0-8922-22c62791eaef",
+      "role": "assistant",
+      "content": "I don't see a workout reminder for today. However, I do see a 'Workout session' reminder scheduled for tomorrow at 8:00 PM. Would you like to delete that one?",
+      "createdAt": "2026-04-10T12:54:51.745Z"
+    },
+    {
+      "id": "521cdcbc-b442-4aec-9186-ee15e3eed0e1",
+      "role": "user",
+      "content": "Skip today’s meditation",
+      "createdAt": "2026-04-10T12:55:00.354Z"
+    },
+    {
+      "id": "2c2ea573-392e-4b61-923a-4f418a795959",
+      "role": "assistant",
+      "content": "Your dentist appointment is rescheduled to tomorrow, Sat, Apr 11. The exact time is not specified, so I'll assume you want to keep the original time. If you want a different time, please let me know.",
+      "createdAt": "2026-04-10T12:55:00.355Z"
+    },
+    {
+      "id": "e2dab348-affe-4e6d-9c6c-24e125f5e103",
+      "role": "user",
+      "content": "Create reminder Call investor at 7 PM",
+      "createdAt": "2026-04-10T12:55:11.102Z"
+    },
+    {
+      "id": "4cc1d479-e4f7-43ae-b0ce-1d3e14b1c2f3",
+      "role": "assistant",
+      "content": "I don't see today's meditation in your reminders. However, I do see 'Meditation / cooldown' scheduled for tomorrow at 11:00 PM. Would you like to reschedule or mark it as done?",
+      "createdAt": "2026-04-10T12:55:11.103Z"
+    },
+    {
+      "id": "fa1152ae-6ffd-4a43-89f1-297dc9624231",
+      "role": "user",
+      "content": "Move all low priority tasks to tomorrow",
+      "createdAt": "2026-04-10T12:55:12.327Z"
+    },
+    {
+      "id": "67a2ca36-8260-448e-994a-cb92a4de4b87",
+      "role": "assistant",
+      "content": "I can create it. Please share date and exact time, like: tomorrow at 8:00 PM.",
+      "createdAt": "2026-04-10T12:55:12.328Z"
+    },
+    {
+      "id": "50e68fae-31a4-4303-a55d-8bcafd6be8a1",
+      "role": "user",
+      "content": "Mark all completed tasks",
+      "createdAt": "2026-04-10T12:55:18.055Z"
+    },
+    {
+      "id": "3f3b93b5-6867-4ebe-adaf-52ea67a1b72d",
+      "role": "assistant",
+      "content": "I don't see any reminders with a priority label. However, I can help you reschedule tasks to tomorrow if you'd like. Please let me know which tasks you'd like to move.",
+      "createdAt": "2026-04-10T12:55:18.056Z"
+    },
+    {
+      "id": "442557d8-42c5-4f78-a33e-5862e46a4546",
+      "role": "user",
+      "content": "Change priority of salary payment",
+      "createdAt": "2026-04-10T12:55:24.050Z"
+    },
+    {
+      "id": "488edaa7-6843-4a3e-9443-bd675c2e74a2",
+      "role": "assistant",
+      "content": "You have 1 completed task. Would you like to mark it as done again or view its details?",
+      "createdAt": "2026-04-10T12:55:24.051Z"
+    },
+    {
+      "id": "a0799f6c-ea7f-4d9c-84c7-4f970ad397cd",
+      "role": "user",
+      "content": "Archive completed reminders",
+      "createdAt": "2026-04-10T12:55:33.944Z"
+    },
+    {
+      "id": "cafd6739-0765-4496-b464-d81907ea2644",
+      "role": "assistant",
+      "content": "I don't see a reminder for 'salary payment' in your reminders. However, I do see a reminder for 'Pay salaries to employees' which is scheduled for Sunday, April 12, 10:30 AM and has a note 'High priority'. If you would like to change the priority of this reminder, please let me know how you would like to change it.",
+      "createdAt": "2026-04-10T12:55:33.945Z"
+    },
+    {
+      "id": "53c00aa5-081c-4b1a-b714-75591dbb7f5c",
+      "role": "user",
+      "content": "Undo last completed task",
+      "createdAt": "2026-04-10T12:55:40.240Z"
+    },
+    {
+      "id": "1e6c2ba0-41c6-4bec-867e-73b499173b86",
+      "role": "assistant",
+      "content": "I've archived the completed reminder: Kids school drop reminder.",
+      "createdAt": "2026-04-10T12:55:40.241Z"
+    },
+    {
+      "id": "5677eb1e-423e-427f-b70f-c22ca0d7b3cb",
+      "role": "assistant",
+      "content": "You want to undo the last completed task. The last completed task was 'Kids school drop reminder'. I will mark it as pending again.",
+      "createdAt": "2026-04-10T12:55:47.588Z"
+    },
+    {
+      "id": "4fb1c576-a50b-4177-994d-8bc5e70ce624",
+      "role": "user",
+      "content": "Move that meeting later",
+      "createdAt": "2026-04-10T12:55:47.588Z"
+    },
+    {
+      "id": "01dfc8dd-416e-4765-a814-0df07490066c",
+      "role": "user",
+      "content": "Cancel the call I added yesterday",
+      "createdAt": "2026-04-10T12:55:52.141Z"
+    },
+    {
+      "id": "86bcbe59-16fb-4863-85dc-1967ec43206a",
+      "role": "assistant",
+      "content": "I don't see that in your reminders. Could you please specify which meeting you would like to move later?",
+      "createdAt": "2026-04-10T12:55:52.142Z"
+    },
+    {
+      "id": "e151eaa0-d7cc-42f1-9b16-54baecff8e65",
+      "role": "user",
+      "content": "Shift my important tasks",
+      "createdAt": "2026-04-10T12:56:04.324Z"
+    },
+    {
+      "id": "35bd4bc9-1f9b-45f7-b60d-636d94f38401",
+      "role": "assistant",
+      "content": "I don't see a call reminder that you added yesterday. However, I do see an 'Investor call with VC firm' reminder scheduled for tomorrow at 10:00 AM. Would you like to cancel that one?",
+      "createdAt": "2026-04-10T12:56:04.326Z"
+    },
+    {
+      "id": "2c99af97-1941-4722-be48-2739e474389a",
+      "role": "user",
+      "content": "Fix my schedule",
+      "createdAt": "2026-04-10T12:56:09.826Z"
+    },
+    {
+      "id": "3d14b620-0c37-4de8-823b-27b0fd400fd0",
+      "role": "assistant",
+      "content": "I don't see that in your reminders. Could you please specify which tasks you want to shift and to what time?",
+      "createdAt": "2026-04-10T12:56:09.827Z"
+    },
+    {
+      "id": "4ec209b3-4d20-4068-a88d-d197447d4c1a",
+      "role": "user",
+      "content": "Clean up my reminders",
+      "createdAt": "2026-04-10T12:56:10.304Z"
+    },
+    {
+      "id": "e6afb08b-f538-4f15-8ae4-6ab5a64a36bf",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:56:10.306Z"
+    },
+    {
+      "id": "b7b4d0c2-d081-47ff-afa3-3bf548620803",
+      "role": "user",
+      "content": "That task I always skip move it earlier",
+      "createdAt": "2026-04-10T12:56:16.345Z"
+    },
+    {
+      "id": "b673c87d-4f46-4c87-81f3-d755c1756eee",
+      "role": "assistant",
+      "content": "You have 49 pending reminders. Would you like to mark some as done, delete any, or reschedule them?",
+      "createdAt": "2026-04-10T12:56:16.349Z"
+    },
+    {
+      "id": "f1dfbd4e-3eca-429a-a51d-c054459cc81b",
+      "role": "user",
+      "content": "Make my day less stressful",
+      "createdAt": "2026-04-10T12:56:21.797Z"
+    },
+    {
+      "id": "a7e5486f-6bad-4d3b-afb5-986d068dae0c",
+      "role": "assistant",
+      "content": "I don't see a specific task that you always skip in your reminders. Could you please provide more context or clarify which task you are referring to? I'll be happy to help you reschedule it.",
+      "createdAt": "2026-04-10T12:56:21.801Z"
+    },
+    {
+      "id": "d7164895-b02e-4c01-8807-00542d3fcdec",
+      "role": "user",
+      "content": "Reduce overload today",
+      "createdAt": "2026-04-10T12:56:22.245Z"
+    },
+    {
+      "id": "1d802c24-c610-4f83-ab07-0c46feefa356",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:56:22.246Z"
+    },
+    {
+      "id": "5e5f0ed4-6506-4d68-ad62-49c92d2e198f",
+      "role": "user",
+      "content": "Adjust my evening",
+      "createdAt": "2026-04-10T12:56:28.835Z"
+    },
+    {
+      "id": "b0c76dff-e75c-468e-969d-c3b958cfbecb",
+      "role": "assistant",
+      "content": "You have 49 pending reminders and 1 completed reminder. You don't have any reminders due today, but you have 31 reminders due tomorrow. Would you like me to list them out for you or help you prioritize them?",
+      "createdAt": "2026-04-10T12:56:28.837Z"
+    },
+    {
+      "id": "71fe601f-3df1-419a-803c-6bbb78c4a5f3",
+      "role": "user",
+      "content": "Balance my schedule",
+      "createdAt": "2026-04-10T12:56:34.657Z"
+    },
+    {
+      "id": "ba835c04-087a-44e3-8d23-923ad4ab58b9",
+      "role": "assistant",
+      "content": "I'd be happy to help you adjust your evening. However, I don't see any reminders specifically for this evening. Would you like to create a new reminder or adjust one of your existing reminders for tomorrow evening?",
+      "createdAt": "2026-04-10T12:56:34.658Z"
+    },
+    {
+      "id": "d8f57534-7794-4929-9d2d-b1bd781ddddd",
+      "role": "user",
+      "content": "What should I do next?",
+      "createdAt": "2026-04-10T12:56:35.157Z"
+    },
+    {
+      "id": "f57afe36-f8d9-4d82-a6a8-f9e0a439d108",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:56:35.158Z"
+    },
+    {
+      "id": "257af9d8-72ed-4ba3-84a1-0b9a873eb28e",
+      "role": "user",
+      "content": "Pick my top priority task",
+      "createdAt": "2026-04-10T12:56:44.303Z"
+    },
+    {
+      "id": "bc3b493f-eaa7-4574-98e6-0f9e860701f7",
+      "role": "assistant",
+      "content": "Your next task is Morning priority planning, scheduled for tomorrow at 9:30 AM. It's a daily recurring task.",
+      "createdAt": "2026-04-10T12:56:44.305Z"
+    },
+    {
+      "id": "7a1469d3-75a5-43d9-8c21-eb329c9821cc",
+      "role": "user",
+      "content": "What’s the most important thing today?",
+      "createdAt": "2026-04-10T12:56:51.146Z"
+    },
+    {
+      "id": "1d37e1ec-7ac7-4470-aa3b-9437d37f5e50",
+      "role": "assistant",
+      "content": "Your top priority task is 'Fix urgent bug in app' at 4:00 PM tomorrow. It has a note that it's a critical issue.",
+      "createdAt": "2026-04-10T12:56:51.147Z"
+    },
+    {
+      "id": "afa9a903-3df4-45a2-b2d5-1d318055d563",
+      "role": "user",
+      "content": "What can I delay safely?",
+      "createdAt": "2026-04-10T12:56:51.556Z"
+    },
+    {
+      "id": "974df442-b32b-4e3a-aa08-de6148df92c5",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:56:51.557Z"
+    },
+    {
+      "id": "9775d161-da3c-4a89-8449-1eff5116405c",
+      "role": "user",
+      "content": "What should I delegate?",
+      "createdAt": "2026-04-10T12:56:52.037Z"
+    },
+    {
+      "id": "6f0630f1-f27b-422f-b6fe-05a9f674c0c9",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:56:52.038Z"
+    },
+    {
+      "id": "369a7311-b7bc-44fa-93db-6a7540c4433d",
+      "role": "user",
+      "content": "Give me top 3 tasks for today",
+      "createdAt": "2026-04-10T12:56:52.364Z"
+    },
+    {
+      "id": "5a4c56a9-b2b7-456e-ab2b-90d417b84b07",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:56:52.365Z"
+    },
+    {
+      "id": "ff24e0d7-f31d-4f37-9e47-098db6a1d423",
+      "role": "user",
+      "content": "What’s wasting my time?",
+      "createdAt": "2026-04-10T12:57:02.651Z"
+    },
+    {
+      "id": "8f8f82dc-7eac-43a5-a649-ffe12a19896f",
+      "role": "assistant",
+      "content": "I don't see any tasks for today. However, I can provide you with the top 3 tasks for tomorrow. 1. Morning priority planning - 9:30 AM 2. Investor call with VC firm - 10:00 AM 3. Organize calendar - 10:30 AM",
+      "createdAt": "2026-04-10T12:57:02.652Z"
+    },
+    {
+      "id": "5ed787dd-1f5c-4c6f-aeea-07dab3f23314",
+      "role": "user",
+      "content": "What should I ignore today?",
+      "createdAt": "2026-04-10T12:57:03.522Z"
+    },
+    {
+      "id": "52370c5c-1f73-44cb-a88f-b7157556667f",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:03.523Z"
+    },
+    {
+      "id": "7cc83b29-5bbe-4c35-b485-4716b44491e3",
+      "role": "user",
+      "content": "What’s the best use of my next 30 mins?",
+      "createdAt": "2026-04-10T12:57:03.853Z"
+    },
+    {
+      "id": "a317bf78-779b-430a-8d1d-0699f9d83cdc",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:03.855Z"
+    },
+    {
+      "id": "8ce7d695-e6b1-4e81-961f-b16ff74608c8",
+      "role": "user",
+      "content": "Help me focus",
+      "createdAt": "2026-04-10T12:57:04.154Z"
+    },
+    {
+      "id": "02d17621-3914-4305-b9a3-49b653974610",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:04.155Z"
+    },
+    {
+      "id": "49222537-d459-4747-b81a-9016345103a6",
+      "role": "user",
+      "content": "Create a 3 step plan for investor meeting",
+      "createdAt": "2026-04-10T12:57:04.473Z"
+    },
+    {
+      "id": "9ca6043f-e671-4a52-a50d-4b7796b0e1b4",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:04.474Z"
+    },
+    {
+      "id": "7dac3b74-7949-465f-87fc-cbc565e7ea0e",
+      "role": "user",
+      "content": "Break launch feature into tasks",
+      "createdAt": "2026-04-10T12:57:04.816Z"
+    },
+    {
+      "id": "7f073972-a4b1-4612-80c1-c2c579efbdac",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:04.817Z"
+    },
+    {
+      "id": "87b6e1a8-5d27-4543-966c-4e988144f68d",
+      "role": "user",
+      "content": "Make checklist for hospital visit",
+      "createdAt": "2026-04-10T12:57:10.018Z"
+    },
+    {
+      "id": "99f7c235-e5a9-4349-8985-fa3b4277e80e",
+      "role": "assistant",
+      "content": "I don't see that in your reminders. You can ask me to create a reminder for breaking down the launch feature into tasks. Would you like me to create a reminder for that?",
+      "createdAt": "2026-04-10T12:57:10.020Z"
+    },
+    {
+      "id": "fc0307c9-00d7-49af-81c8-cddd854838b3",
+      "role": "user",
+      "content": "Plan my day around meetings",
+      "createdAt": "2026-04-10T12:57:10.454Z"
+    },
+    {
+      "id": "98bffe8d-e7c0-4306-b6af-f5d2ca85d86d",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:10.455Z"
+    },
+    {
+      "id": "d347ef31-0f51-441b-bddd-970b7bed6a07",
+      "role": "user",
+      "content": "Suggest tomorrow morning tasks",
+      "createdAt": "2026-04-10T12:57:18.591Z"
+    },
+    {
+      "id": "2ae49bed-97d9-4e46-954b-81cd265854fa",
+      "role": "assistant",
+      "content": "You have several meetings planned for tomorrow. Here are the details:\n\n1. Investor call with VC firm - 10:00 AM (Prepare pitch deck)\n2. Team standup meeting - 12:30 PM\n3. Client project review meeting - 5:30 PM\n\nYou also have a dentist appointment at 8:00 PM tomorrow.\n\nPlease let me know if you'd like me to help with anything else.",
+      "createdAt": "2026-04-10T12:57:18.592Z"
+    },
+    {
+      "id": "fbe5c433-28c7-4192-9153-dc4465388fa6",
+      "role": "user",
+      "content": "What should I prepare before a client call?",
+      "createdAt": "2026-04-10T12:57:31.055Z"
+    },
+    {
+      "id": "94997684-d8d7-4939-8ee2-56ba5245cbe2",
+      "role": "assistant",
+      "content": "You have several tasks scheduled for tomorrow morning. Here are a few of them:\n\n1. Morning priority planning at 9:30 AM\n2. Investor call with VC firm at 10:00 AM (don't forget to prepare your pitch deck)\n3. Organize calendar at 10:30 AM\n4. Check emails and respond at 11:00 AM\n5. Read industry news at 11:15 AM\n6. Check startup metrics dashboard at 11:30 AM\n7. Check overdue tasks at 12:00 PM\n8. Check bank balances at 12:15 PM\n9. Team standup meeting at 12:30 PM\n10. Check team blockers at 12:45 PM\n\nLet me know if you'd like me to list more tasks or help with anything else.",
+      "createdAt": "2026-04-10T12:57:31.057Z"
+    },
+    {
+      "id": "026a752f-5ada-47b4-964f-8c7ff4766991",
+      "role": "user",
+      "content": "Turn this into subtasks Hire engineer",
+      "createdAt": "2026-04-10T12:57:31.615Z"
+    },
+    {
+      "id": "6cd8e1c5-7124-44f3-9a7b-db57335fe0a9",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:31.616Z"
+    },
+    {
+      "id": "2b5c17a0-154d-4ddd-83ce-5db92b663e2a",
+      "role": "user",
+      "content": "Give me quick execution plan",
+      "createdAt": "2026-04-10T12:57:32.017Z"
+    },
+    {
+      "id": "6fac2cdf-dd6f-4159-8cfb-fbd02265912c",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:32.018Z"
+    },
+    {
+      "id": "0b70910d-71d4-4d12-b6ce-d4d424004db5",
+      "role": "user",
+      "content": "How do I finish everything today?",
+      "createdAt": "2026-04-10T12:57:32.407Z"
+    },
+    {
+      "id": "3cda4758-4bdf-4beb-8be5-2ce7db55de3c",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:32.408Z"
+    },
+    {
+      "id": "694ab94b-4814-4ad1-9138-11b2bf7a1703",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:32.818Z"
+    },
+    {
+      "id": "b8448681-2a55-4cb8-9402-6182c8992328",
+      "role": "user",
+      "content": "Help me recover missed tasks",
+      "createdAt": "2026-04-10T12:57:32.818Z"
+    },
+    {
+      "id": "a92b21e2-6d4f-423e-9657-e75c94e477c2",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:33.195Z"
+    },
+    {
+      "id": "103cde75-887e-49a0-be74-eba03d746ccf",
+      "role": "user",
+      "content": "What’s related to my investor work?",
+      "createdAt": "2026-04-10T12:57:33.195Z"
+    },
+    {
+      "id": "e69921be-5433-4596-a6a9-3b69cce8d067",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:33.593Z"
+    },
+    {
+      "id": "fcb752ce-b11f-4edc-bb01-3c0c693e97ef",
+      "role": "user",
+      "content": "Which tasks are connected?",
+      "createdAt": "2026-04-10T12:57:33.593Z"
+    },
+    {
+      "id": "19d2f0b4-d5e6-4935-ab87-bd5fcee3aede",
+      "role": "user",
+      "content": "What depends on salary payment?",
+      "createdAt": "2026-04-10T12:57:33.921Z"
+    },
+    {
+      "id": "ef76c567-ddaf-461a-b6fb-cc5157de7b84",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:33.922Z"
+    },
+    {
+      "id": "009653aa-0ff5-4c73-920a-2a51be17c7fa",
+      "role": "user",
+      "content": "Show tasks related to family",
+      "createdAt": "2026-04-10T12:57:34.329Z"
+    },
+    {
+      "id": "3eb0a7c9-9d96-4f68-b66f-2db0808deeed",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:34.330Z"
+    },
+    {
+      "id": "e9dae689-e43a-4a03-8d4a-6f790ebda7f2",
+      "role": "user",
+      "content": "What’s blocked right now?",
+      "createdAt": "2026-04-10T12:57:34.689Z"
+    },
+    {
+      "id": "3d7ab4ac-a6df-43de-b351-b40c5ecab4c2",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:34.690Z"
+    },
+    {
+      "id": "55c3bd44-784e-4d99-84b8-5678274c2cf5",
+      "role": "user",
+      "content": "What’s waiting on someone else?",
+      "createdAt": "2026-04-10T12:57:35.022Z"
+    },
+    {
+      "id": "cecacf39-0c89-4ae1-868d-f01b5069353f",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:35.023Z"
+    },
+    {
+      "id": "b60e7c80-1c11-4572-9c6e-2f0ab634f26a",
+      "role": "user",
+      "content": "Which tasks are part of same goal?",
+      "createdAt": "2026-04-10T12:57:35.439Z"
+    },
+    {
+      "id": "9278c823-40d2-4af6-b130-b100d39e289b",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:35.440Z"
+    },
+    {
+      "id": "909b9cbe-dea4-46e3-8f27-607becf5c0f4",
+      "role": "user",
+      "content": "Show follow up tasks",
+      "createdAt": "2026-04-10T12:57:35.757Z"
+    },
+    {
+      "id": "da7a6c4a-e2d4-4bf1-9f8a-d5a705131e9a",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:35.758Z"
+    },
+    {
+      "id": "087e8dc9-fa49-4cd8-abfa-0f29d7d522c5",
+      "role": "user",
+      "content": "What comes after this task?",
+      "createdAt": "2026-04-10T12:57:36.166Z"
+    },
+    {
+      "id": "9d7e094e-51f5-4656-ab18-c7d16050fd1c",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:36.167Z"
+    },
+    {
+      "id": "abbb69d9-4259-4788-a88d-e5bf59ea8243",
+      "role": "user",
+      "content": "What’s pending from yesterday?",
+      "createdAt": "2026-04-10T12:57:36.680Z"
+    },
+    {
+      "id": "5f65e7fa-82b2-4a96-96e9-9b683e2816c6",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:36.681Z"
+    },
+    {
+      "id": "993df82c-355a-4a32-af01-946679188470",
+      "role": "user",
+      "content": "I’m overwhelmed what should I do?",
+      "createdAt": "2026-04-10T12:57:37.174Z"
+    },
+    {
+      "id": "b5d413dc-8d92-442f-981c-7f3b2f7ac73d",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:37.175Z"
+    },
+    {
+      "id": "9d7f30af-db1e-46b2-bdbe-6b87283cdd6e",
+      "role": "user",
+      "content": "I don’t feel like working",
+      "createdAt": "2026-04-10T12:57:37.572Z"
+    },
+    {
+      "id": "e9137e28-8c08-4f7e-96e3-5f750683cba7",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:37.573Z"
+    },
+    {
+      "id": "f7e0bd01-8f5d-4845-8da9-30a02898a771",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:37.907Z"
+    },
+    {
+      "id": "4e2804de-c65e-4619-a9e4-85134e560c76",
+      "role": "user",
+      "content": "Make my day easier",
+      "createdAt": "2026-04-10T12:57:37.907Z"
+    },
+    {
+      "id": "f6586ad0-cad5-481a-b998-6e13e9d6164c",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:38.220Z"
+    },
+    {
+      "id": "939e3045-bdb5-44c1-b0e5-6866f00a47c6",
+      "role": "user",
+      "content": "Give me only 1 task",
+      "createdAt": "2026-04-10T12:57:38.220Z"
+    },
+    {
+      "id": "3f9ecbf9-f866-46f4-b990-928224b58cae",
+      "role": "user",
+      "content": "I’m tired what can I skip?",
+      "createdAt": "2026-04-10T12:57:38.627Z"
+    },
+    {
+      "id": "10f6cce2-7aad-4c55-a085-80190a7b3495",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:38.628Z"
+    },
+    {
+      "id": "e8a2d7f7-70db-4db8-aea4-eb577e6d8245",
+      "role": "user",
+      "content": "Simplify everything",
+      "createdAt": "2026-04-10T12:57:39.042Z"
+    },
+    {
+      "id": "38063fc1-afaf-4e5b-b9ab-a0c69cfd2167",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:39.043Z"
+    },
+    {
+      "id": "c79e7b41-4bad-474b-9bdb-e3c8b1fbf442",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:39.356Z"
+    },
+    {
+      "id": "474e0951-8c6b-45ea-a707-aa6f17f505ed",
+      "role": "user",
+      "content": "Help me get momentum",
+      "createdAt": "2026-04-10T12:57:39.356Z"
+    },
+    {
+      "id": "44268540-2bd0-4bbf-bdf4-f21d1d6cb564",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:39.729Z"
+    },
+    {
+      "id": "0b53b358-b523-44e4-9678-afe41225dbb5",
+      "role": "user",
+      "content": "What’s a quick win?",
+      "createdAt": "2026-04-10T12:57:39.729Z"
+    },
+    {
+      "id": "df559e2a-c1f5-4502-8390-c1953a9e22e6",
+      "role": "user",
+      "content": "Reset my day",
+      "createdAt": "2026-04-10T12:57:40.105Z"
+    },
+    {
+      "id": "bb74ea8b-f7a8-41f9-b618-e06dff72b2a4",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:40.106Z"
+    },
+    {
+      "id": "3355c8f3-5c48-41f1-b859-c6ac81691079",
+      "role": "user",
+      "content": "What should I ignore?",
+      "createdAt": "2026-04-10T12:57:40.420Z"
+    },
+    {
+      "id": "78a606b1-32cf-4643-bdf3-0e28a92e9f1b",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:40.421Z"
+    },
+    {
+      "id": "5572594e-2494-487e-a020-4d8faa0f4e97",
+      "role": "user",
+      "content": "I have 15 minutes I’m stressed I missed morning tasks I have a meeting in 1 hour what should I do right now?",
+      "createdAt": "2026-04-10T12:57:40.731Z"
+    },
+    {
+      "id": "a29d7fb7-552c-4420-83f6-c61e304c2615",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:40.732Z"
+    },
+    {
+      "id": "2a614f73-13b1-47ff-9b55-7d2104d524a6",
+      "role": "assistant",
+      "content": "AI request failed: {\"status\":429,\"title\":\"Too Many Requests\"}",
+      "createdAt": "2026-04-10T12:57:41.211Z"
     }
   ]
 }
