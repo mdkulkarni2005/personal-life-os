@@ -7,6 +7,9 @@ const reminders = defineTable({
   notes: v.optional(v.string()),
   dueAt: v.number(),
   status: v.union(v.literal("pending"), v.literal("done")),
+  recurrence: v.optional(
+    v.union(v.literal("none"), v.literal("daily"), v.literal("weekly"), v.literal("monthly"))
+  ),
   createdAt: v.number(),
   updatedAt: v.number(),
 })

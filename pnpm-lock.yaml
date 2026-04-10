@@ -32,6 +32,9 @@ importers:
       '@repo/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      convex:
+        specifier: ^1.25.4
+        version: 1.34.1(react@19.2.3)
       next:
         specifier: 16.2.0
         version: 16.2.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)

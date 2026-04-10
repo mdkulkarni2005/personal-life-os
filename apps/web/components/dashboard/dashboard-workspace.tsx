@@ -24,6 +24,7 @@ interface AgentAction {
     | "mark_done"
     | "delete_reminder"
     | "reschedule_reminder"
+    | "clarify"
     | "unknown";
   title?: string;
   dueAt?: string;
@@ -37,12 +38,14 @@ interface AgentResponse {
   reply: string;
   action: AgentAction;
 }
+interface PendingCreateDraft {
+  title?: string;
+  notes?: string;
+}
 
 interface WorkspaceProps {
   userId: string;
 }
-
-const storageKey = (userId: string) => `personal-life-os:reminders:${userId}`;
 
 const loadingTexts = [
   "Processing your message...",
@@ -55,21 +58,24 @@ function usePersistentReminders(userId: string) {
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
 
   useEffect(() => {
-    const raw = window.localStorage.getItem(storageKey(userId));
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw) as ReminderItem[];
-      setReminders(parsed);
-    } catch {
-      setReminders([]);
-    }
+    setReminders([]);
+    const load = async () => {
+      try {
+        const response = await fetch("/api/reminders");
+        if (!response.ok) throw new Error("Failed to load reminders");
+        const data = (await response.json()) as { reminders?: Array<Record<string, unknown>> };
+        const parsed = (data.reminders ?? []).map((item) => fromApiReminder(item));
+        setReminders(parsed);
+      } catch {
+        setReminders([]);
+      }
+    };
+    void load();
   }, [userId]);
 
   const updateReminders = (updater: (prev: ReminderItem[]) => ReminderItem[]) => {
     setReminders((prev) => {
-      const next = updater(prev);
-      window.localStorage.setItem(storageKey(userId), JSON.stringify(next));
-      return next;
+      return updater(prev);
     });
   };
 
@@ -85,6 +91,22 @@ function dedupeMessagesById(messages: ChatMessage[]) {
   return Array.from(map.values()).sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
+}
+
+function fromApiReminder(item: Record<string, unknown>): ReminderItem {
+  return {
+    id: String(item._id ?? item.id ?? crypto.randomUUID()),
+    title: String(item.title ?? ""),
+    dueAt: new Date(Number(item.dueAt ?? Date.now())).toISOString(),
+    notes: typeof item.notes === "string" ? item.notes : "",
+    recurrence:
+      item.recurrence === "daily" || item.recurrence === "weekly" || item.recurrence === "monthly"
+        ? item.recurrence
+        : "none",
+    status: item.status === "done" ? "done" : "pending",
+    createdAt: new Date(Number(item.createdAt ?? Date.now())).toISOString(),
+    updatedAt: new Date(Number(item.updatedAt ?? Date.now())).toISOString(),
+  };
 }
 
 function matchesReminder(reminder: ReminderItem, targetId?: string, targetTitle?: string) {
@@ -109,7 +131,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [newTime, setNewTime] = useState("");
   const [newRecurrence, setNewRecurrence] = useState<ReminderRecurrence>("none");
   const [newNotes, setNewNotes] = useState("");
+  const [pendingCreateDraft, setPendingCreateDraft] = useState<PendingCreateDraft | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  const refreshReminders = async () => {
+    const response = await fetch("/api/reminders");
+    if (!response.ok) return;
+    const data = (await response.json()) as { reminders?: Array<Record<string, unknown>> };
+    setReminders(() => (data.reminders ?? []).map((item) => fromApiReminder(item)));
+  };
 
   useEffect(() => {
     if (!isLoading) return;
@@ -193,54 +223,111 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, [reminders]);
 
   const applyAction = (action: AgentAction) => {
-    const now = new Date().toISOString();
-
     if (action.type === "create_reminder" && action.title && action.dueAt) {
+      setPendingCreateDraft(null);
       const title = action.title;
       const dueAt = action.dueAt;
-      setReminders((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
+      const isDuplicate = reminders.some(
+        (item) =>
+          item.status === "pending"
+          && item.title.trim().toLowerCase() === title.trim().toLowerCase()
+          && new Date(item.dueAt).getTime() === new Date(dueAt).getTime()
+      );
+      if (isDuplicate) return;
+
+      void fetch("/api/reminders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           title,
-          dueAt,
+          dueAt: new Date(dueAt).getTime(),
           notes: action.notes ?? "",
           recurrence: "none",
-          status: "pending",
-          createdAt: now,
-          updatedAt: now,
-        },
-      ]);
+        }),
+      }).then(() => void refreshReminders());
       return;
     }
 
     if (action.type === "mark_done") {
-      setReminders((prev) =>
-        prev.map((r) =>
-          matchesReminder(r, action.targetId, action.targetTitle)
-            ? { ...r, status: "done", updatedAt: now }
-            : r
-        )
+      const target = reminders.find((r) =>
+        matchesReminder(r, action.targetId, action.targetTitle)
       );
+      if (!target) return;
+      void fetch(`/api/reminders/${target.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "done" }),
+      }).then(() => void refreshReminders());
       return;
     }
 
     if (action.type === "delete_reminder") {
-      setReminders((prev) =>
-        prev.filter((r) => !matchesReminder(r, action.targetId, action.targetTitle))
+      const target = reminders.find((r) =>
+        matchesReminder(r, action.targetId, action.targetTitle)
+      );
+      if (!target) return;
+      void fetch(`/api/reminders/${target.id}`, { method: "DELETE" }).then(() =>
+        void refreshReminders()
       );
       return;
     }
 
     if (action.type === "reschedule_reminder" && action.dueAt) {
-      setReminders((prev) =>
-        prev.map((r) =>
-          matchesReminder(r, action.targetId, action.targetTitle)
-            ? { ...r, dueAt: action.dueAt!, updatedAt: now }
-            : r
-        )
+      const target = reminders.find((r) =>
+        matchesReminder(r, action.targetId, action.targetTitle)
       );
+      if (!target) return;
+      void fetch(`/api/reminders/${target.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dueAt: new Date(action.dueAt).getTime() }),
+      }).then(() => void refreshReminders());
     }
+
+    if (action.type === "clarify") {
+      setPendingCreateDraft({
+        title: action.title,
+        notes: action.notes,
+      });
+    }
+  };
+
+  const looksLikeYes = (value: string) => /^(yes|yup|yeah|ok|okay|sure|haan|han)$/i.test(value.trim());
+  const hasDateOrTimeHint = (value: string) =>
+    /\b(today|tomorrow|tmrw|tomorow|tommarow|day after tomorrow|after tomorrow|noon|midnight)\b/i.test(value)
+    || /\b\d{1,2}(:\d{2})?\s?([ap]\.?m\.?)\b/i.test(value)
+    || /\b\d{1,2}:\d{2}\b/.test(value);
+
+  const getReminderDetailReply = (query: string) => {
+    const normalized = query.toLowerCase();
+    const activeReminders = reminders.filter((item) => item.status === "pending");
+    if (activeReminders.length === 0) return "You currently have no pending reminders.";
+
+    const scored = activeReminders
+      .map((reminder) => {
+        const title = reminder.title.toLowerCase();
+        if (normalized.includes(title)) return { reminder, score: 100 };
+        const tokens = title.split(/\s+/).filter((token) => token.length > 2);
+        const score = tokens.reduce(
+          (sum, token) => (normalized.includes(token) ? sum + 1 : sum),
+          0
+        );
+        return { reminder, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    if (scored[0] && scored[0].score > 0) {
+      const target = scored[0].reminder;
+      return `Reminder "${target.title}" is pending, due ${new Date(
+        target.dueAt
+      ).toLocaleString()}${target.notes ? `. Notes: ${target.notes}` : "."}`;
+    }
+
+    const summary = activeReminders
+      .slice(0, 3)
+      .map((reminder) => `${reminder.title} (${new Date(reminder.dueAt).toLocaleString()})`)
+      .join(", ");
+    return `I found ${activeReminders.length} pending reminders: ${summary}. Tell me which one you want details for.`;
   };
 
   const handleChatSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -261,28 +348,100 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
     try {
       const normalized = prompt.toLowerCase();
-      if (
-        (normalized.includes("about my reminder") || normalized.includes("my reminder")) &&
-        reminders.length > 0
-      ) {
-        const pending = reminders.filter((reminder) => reminder.status === "pending");
-        const summary = pending
-          .slice(0, 3)
-          .map(
-            (reminder) =>
-              `${reminder.title} (due ${new Date(reminder.dueAt).toLocaleString()})`
-          )
-          .join(", ");
+      const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant")?.content ?? "";
 
+      if (pendingCreateDraft && looksLikeYes(prompt)) {
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
             role: "assistant",
             content:
-              pending.length === 0
-                ? "You currently have no pending reminders."
-                : `Your pending reminders: ${summary}${pending.length > 3 ? "..." : ""}`,
+              "Please send date and time in one line, like: tomorrow at 8:00 PM. I will create it directly.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+
+      if (pendingCreateDraft && !hasDateOrTimeHint(prompt)) {
+        setPendingCreateDraft((prev) => ({ ...(prev ?? {}), title: prompt.trim() }));
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content:
+              "Got it. Now send only date and time, for example: tomorrow at 8:00 PM.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+
+      if (pendingCreateDraft && hasDateOrTimeHint(prompt)) {
+        const rebuiltPrompt = `Create reminder ${pendingCreateDraft.title ?? "untitled"} ${prompt}`;
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: rebuiltPrompt, reminders }),
+        });
+        const data = (await response.json()) as AgentResponse;
+        applyAction(data.action);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: data.reply || "Done.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+
+      if (/^\s*create(\s+a)?\s+reminder\s*$/i.test(prompt)) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content:
+              "Send everything in one line: title + date + time. Example: create reminder cli testing tomorrow at 8 PM.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+
+      if (looksLikeYes(prompt) && /would you like to create one\?/i.test(lastAssistant)) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content:
+              "Great. Send it in one message with title + time, for example: create reminder cli testing tomorrow at 8 PM.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+
+      if (
+        (normalized.includes("about my reminder")
+          || normalized.includes("my reminder")
+          || normalized.includes("tell me about")
+          || normalized.includes("details"))
+        && reminders.length > 0
+      ) {
+        const detailReply = getReminderDetailReply(prompt);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: detailReply,
             createdAt: new Date().toISOString(),
           },
         ]);
@@ -346,54 +505,62 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setNewTime(timePart);
     setNewRecurrence(reminder.recurrence ?? "none");
     setNewNotes(reminder.notes ?? "");
+    setIsListOpen(false);
     setIsCreateOpen(true);
   };
 
-  const handleManualCreate = (event: FormEvent<HTMLFormElement>) => {
+  const handleManualCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!newTitle.trim() || !newDate || !newTime) return;
-    const now = new Date().toISOString();
     const dueAt = new Date(`${newDate}T${newTime}`).toISOString();
+    const dueAtMs = new Date(dueAt).getTime();
 
-    setReminders((prev) => {
-      if (editingReminderId) {
-        return prev.map((reminder) =>
-          reminder.id === editingReminderId
-            ? {
-                ...reminder,
-                title: newTitle.trim(),
-                dueAt,
-                recurrence: newRecurrence,
-                notes: newNotes.trim(),
-                updatedAt: now,
-              }
-            : reminder
-        );
-      }
-
-      return [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
+    if (editingReminderId) {
+      await fetch(`/api/reminders/${editingReminderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           title: newTitle.trim(),
-          dueAt,
+          dueAt: dueAtMs,
           recurrence: newRecurrence,
           notes: newNotes.trim(),
-          status: "pending",
-          createdAt: now,
-          updatedAt: now,
-        },
-      ];
-    });
+        }),
+      });
+      await refreshReminders();
+    } else {
+      const isDuplicate = reminders.some(
+        (item) =>
+          item.status === "pending"
+          && item.title.trim().toLowerCase() === newTitle.trim().toLowerCase()
+          && new Date(item.dueAt).getTime() === dueAtMs
+      );
+      if (isDuplicate) {
+        resetReminderForm();
+        setIsCreateOpen(false);
+        return;
+      }
+
+      await fetch("/api/reminders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newTitle.trim(),
+          dueAt: dueAtMs,
+          recurrence: newRecurrence,
+          notes: newNotes.trim(),
+        }),
+      });
+      await refreshReminders();
+    }
     resetReminderForm();
     setIsCreateOpen(false);
   };
 
   return (
     <>
-      <section className="relative min-h-[calc(100dvh-4.5rem)] overflow-hidden bg-transparent lg:grid lg:grid-cols-3 lg:gap-4">
-        <article className="flex min-h-[calc(100dvh-4.5rem)] flex-col px-3 pb-3 pt-2 sm:min-h-[calc(100dvh-6rem)] sm:px-2 lg:col-span-2 lg:min-h-[calc(100dvh-7rem)] lg:px-0">
-          <div className="mb-2 flex items-center justify-between">
+      <section className="relative h-[calc(100dvh-4.5rem)] overflow-hidden bg-transparent lg:grid lg:grid-cols-3 lg:gap-4">
+        <article className="flex h-[calc(100dvh-4.5rem)] flex-col px-3 pb-3 pt-2 sm:h-[calc(100dvh-6rem)] sm:px-2 lg:col-span-2 lg:h-[calc(100dvh-7rem)] lg:px-0">
+          <div className="sticky top-0 z-10 mb-2 flex items-center justify-between bg-transparent pb-1">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 RemindOS chat
@@ -443,7 +610,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
           <form
             onSubmit={handleChatSubmit}
-            className="mt-3 grid grid-cols-[1fr_auto] items-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
+            className="sticky bottom-0 mt-3 grid grid-cols-[1fr_auto] items-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
           >
             <div className="rounded-xl border border-slate-300 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-950">
               <textarea
@@ -556,6 +723,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </aside>
         </div>
       )}
+
+      <button
+        type="button"
+        onClick={() => setIsListOpen(true)}
+        className="fixed bottom-20 right-4 z-40 rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-violet-500 lg:hidden"
+      >
+        Reminders
+      </button>
 
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -692,24 +867,25 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           </button>
                           <button
                             type="button"
-                            onClick={() =>
-                              setReminders((prev) =>
-                                prev.map((r) =>
-                                  r.id === reminder.id
-                                    ? { ...r, status: r.status === "done" ? "pending" : "done" }
-                                    : r
-                                )
-                              )
-                            }
+                            onClick={() => {
+                              const nextStatus = reminder.status === "done" ? "pending" : "done";
+                              void fetch(`/api/reminders/${reminder.id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ status: nextStatus }),
+                              }).then(() => void refreshReminders());
+                            }}
                             className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
                           >
                             {reminder.status === "done" ? "Mark pending" : "Mark done"}
                           </button>
                           <button
                             type="button"
-                            onClick={() =>
-                              setReminders((prev) => prev.filter((r) => r.id !== reminder.id))
-                            }
+                            onClick={() => {
+                              void fetch(`/api/reminders/${reminder.id}`, {
+                                method: "DELETE",
+                              }).then(() => void refreshReminders());
+                            }}
                             className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
                           >
                             Delete

@@ -65,6 +65,162 @@
       "role": "assistant",
       "content": "Hello, you have 1 reminder. Type 'list' to view all reminders.",
       "createdAt": "2026-04-09T17:40:46.050Z"
+    },
+    {
+      "id": "23ec0a35-3876-4b2d-acd7-d5ad34b6e623",
+      "role": "user",
+      "content": "how many reminder i have remaing",
+      "createdAt": "2026-04-09T18:35:00.762Z"
+    },
+    {
+      "id": "36f0d3fb-0021-476e-a75f-16b84cf7ea4e",
+      "role": "assistant",
+      "content": "You have 0 pending reminders.",
+      "createdAt": "2026-04-09T18:35:04.143Z"
+    },
+    {
+      "id": "a257704b-c54b-476e-a3de-a880d7511366",
+      "role": "user",
+      "content": "create the cli testing reminder tommaraw at 8PM",
+      "createdAt": "2026-04-09T18:35:27.308Z"
+    },
+    {
+      "id": "7a2535e8-9dfd-4052-84e1-66ddbad76c40",
+      "role": "assistant",
+      "content": "Reminder created",
+      "createdAt": "2026-04-09T18:35:49.037Z"
+    },
+    {
+      "id": "546a3ddb-00b5-4a67-ba2b-6aa63bb94c13",
+      "role": "user",
+      "content": "mark that reminder done",
+      "createdAt": "2026-04-09T18:39:10.575Z"
+    },
+    {
+      "id": "abe3f6a6-cc11-4ad8-bceb-bfd27dd54035",
+      "role": "assistant",
+      "content": "Reminder marked as done",
+      "createdAt": "2026-04-09T18:39:14.983Z"
+    },
+    {
+      "id": "c642f09a-035d-4954-8573-089570f2dce5",
+      "role": "user",
+      "content": "create the cli testing reminder tommaraw at 8PM",
+      "createdAt": "2026-04-09T18:39:29.561Z"
+    },
+    {
+      "id": "d0e985d8-8eab-4c90-80f0-d4f2209292c5",
+      "role": "assistant",
+      "content": "Reminder created",
+      "createdAt": "2026-04-09T18:40:07.203Z"
+    },
+    {
+      "id": "815f1930-62a9-4b3c-97e7-c63f434790cd",
+      "role": "user",
+      "content": "how many pending reminder i have",
+      "createdAt": "2026-04-09T18:53:36.384Z"
+    },
+    {
+      "id": "fdfe15db-ce82-43a5-aed8-780d0114455e",
+      "role": "assistant",
+      "content": "You have 0 pending reminders.",
+      "createdAt": "2026-04-09T18:53:39.333Z"
+    },
+    {
+      "id": "d33a5ebd-f887-4aae-9d1f-2b6381568249",
+      "role": "user",
+      "content": "create the cli testing reminder tommaraw at 8PM",
+      "createdAt": "2026-04-09T18:53:49.411Z"
+    },
+    {
+      "id": "f50cde3d-8bdb-46fb-a5b8-5130232cdfbf",
+      "role": "assistant",
+      "content": "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
+      "createdAt": "2026-04-09T18:53:55.018Z"
+    },
+    {
+      "id": "81ca70b5-3665-4f52-b63e-1665c77a5459",
+      "role": "user",
+      "content": "tomorrow at 8:00 PM",
+      "createdAt": "2026-04-09T18:54:13.552Z"
+    },
+    {
+      "id": "85e4bcc8-ab53-4df1-882c-26a864f98778",
+      "role": "assistant",
+      "content": "You don't have any reminders for tomorrow at 8:00 PM. Would you like to create one?",
+      "createdAt": "2026-04-09T18:54:23.512Z"
+    },
+    {
+      "id": "6f62d8d1-e9cf-4e52-b2df-ad394afcb1f0",
+      "role": "user",
+      "content": "yes",
+      "createdAt": "2026-04-09T18:54:35.262Z"
+    },
+    {
+      "id": "e25d2af5-70fb-41bc-9bd9-e15b61d712bd",
+      "role": "assistant",
+      "content": "You have no reminders. What would you like to do?",
+      "createdAt": "2026-04-09T18:54:37.977Z"
+    },
+    {
+      "id": "e018c2d4-3d03-45d5-a8b2-f758b2eab0ff",
+      "role": "user",
+      "content": "create the reminder",
+      "createdAt": "2026-04-09T18:55:41.721Z"
+    },
+    {
+      "id": "442d7992-720f-40f6-ac13-2c924f9c076d",
+      "role": "assistant",
+      "content": "What is the title of the reminder?",
+      "createdAt": "2026-04-09T18:56:15.723Z"
+    },
+    {
+      "id": "f4748d89-9799-47ab-b3f9-8d65d09ec922",
+      "role": "user",
+      "content": "cli testing",
+      "createdAt": "2026-04-09T18:56:24.383Z"
+    },
+    {
+      "id": "5e6d1a71-6786-4f21-a669-0173864742c7",
+      "role": "assistant",
+      "content": "You have no reminders.",
+      "createdAt": "2026-04-09T18:57:19.838Z"
+    },
+    {
+      "id": "3d0948da-fb5d-4d85-aad2-a934b6cb3460",
+      "role": "user",
+      "content": "create reminder cli testing tomarrow at 8:00 PM",
+      "createdAt": "2026-04-09T19:04:35.952Z"
+    },
+    {
+      "id": "69fdb8de-9df3-49cc-8278-b974a727c88c",
+      "role": "assistant",
+      "content": "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
+      "createdAt": "2026-04-09T19:04:53.060Z"
+    },
+    {
+      "id": "fc6efe32-3954-43dc-b5ec-4cc8fcd83acf",
+      "role": "user",
+      "content": "yes",
+      "createdAt": "2026-04-09T19:05:26.262Z"
+    },
+    {
+      "id": "232265a6-f90a-4ca6-9b62-d66c20a36262",
+      "role": "assistant",
+      "content": "Please send date and time in one line, like: tomorrow at 8:00 PM. I will create it directly.",
+      "createdAt": "2026-04-09T19:05:26.263Z"
+    },
+    {
+      "id": "e223009f-6d85-4ed0-8697-7239760610a2",
+      "role": "user",
+      "content": "yes create the reminder",
+      "createdAt": "2026-04-09T19:05:46.755Z"
+    },
+    {
+      "id": "4cc0a618-07a2-4965-bbcd-27addb7179af",
+      "role": "assistant",
+      "content": "Got it. Now send only date and time, for example: tomorrow at 8:00 PM.",
+      "createdAt": "2026-04-09T19:05:46.756Z"
     }
   ]
 }

@@ -19,6 +19,7 @@ type ReminderAgentActionType =
   | "mark_done"
   | "delete_reminder"
   | "reschedule_reminder"
+  | "clarify"
   | "unknown";
 
 interface ReminderAgentAction {
@@ -43,7 +44,7 @@ Output ONLY valid JSON.
 {
   "reply":"short response",
   "action":{
-    "type":"create_reminder|list_reminders|mark_done|delete_reminder|reschedule_reminder|unknown",
+    "type":"create_reminder|list_reminders|mark_done|delete_reminder|reschedule_reminder|clarify|unknown",
     "title":"optional",
     "dueAt":"optional ISO string",
     "notes":"optional",
@@ -52,6 +53,99 @@ Output ONLY valid JSON.
     "scope":"today|tomorrow|missed|done|pending|all optional"
   }
 }`;
+
+function hasExplicitTime(input: string) {
+  const normalized = input.replace(/\b([ap])\.\s?m\.\b/gi, "$1m");
+  return /\b(\d{1,2})(:\d{2})?\s?(am|pm)\b/i.test(normalized)
+    || /\b\d{1,2}:\d{2}\b/.test(input)
+    || /\b(noon|midnight)\b/i.test(input);
+}
+
+function hasTodayHint(input: string) {
+  return /\btoday\b/i.test(input);
+}
+
+function hasTomorrowHint(input: string) {
+  return /\b(tomorrow|tomorow|tommarow|tmrw)\b/i.test(input);
+}
+
+function hasDayAfterTomorrowHint(input: string) {
+  return /\b(day after tomorrow|after tomorrow)\b/i.test(input);
+}
+
+function parseTimeFromInput(input: string) {
+  const normalized = input.replace(/\b([ap])\.\s?m\.\b/gi, "$1m");
+  const meridiemMatch = normalized.match(/\b(\d{1,2})(?::(\d{2}))?\s?(am|pm)\b/i);
+  if (meridiemMatch) {
+    const rawHour = Number.parseInt(meridiemMatch[1] ?? "0", 10);
+    const minute = Number.parseInt(meridiemMatch[2] ?? "0", 10);
+    const meridiem = (meridiemMatch[3] ?? "am").toLowerCase();
+    let hour = rawHour % 12;
+    if (meridiem === "pm") hour += 12;
+    return { hour, minute };
+  }
+
+  const clockMatch = input.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (clockMatch) {
+    return {
+      hour: Number.parseInt(clockMatch[1] ?? "0", 10),
+      minute: Number.parseInt(clockMatch[2] ?? "0", 10),
+    };
+  }
+
+  if (/\bnoon\b/i.test(input)) return { hour: 12, minute: 0 };
+  if (/\bmidnight\b/i.test(input)) return { hour: 0, minute: 0 };
+  return null;
+}
+
+function parseDateTimeFromInput(input: string) {
+  const now = new Date();
+  const day = new Date(now);
+  day.setSeconds(0, 0);
+
+  if (hasDayAfterTomorrowHint(input)) {
+    day.setDate(day.getDate() + 2);
+  } else if (hasTomorrowHint(input)) {
+    day.setDate(day.getDate() + 1);
+  } else if (hasTodayHint(input)) {
+    // no change
+  } else {
+    return null;
+  }
+
+  const time = parseTimeFromInput(input);
+  if (!time) return null;
+
+  day.setHours(time.hour, time.minute, 0, 0);
+  return day.toISOString();
+}
+
+function isValidFutureIsoDate(value: string) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) && date.getTime() > Date.now() - 60 * 1000;
+}
+
+function isCreateIntent(input: string) {
+  return /\b(create|add|set|make|remind me|schedule)\b/i.test(input)
+    && /\b(reminder|remind)\b/i.test(input);
+}
+
+function extractTitleFromCreateInput(input: string) {
+  const normalized = input
+    .replace(/\b(create|add|set|make|schedule)\b/gi, " ")
+    .replace(/\b(reminder|remind me|remind)\b/gi, " ")
+    .replace(/\b(for|about)\b/gi, " ")
+    .replace(
+      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|at|on|by|noon|midnight)\b/gi,
+      " "
+    )
+    .replace(/\b\d{1,2}(:\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")
+    .replace(/\b\d{1,2}:\d{2}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return normalized || undefined;
+}
 
 function extractJsonObject(text: string): string {
   const start = text.indexOf("{");
@@ -91,6 +185,31 @@ export async function POST(request: Request) {
   const reminders = body.reminders ?? [];
   if (!message) {
     return NextResponse.json({ error: "Message is required" }, { status: 400 });
+  }
+
+  // Deterministic path first: create reminder with explicit date/time should not rely on LLM.
+  if (isCreateIntent(message)) {
+    const title = extractTitleFromCreateInput(message);
+    const dueAt = parseDateTimeFromInput(message);
+
+    if (!title) {
+      return NextResponse.json({
+        reply: "Got it. What is the reminder title?",
+        action: { type: "clarify" },
+      } satisfies ReminderAgentResponse);
+    }
+
+    if (dueAt && isValidFutureIsoDate(dueAt)) {
+      return NextResponse.json({
+        reply: `Reminder created for ${new Date(dueAt).toLocaleString()}.`,
+        action: { type: "create_reminder", title, dueAt },
+      } satisfies ReminderAgentResponse);
+    }
+
+    return NextResponse.json({
+      reply: "I can create it. Please share date and exact time, like: tomorrow at 8:00 PM.",
+      action: { type: "clarify", title },
+    } satisfies ReminderAgentResponse);
   }
 
   const nimApiKey = process.env.NVIDIA_NIM_API_KEY;
@@ -140,7 +259,35 @@ export async function POST(request: Request) {
     };
     const content = data.choices?.[0]?.message?.content ?? "";
 
-    return NextResponse.json(safeAgentResponse(content));
+    const parsed = safeAgentResponse(content);
+
+    if (parsed.action.type === "create_reminder") {
+      const deterministicDueAt = parseDateTimeFromInput(message);
+      if (deterministicDueAt) {
+        parsed.action.dueAt = deterministicDueAt;
+      }
+
+      const asksForRelativeDate =
+        hasTodayHint(message) || hasTomorrowHint(message) || hasDayAfterTomorrowHint(message);
+
+      if (asksForRelativeDate && !deterministicDueAt) {
+        return NextResponse.json({
+          reply:
+            "I understood you want to create a reminder, but I could not confidently parse the date/time. Please resend with clear format like: tomorrow at 8:00 PM.",
+          action: { type: "clarify", title: parsed.action.title },
+        } satisfies ReminderAgentResponse);
+      }
+
+      if (!parsed.action.dueAt || !hasExplicitTime(message) || !isValidFutureIsoDate(parsed.action.dueAt)) {
+        return NextResponse.json({
+          reply:
+            "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
+          action: { type: "clarify", title: parsed.action.title },
+        } satisfies ReminderAgentResponse);
+      }
+    }
+
+    return NextResponse.json(parsed);
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unexpected chat error.";
