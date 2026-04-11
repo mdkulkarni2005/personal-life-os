@@ -1579,19 +1579,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       {isSnapshotOpen && (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setIsSnapshotOpen(false)}>
           <aside
-            className="absolute right-0 top-0 h-full w-[92%] max-w-sm overflow-y-auto border-l border-slate-200 bg-white p-4 shadow-xl dark:border-slate-800 dark:bg-slate-900"
+            className="absolute right-0 top-0 flex h-full w-[92%] max-w-sm flex-col overflow-hidden border-l border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="mb-4 flex items-center justify-between">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] dark:border-slate-800 dark:bg-slate-950">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Menu</h2>
               <button
                 type="button"
                 onClick={() => setIsSnapshotOpen(false)}
-                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-700"
+                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-800 dark:border-slate-600 dark:text-slate-100"
               >
                 Close
               </button>
             </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-4">
             <ul className="grid gap-3">
               <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
                 {snapshot.pending} reminders pending
@@ -1761,6 +1762,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   {isClearingChat ? "Clearing…" : "Clear chat"}
                 </button>
               </div>
+            </div>
             </div>
           </aside>
         </div>
