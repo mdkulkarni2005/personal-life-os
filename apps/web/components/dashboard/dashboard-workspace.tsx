@@ -409,7 +409,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         /* ignore */
       }
 
-      const full = buildBriefingNarrative(remindersRef.current, user?.firstName);
+      const full = buildBriefingNarrative(remindersRef.current);
       const id = `briefing-${Date.now()}`;
       setBriefingStreaming(true);
 
@@ -443,7 +443,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }, 650);
 
     return () => window.clearTimeout(timer);
-  }, [isHistoryLoaded, user?.firstName, userId]);
+  }, [isHistoryLoaded, userId]);
 
   useEffect(() => {
     const openR = () => setIsListOpen(true);
@@ -680,11 +680,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     };
   }, [tasks]);
 
-  const voiceTitle = useMemo(() => {
-    const n = user?.firstName?.trim();
-    if (n) return `${n} life voice`;
-    return "Your life voice";
-  }, [user?.firstName]);
 
   const applyAction = (action: AgentAction) => {
     if (action.type === "create_reminder" && action.title && action.dueAt) {
@@ -768,7 +763,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const handleChatSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = input.trim();
-    if (!prompt || isLoading) return;
+    if (!prompt || isLoading || briefingStreaming) return;
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -1306,6 +1301,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
   }, [persistDueNotifPrefs]);
 
+  /** Only lock during session briefing stream — avoid clashing typewriter placeholder + caret. */
+  const briefingComposerLocked = briefingStreaming;
+
   const dismissDueNotifBanner = useCallback(() => {
     try {
       sessionStorage.setItem("remindos:dueNotifBannerDismissed", "1");
@@ -1383,7 +1381,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
           <div className="shrink-0 border-b border-white/10 px-3 py-2.5 sm:px-4">
-            <p className="text-sm font-semibold tracking-tight text-white">{voiceTitle}</p>
+            <p className="text-sm font-semibold tracking-tight text-white">Life voice</p>
             <p className="text-[10px] text-slate-400">Briefings, reminders, and tasks in one thread</p>
           </div>
           <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 scrollbar-none sm:p-4">
@@ -1508,8 +1506,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <button
                   key={`${q.kind}-${i}`}
                   type="button"
+                  disabled={briefingStreaming}
                   onClick={() => setInput(q.text)}
-                  className={`max-w-full rounded-full border px-2.5 py-1 text-left text-[11px] font-medium leading-snug transition sm:max-w-[32%] ${
+                  className={`max-w-full rounded-full border px-2.5 py-1 text-left text-[11px] font-medium leading-snug transition sm:max-w-[32%] disabled:cursor-not-allowed disabled:opacity-40 ${
                     q.kind === "action"
                       ? "border-emerald-500/50 bg-emerald-950/30 text-emerald-50 hover:bg-emerald-900/40"
                       : "border-slate-600/80 bg-slate-900/40 text-slate-100 hover:bg-slate-800/60"
@@ -1524,19 +1523,27 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
         <form
           onSubmit={handleChatSubmit}
-          className="mt-3 grid shrink-0 grid-cols-[1fr_auto] items-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
+          className={`mt-3 grid shrink-0 grid-cols-[1fr_auto] items-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 ${
+            briefingComposerLocked ? "opacity-90" : ""
+          }`}
         >
             <div className="relative rounded-xl border border-slate-300 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-950">
               {!input.trim() ? (
                 <div
                   className="pointer-events-none absolute left-2 top-1 z-0 min-h-[2.5rem] max-w-[calc(100%-0.5rem)] pr-2 text-sm leading-relaxed text-slate-400 dark:text-slate-500"
-                  aria-hidden
+                  aria-hidden={!briefingStreaming}
                 >
-                  <TypingPlaceholderOverlay
-                    show={!input.trim()}
-                    lines={placeholderCycleLines}
-                    className="block whitespace-pre-wrap break-words"
-                  />
+                  {briefingStreaming ? (
+                    <span className="block text-slate-500 dark:text-slate-400">
+                      Briefing in progress…
+                    </span>
+                  ) : (
+                    <TypingPlaceholderOverlay
+                      show={!input.trim()}
+                      lines={placeholderCycleLines}
+                      className="block whitespace-pre-wrap break-words"
+                    />
+                  )}
                 </div>
               ) : null}
               <textarea
@@ -1550,17 +1557,21 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   }
                 }}
                 placeholder=""
-                aria-label="Chat message"
-                className="relative z-10 max-h-32 min-h-10 w-full resize-none bg-transparent px-2 py-1 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100"
+                readOnly={briefingComposerLocked}
+                aria-busy={briefingStreaming}
+                aria-label={briefingStreaming ? "Chat message (wait for briefing to finish)" : "Chat message"}
+                className={`relative z-10 max-h-32 min-h-10 w-full resize-none bg-transparent px-2 py-1 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100 ${
+                  briefingComposerLocked ? "cursor-wait caret-transparent" : ""
+                }`}
               />
             </div>
             <button
               type="submit"
-              disabled={!input.trim() || isLoading}
+              disabled={!input.trim() || isLoading || briefingStreaming}
               className="h-11 w-11 rounded-full bg-emerald-600 text-base font-semibold text-white shadow-md transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Send message"
             >
-              {isLoading ? "..." : "➤"}
+              {isLoading ? "..." : briefingStreaming ? "…" : "➤"}
             </button>
         </form>
       </section>
@@ -1651,84 +1662,105 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               ) : null}
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSnapshotOpen(false);
-                  openCreateModal();
-                }}
-                className="rounded-full bg-violet-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-violet-500 sm:px-4 sm:text-sm"
-              >
-                Create reminder
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSnapshotOpen(false);
-                  setTaskFormError(null);
-                  void refreshTasks();
-                  setIsTasksOpen(true);
-                }}
-                className="rounded-full border border-teal-400 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-900 transition hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-100 dark:hover:bg-teal-900/50 sm:px-4 sm:text-sm"
-              >
-                Tasks
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSnapshotOpen(false);
-                  setIsListOpen(true);
-                }}
-                className="rounded-full border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:px-4 sm:text-sm"
-              >
-                View reminders
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSnapshotOpen(false);
-                  setImportStatus(null);
-                  setIsImportOpen(true);
-                }}
-                className="col-span-2 rounded-full border border-violet-300 px-3 py-2 text-xs font-semibold text-violet-700 transition hover:bg-violet-50 dark:border-violet-700 dark:text-violet-200 dark:hover:bg-violet-900/40 sm:col-span-1 sm:px-4 sm:text-sm"
-              >
-                Import JSON
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setBatchStatus(null);
-                  setIsSnapshotOpen(false);
-                  setIsBatchOpen(true);
-                }}
-                disabled={isBatchRunning || isLoading}
-                className="rounded-full border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30 sm:px-4 sm:text-sm"
-              >
-                Batch questions
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSnapshotOpen(false);
-                  handleExportChat();
-                }}
-                disabled={isLoading || messages.length === 0}
-                className="rounded-full border border-emerald-300 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-900/30 sm:px-4 sm:text-sm"
-              >
-                Export chat
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSnapshotOpen(false);
-                  void handleClearChat();
-                }}
-                disabled={isClearingChat || isLoading}
-                className="col-span-2 rounded-full border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-800 dark:text-rose-200 dark:hover:bg-rose-900/30 sm:col-span-1 sm:px-4 sm:text-sm"
-              >
-                {isClearingChat ? "Clearing..." : "Clear chat"}
-              </button>
+            <div className="mt-5 space-y-5 border-t border-slate-200 pt-5 dark:border-slate-800">
+              <div>
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Main actions
+                </p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSnapshotOpen(false);
+                      openCreateModal();
+                    }}
+                    className="w-full rounded-xl bg-violet-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
+                  >
+                    Create reminder
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSnapshotOpen(false);
+                      setIsListOpen(true);
+                    }}
+                    className="w-full rounded-xl bg-violet-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
+                  >
+                    View reminders
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSnapshotOpen(false);
+                      setTaskFormError(null);
+                      void refreshTasks();
+                      setIsTasksOpen(true);
+                    }}
+                    className="w-full rounded-xl bg-violet-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
+                  >
+                    Tasks
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Data &amp; chat
+                </p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSnapshotOpen(false);
+                      setImportStatus(null);
+                      setIsImportOpen(true);
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Import JSON
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSnapshotOpen(false);
+                      handleExportChat();
+                    }}
+                    disabled={isLoading || messages.length === 0}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Export chat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBatchStatus(null);
+                      setIsSnapshotOpen(false);
+                      setIsBatchOpen(true);
+                    }}
+                    disabled={isBatchRunning || isLoading}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Batch questions
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Clear history
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSnapshotOpen(false);
+                    void handleClearChat();
+                  }}
+                  disabled={isClearingChat || isLoading}
+                  className="w-full rounded-xl border border-rose-200 bg-rose-50/80 px-4 py-2.5 text-left text-sm font-medium text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100 dark:hover:bg-rose-950/60"
+                >
+                  {isClearingChat ? "Clearing…" : "Clear chat"}
+                </button>
+              </div>
             </div>
           </aside>
         </div>

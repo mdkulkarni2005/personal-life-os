@@ -40,10 +40,9 @@ function fmtTime(iso: string) {
 /** Short narrative: missed (up to 3 oldest overdue) + upcoming (next 3). */
 export function buildBriefingNarrative(
   reminders: ReminderItem[],
-  firstName?: string | null,
+  _firstName?: string | null,
   now = new Date()
 ): string {
-  const greet = firstName?.trim() ? `${firstName.trim()}, ` : "";
   const pending = reminders.filter((r) => r.status !== "done" && r.status !== "archived");
   const missed = pending
     .filter((r) => bucketOf(r, now) === "missed")
@@ -56,7 +55,7 @@ export function buildBriefingNarrative(
   const upcomingPick = upcomingPool.slice(0, 3);
 
   const lines: string[] = [];
-  lines.push(`${greet}here is your quick briefing.`);
+  lines.push("Here is your quick briefing.");
 
   if (missed.length === 0 && upcomingPick.length === 0) {
     lines.push("No pending reminders on your list—nice and clear.");

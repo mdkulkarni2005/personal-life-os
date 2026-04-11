@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ClerkProvider, Show } from "@clerk/nextjs";
+import { currentUser } from "@clerk/nextjs/server";
 import Link from "next/link";
 import Image from "next/image";
 import localFont from "next/font/local";
@@ -30,11 +31,17 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const user = await currentUser();
+  const raw = user?.firstName?.trim();
+  const firstDisplay =
+    raw && raw.length > 0 ? `${raw[0]!.toUpperCase()}${raw.slice(1)}` : null;
+  const headerBrand = firstDisplay ? `${firstDisplay} Life OS` : "Personal Life OS";
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
@@ -44,7 +51,7 @@ export default function RootLayout({
               <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
                 <Link href="/" className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
                   <Image src="/logo-remindos.svg" alt="RemindOS logo" width={24} height={24} />
-                  Personal Life OS
+                  {headerBrand}
                 </Link>
                 <div className="flex items-center gap-3">
                   <Show when="signed-out">
