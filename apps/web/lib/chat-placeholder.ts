@@ -107,3 +107,28 @@ function gAskAfterNext(next: ReminderItem, hour: number, name?: string | null) {
   }
   return `Walk me through what’s due before “${t}”`;
 }
+
+export type ChatPlaceholderInput = Omit<
+  Parameters<typeof getContextualChatPlaceholder>[0],
+  "rotation"
+>;
+
+/**
+ * Distinct lines to cycle in the typing placeholder animation (deduped).
+ */
+export function getChatPlaceholderCycle(input: ChatPlaceholderInput): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (let r = 0; r < 16; r++) {
+    const line = getContextualChatPlaceholder({ ...input, rotation: r });
+    if (!seen.has(line)) {
+      seen.add(line);
+      out.push(line);
+    }
+    if (out.length >= 6) break;
+  }
+  if (out.length === 0) {
+    return ["Tell me my upcoming reminders"];
+  }
+  return out;
+}

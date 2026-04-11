@@ -13,7 +13,8 @@ import {
 import { useUser } from "@clerk/nextjs";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getContextualChatPlaceholder } from "../../lib/chat-placeholder";
+import { getChatPlaceholderCycle } from "../../lib/chat-placeholder";
+import { TypingPlaceholderOverlay } from "./typing-placeholder-overlay";
 import { showDueReminderSystemNotification } from "../../lib/due-notifications-client";
 import {
   isCompactViewport,
@@ -204,7 +205,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const notifUrlHandledRef = useRef<string | null>(null);
   const [reminders, setReminders] = usePersistentReminders(userId);
   const [dueNotifPrefs, setDueNotifPrefs] = useState<DueNotificationPrefs>(() => loadDueNotificationPrefs());
-  const [placeholderRotation, setPlaceholderRotation] = useState(0);
   const [notifUiTick, setNotifUiTick] = useState(0);
   const [dueNotifBannerDismissed, setDueNotifBannerDismissed] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -427,13 +427,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, []);
 
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setPlaceholderRotation((x) => x + 1);
-    }, 45000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  useEffect(() => {
     const onVis = () => setNotifUiTick((t) => t + 1);
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
@@ -491,15 +484,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const snapshot = useMemo(() => buildReminderSnapshot(reminders), [reminders]);
 
-  const chatPlaceholder = useMemo(
+  const placeholderCycleLines = useMemo(
     () =>
-      getContextualChatPlaceholder({
+      getChatPlaceholderCycle({
         reminders,
         messages,
         firstName: user?.firstName,
-        rotation: placeholderRotation,
       }),
-    [reminders, messages, user?.firstName, placeholderRotation]
+    [reminders, messages, user?.firstName]
   );
 
   const grouped = useMemo(() => {
@@ -1250,7 +1242,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           onSubmit={handleChatSubmit}
           className="mt-3 grid shrink-0 grid-cols-[1fr_auto] items-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
         >
-            <div className="rounded-xl border border-slate-300 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-950">
+            <div className="relative rounded-xl border border-slate-300 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-950">
+              {!input.trim() ? (
+                <div
+                  className="pointer-events-none absolute left-2 top-1 z-0 min-h-[2.5rem] max-w-[calc(100%-0.5rem)] pr-2 text-sm leading-relaxed text-slate-400 dark:text-slate-500"
+                  aria-hidden
+                >
+                  <TypingPlaceholderOverlay
+                    show={!input.trim()}
+                    lines={placeholderCycleLines}
+                    className="block whitespace-pre-wrap break-words"
+                  />
+                </div>
+              ) : null}
               <textarea
                 rows={1}
                 value={input}
@@ -1261,8 +1265,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={chatPlaceholder}
-                className="max-h-32 min-h-10 w-full resize-none bg-transparent px-2 py-1 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100"
+                placeholder=""
+                aria-label="Chat message"
+                className="relative z-10 max-h-32 min-h-10 w-full resize-none bg-transparent px-2 py-1 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100"
               />
             </div>
             <button
