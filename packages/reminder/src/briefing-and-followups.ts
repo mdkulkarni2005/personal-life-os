@@ -199,3 +199,53 @@ export function buildFollowUpQuestions(input: {
 
   return [info[0]!, info[1]!, actions[0]!];
 }
+
+const INFO_ROTATION_EXTRAS: FollowUpQuestion[] = [
+  { kind: "info", text: "What is the single best use of the next hour?" },
+  { kind: "info", text: "What would make today feel successful?" },
+  { kind: "info", text: "Anything you are avoiding that we should name?" },
+  { kind: "info", text: "Which reminder feels most uncertain on timing?" },
+  { kind: "info", text: "What should I know about your energy level today?" },
+  { kind: "info", text: "Compare what is due today vs later this week." },
+];
+
+const ACTION_ROTATION_EXTRAS: FollowUpQuestion[] = [
+  { kind: "action", text: "Snooze everything non-critical by one day?" },
+  { kind: "action", text: "Create a reminder for something small you keep forgetting?" },
+  { kind: "action", text: "Mark one overdue item done or reschedule it?" },
+  { kind: "action", text: "Add a 15-minute prep reminder before your next due time?" },
+  { kind: "action", text: "Set a softer time for your most stressful item?" },
+  { kind: "action", text: "Archive or delete a reminder you no longer need?" },
+];
+
+/**
+ * Replace one suggested-question slot with a new question (not duplicating the other two chips).
+ */
+export function replaceFollowUpSlot(
+  current: FollowUpQuestion[],
+  slotIndex: 0 | 1 | 2,
+  input: Parameters<typeof buildFollowUpQuestions>[0]
+): FollowUpQuestion[] {
+  const kind: "info" | "action" = slotIndex === 2 ? "action" : "info";
+  const base = current.length >= 3 ? [...current] : buildFollowUpQuestions(input);
+  const fresh = buildFollowUpQuestions(input);
+  const extras = kind === "info" ? INFO_ROTATION_EXTRAS : ACTION_ROTATION_EXTRAS;
+  const pool: FollowUpQuestion[] = [];
+  const seen = new Set<string>();
+  const add = (q: FollowUpQuestion) => {
+    if (q.kind !== kind || seen.has(q.text)) return;
+    seen.add(q.text);
+    pool.push(q);
+  };
+  for (const q of fresh) add(q);
+  for (const q of extras) add(q);
+
+  const exclude = new Set(base.map((x) => x.text));
+  const pick =
+    pool.find((q) => !exclude.has(q.text))
+    ?? pool.find((q) => q.text !== base[slotIndex]?.text)
+    ?? base[slotIndex]!;
+  const out = [...base];
+  out[slotIndex] = { kind, text: pick.text };
+  return out;
+}

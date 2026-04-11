@@ -1,5 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { api } from "@repo/db/convex/api";
+import { getConvexClient } from "./convex-client";
 
 export type ChatMessageMeta = {
   kind?: "due_reminder";
@@ -17,64 +17,55 @@ export interface StoredChatMessage {
   meta?: ChatMessageMeta;
 }
 
-interface ChatStore {
-  [userId: string]: StoredChatMessage[];
-}
-
-const DATA_DIR = path.join(process.cwd(), ".data");
-const CHAT_FILE = path.join(DATA_DIR, "chat-history.json");
-const RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
-
-async function readStore(): Promise<ChatStore> {
-  try {
-    const raw = await readFile(CHAT_FILE, "utf-8");
-    return JSON.parse(raw) as ChatStore;
-  } catch {
-    return {};
-  }
-}
-
-async function writeStore(store: ChatStore) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(CHAT_FILE, JSON.stringify(store, null, 2), "utf-8");
-}
-
-function prune(messages: StoredChatMessage[]) {
-  const cutoff = Date.now() - RETENTION_MS;
-  return messages.filter((message) => new Date(message.createdAt).getTime() >= cutoff);
-}
-
-function dedupeById(messages: StoredChatMessage[]) {
-  const map = new Map<string, StoredChatMessage>();
-  for (const message of messages) {
-    if (!message?.id) continue;
-    map.set(message.id, message);
-  }
-  return Array.from(map.values()).sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-  );
+function toStored(row: {
+  clientId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: number;
+  metaJson?: string;
+}): StoredChatMessage {
+  return {
+    id: row.clientId,
+    role: row.role,
+    content: row.content,
+    createdAt: new Date(row.createdAt).toISOString(),
+    meta: row.metaJson
+      ? (() => {
+          try {
+            return JSON.parse(row.metaJson) as ChatMessageMeta;
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined,
+  };
 }
 
 export async function getChatHistory(userId: string): Promise<StoredChatMessage[]> {
-  const store = await readStore();
-  const normalized = dedupeById(prune(store[userId] ?? []));
-  if ((store[userId] ?? []).length !== normalized.length) {
-    store[userId] = normalized;
-    await writeStore(store);
+  try {
+    const client = getConvexClient();
+    const rows = await client.query(api.chat.listForUser, { userId });
+    return rows.map(toStored);
+  } catch {
+    return [];
   }
-  return normalized;
 }
 
 export async function appendChatMessages(userId: string, messages: StoredChatMessage[]) {
-  const store = await readStore();
-  const existing = prune(store[userId] ?? []);
-  const next = dedupeById(prune([...existing, ...messages]));
-  store[userId] = next;
-  await writeStore(store);
+  const client = getConvexClient();
+  await client.mutation(api.chat.replaceAllForUser, {
+    userId,
+    messages: messages.map((m) => ({
+      clientId: m.id,
+      role: m.role,
+      content: m.content,
+      createdAt: m.createdAt,
+      metaJson: m.meta ? JSON.stringify(m.meta) : undefined,
+    })),
+  });
 }
 
 export async function clearChatHistory(userId: string) {
-  const store = await readStore();
-  store[userId] = [];
-  await writeStore(store);
+  const client = getConvexClient();
+  await client.mutation(api.chat.clearForUser, { userId });
 }

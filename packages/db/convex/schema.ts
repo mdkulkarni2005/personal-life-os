@@ -48,9 +48,22 @@ const tasks = defineTable({
   updatedAt: v.number(),
 }).index("by_user_status", ["userId", "status"]);
 
+const chatMessages = defineTable({
+  userId: v.string(),
+  /** Client-generated id for idempotent sync */
+  clientId: v.string(),
+  role: v.union(v.literal("user"), v.literal("assistant"), v.literal("system")),
+  content: v.string(),
+  createdAt: v.number(),
+  metaJson: v.optional(v.string()),
+})
+  .index("by_user", ["userId"])
+  .index("by_user_created", ["userId", "createdAt"]);
+
 export default defineSchema({
   reminders,
   reminderInvites,
   reminderParticipants,
   tasks,
+  chatMessages,
 });

@@ -52,6 +52,8 @@ export function ChatAssistantCard() {
     setIsLoading(true);
 
     try {
+      const timeZone =
+        typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined;
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -60,6 +62,7 @@ export function ChatAssistantCard() {
             role: message.role,
             content: message.content,
           })),
+          ...(timeZone ? { timeZone } : {}),
         }),
       });
 

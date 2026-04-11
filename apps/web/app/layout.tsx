@@ -40,7 +40,7 @@ export default async function RootLayout({
   const raw = user?.firstName?.trim();
   const firstDisplay =
     raw && raw.length > 0 ? `${raw[0]!.toUpperCase()}${raw.slice(1)}` : null;
-  const headerBrand = firstDisplay ? `${firstDisplay} Life OS` : "Personal Life OS";
+  const headerBrand = firstDisplay ? `${firstDisplay} · RemindOS` : "RemindOS";
 
   return (
     <html lang="en" suppressHydrationWarning>

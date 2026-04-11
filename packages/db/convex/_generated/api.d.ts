@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as chat from "../chat.js";
 import type * as reminderSharing from "../reminderSharing.js";
 import type * as reminders from "../reminders.js";
 import type * as tasks from "../tasks.js";
@@ -19,6 +20,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  chat: typeof chat;
   reminderSharing: typeof reminderSharing;
   reminders: typeof reminders;
   tasks: typeof tasks;

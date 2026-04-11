@@ -267,16 +267,30 @@ export function classifyReminderIntent(message: string): ReminderIntent {
   return "ambiguous";
 }
 
-/** Single-line, human-readable; never emits raw ISO strings */
-export function describeReminderForChat(reminder: ReminderItem, now = new Date()): string {
-  const due = new Date(reminder.dueAt);
-  const when = due.toLocaleString(undefined, {
+/** When set (e.g. IANA `Asia/Kolkata`), due times format in the user's zone — required on servers whose default is UTC. */
+export type ReminderDisplayOptions = {
+  timeZone?: string;
+};
+
+function dueTimeLocaleOptions(options?: ReminderDisplayOptions): Intl.DateTimeFormatOptions {
+  return {
     weekday: "short",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  });
+    ...(options?.timeZone ? { timeZone: options.timeZone } : {}),
+  };
+}
+
+/** Single-line, human-readable; never emits raw ISO strings */
+export function describeReminderForChat(
+  reminder: ReminderItem,
+  now = new Date(),
+  options?: ReminderDisplayOptions
+): string {
+  const due = new Date(reminder.dueAt);
+  const when = due.toLocaleString(undefined, dueTimeLocaleOptions(options));
   const bucket = getReminderBucket(reminder, now);
   const bucketLabel =
     bucket === "missed"
@@ -304,7 +318,8 @@ export function buildListRemindersReply(
   reminders: ReminderItem[],
   scope: ReminderListScope,
   now = new Date(),
-  limit = 5
+  limit = 5,
+  options?: ReminderDisplayOptions
 ): string {
   const filtered = filterRemindersByListScope(reminders, scope, now).slice(0, Math.max(1, limit));
   if (filtered.length === 0) {
@@ -323,7 +338,7 @@ export function buildListRemindersReply(
     filtered.length === 1
       ? "Here is your reminder:"
       : `Here are your top ${filtered.length} reminders:`;
-  const lines = filtered.map((r, i) => `${i + 1}. ${describeReminderForChat(r, now)}`);
+  const lines = filtered.map((r, i) => `${i + 1}. ${describeReminderForChat(r, now, options)}`);
   return [header, ...lines].join("\n");
 }
 
@@ -414,11 +429,19 @@ export function isCompoundReminderQuestion(message: string): boolean {
 }
 
 /** Rich, human-readable block for LLM context (avoid relying on raw ISO in JSON). */
-export function buildRemindersContextBlock(reminders: ReminderItem[], now = new Date()): string {
+export function buildRemindersContextBlock(
+  reminders: ReminderItem[],
+  now = new Date(),
+  options?: ReminderDisplayOptions
+): string {
   const pending = reminders.filter((r) => r.status !== "done");
   const done = reminders.filter((r) => r.status === "done");
   const lines: string[] = [];
-  lines.push(`Now (user device context): ${now.toLocaleString()}`);
+  const nowOpts = options?.timeZone ? { timeZone: options.timeZone } : undefined;
+  lines.push(`Now (user device context): ${now.toLocaleString(undefined, nowOpts)}`);
+  if (options?.timeZone) {
+    lines.push(`User time zone (IANA): ${options.timeZone}`);
+  }
   lines.push(`Summary: ${pending.length} pending, ${done.length} completed.`);
 
   const byBucket = (label: string, bucket: ReminderBucket) => {
@@ -431,7 +454,7 @@ export function buildRemindersContextBlock(reminders: ReminderItem[], now = new 
     }
     lines.push(`${label}:`);
     for (const r of items) {
-      lines.push(`  - ${describeReminderForChat(r, now)} | id=${r.id}`);
+      lines.push(`  - ${describeReminderForChat(r, now, options)} | id=${r.id}`);
     }
   };
 
@@ -450,7 +473,12 @@ export function buildRemindersContextBlock(reminders: ReminderItem[], now = new 
   return lines.join("\n");
 }
 
-function answerReminderDetailHeuristic(query: string, reminders: ReminderItem[], now = new Date()): string {
+function answerReminderDetailHeuristic(
+  query: string,
+  reminders: ReminderItem[],
+  now = new Date(),
+  options?: ReminderDisplayOptions
+): string {
   const normalized = query.toLowerCase();
   const activeReminders = reminders.filter((item) => item.status === "pending");
   if (activeReminders.length === 0) return "You currently have no pending reminders.";
@@ -469,17 +497,17 @@ function answerReminderDetailHeuristic(query: string, reminders: ReminderItem[],
     .sort((a, b) => b.score - a.score);
 
   if (scored[0] && scored[0].score > 0) {
-    return describeReminderForChat(scored[0].reminder, now);
+    return describeReminderForChat(scored[0].reminder, now, options);
   }
 
   const only = activeReminders[0];
   if (activeReminders.length === 1 && only) {
-    return describeReminderForChat(only, now);
+    return describeReminderForChat(only, now, options);
   }
 
   const summary = activeReminders
     .slice(0, 5)
-    .map((reminder) => describeReminderForChat(reminder, now))
+    .map((reminder) => describeReminderForChat(reminder, now, options))
     .join("\n");
   return `You have ${activeReminders.length} pending reminders:\n${summary}\n\nSay part of a title if you want one in more detail.`;
 }
@@ -487,14 +515,19 @@ function answerReminderDetailHeuristic(query: string, reminders: ReminderItem[],
 /**
  * Fast grounded answers without an LLM (list + simple detail). Returns null if unclear.
  */
-export function tryGroundedReminderAnswer(message: string, reminders: ReminderItem[], now = new Date()): string | null {
+export function tryGroundedReminderAnswer(
+  message: string,
+  reminders: ReminderItem[],
+  now = new Date(),
+  options?: ReminderDisplayOptions
+): string | null {
   const intent = classifyReminderIntent(message);
   if (intent === "decision_query") {
     const ranked = rankTasks(reminders, now).slice(0, 3);
     if (ranked.length === 0) return "You have no pending reminders right now.";
     return [
       ranked.length === 1 ? "Your best next task is:" : "Your top next tasks are:",
-      ...ranked.map((item, idx) => `${idx + 1}. ${describeReminderForChat(item, now)}`),
+      ...ranked.map((item, idx) => `${idx + 1}. ${describeReminderForChat(item, now, options)}`),
     ].join("\n");
   }
 
@@ -507,18 +540,20 @@ export function tryGroundedReminderAnswer(message: string, reminders: ReminderIt
       if (today.length === 0) return "You have no reminders for today.";
       return [
         today.length === 1 ? "Here is your reminder for today:" : "Here are your reminders for today:",
-        ...today.map((r, i) => `${i + 1}. ${describeReminderForChat(r, now)}`),
+        ...today.map((r, i) => `${i + 1}. ${describeReminderForChat(r, now, options)}`),
       ].join("\n");
     }
-    return buildListRemindersReply(reminders, listScope, now, 5);
+    return buildListRemindersReply(reminders, listScope, now, 5, options);
   }
   if (inferDetailQueryAboutReminders(message)) {
-    return answerReminderDetailHeuristic(message, reminders, now);
+    return answerReminderDetailHeuristic(message, reminders, now, options);
   }
   if (intent === "planning_query") {
     const analysis = analyzeSchedule(reminders, now);
     const lines: string[] = [];
-    if (analysis.nextTask) lines.push(`Start with: ${describeReminderForChat(analysis.nextTask, now)}`);
+    if (analysis.nextTask) {
+      lines.push(`Start with: ${describeReminderForChat(analysis.nextTask, now, options)}`);
+    }
     if (analysis.conflicts.length > 0) {
       const c = analysis.conflicts[0];
       if (c) lines.push(`Potential clash: ${c.first.title} and ${c.second.title} are ${c.minutesApart} minutes apart.`);
@@ -584,6 +619,7 @@ export function createNvidiaNimChatProvider(
 export {
   buildBriefingNarrative,
   buildFollowUpQuestions,
+  replaceFollowUpSlot,
   type FollowUpQuestion,
   type TaskItemBrief,
 } from "./briefing-and-followups";

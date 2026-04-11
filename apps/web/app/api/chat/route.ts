@@ -48,7 +48,7 @@ const systemPrompt = `You are the RemindOS assistant for Personal Life OS. You O
 DATA RULES (critical):
 - The REMINDER DIGEST and JSON below are the ONLY source of truth. Do not invent, rename, or assume reminders.
 - If the answer is not in the data, say you do not see that in their reminders and suggest what they could ask instead.
-- Never paste raw ISO-8601 timestamps in "reply". Use natural language dates/times (respect the user's locale style from the digest).
+- Never paste raw ISO-8601 timestamps in "reply". Use natural language dates/times. The digest lists due times in the user's time zone—quote them exactly as shown.
 
 WHAT YOU CAN DO:
 - Answer ANY question about their reminders: schedules, conflicts, "what's next", comparisons, counts by day, overdue, notes, recurrence, typos in titles (match loosely to digest titles).
@@ -79,6 +79,18 @@ Output ONLY valid JSON:
   }
 }`;
 
+function formatDueInUserZone(iso: string, timeZone?: string) {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    ...(timeZone ? { timeZone } : {}),
+  });
+}
+
 function mapAgentScopeToListScope(scope?: string): ReminderListScope | null {
   switch (scope) {
     case "today":
@@ -95,12 +107,12 @@ function mapAgentScopeToListScope(scope?: string): ReminderListScope | null {
   }
 }
 
-function formatDecisionReply(reminders: ReminderItem[]) {
+function formatDecisionReply(reminders: ReminderItem[], timeZone?: string) {
   const ranked = rankTasks(reminders).slice(0, 3);
   if (ranked.length === 0) return "You have no pending reminders right now.";
   const lines = ranked.map(
     (item, index) =>
-      `${index + 1}. ${item.title} — ${new Date(item.dueAt).toLocaleString()}`
+      `${index + 1}. ${item.title} — ${formatDueInUserZone(item.dueAt, timeZone)}`
   );
   return [
     ranked.length === 1 ? "Your best next task is:" : "Your top next tasks are:",
@@ -108,12 +120,12 @@ function formatDecisionReply(reminders: ReminderItem[]) {
   ].join("\n");
 }
 
-function formatPlanningReply(reminders: ReminderItem[]) {
+function formatPlanningReply(reminders: ReminderItem[], timeZone?: string) {
   const analysis = analyzeSchedule(reminders);
   const lines: string[] = [];
   if (analysis.nextTask) {
     lines.push(
-      `Start with ${analysis.nextTask.title} at ${new Date(analysis.nextTask.dueAt).toLocaleString()}.`
+      `Start with ${analysis.nextTask.title} at ${formatDueInUserZone(analysis.nextTask.dueAt, timeZone)}.`
     );
   }
   if (analysis.overdueTasks.length > 0) {
@@ -133,10 +145,10 @@ function formatPlanningReply(reminders: ReminderItem[]) {
   return lines.join("\n") || "You have no pending reminders to plan right now.";
 }
 
-function fallbackDeterministicReply(message: string, reminders: ReminderItem[]) {
+function fallbackDeterministicReply(message: string, reminders: ReminderItem[], timeZone?: string) {
   const intent = classifyReminderIntent(message);
-  if (intent === "decision_query") return formatDecisionReply(reminders);
-  if (intent === "planning_query") return formatPlanningReply(reminders);
+  if (intent === "decision_query") return formatDecisionReply(reminders, timeZone);
+  if (intent === "planning_query") return formatPlanningReply(reminders, timeZone);
 
   const listScope = inferListScopeFromMessage(message);
   if (listScope === "today") {
@@ -144,12 +156,12 @@ function fallbackDeterministicReply(message: string, reminders: ReminderItem[]) 
     if (today.length === 0) return "You have no reminders for today.";
     return [
       "Here are your reminders for today:",
-      ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${new Date(item.dueAt).toLocaleString()}`),
+      ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${formatDueInUserZone(item.dueAt, timeZone)}`),
     ].join("\n");
   }
-  if (listScope) return buildListRemindersReply(reminders, listScope, new Date(), 5);
+  if (listScope) return buildListRemindersReply(reminders, listScope, new Date(), 5, { timeZone });
   return (
-    tryGroundedReminderAnswer(message, reminders)
+    tryGroundedReminderAnswer(message, reminders, new Date(), { timeZone })
     ?? "I can help with reminder lists, what to do next, planning your day, and reminder updates."
   );
 }
@@ -308,6 +320,13 @@ async function loadRemindersForChat(userId: string, fallback: ReminderItem[]): P
   }
 }
 
+function normalizeClientTimeZone(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const t = raw.trim();
+  if (t.length < 2 || t.length > 120) return undefined;
+  return t;
+}
+
 export async function POST(request: Request) {
   const { userId } = await auth();
   if (!userId) {
@@ -317,7 +336,9 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     message?: string;
     reminders?: ReminderItem[];
+    timeZone?: string;
   };
+  const timeZone = normalizeClientTimeZone(body.timeZone);
   const message = body.message?.trim();
   const reminders = await loadRemindersForChat(userId, body.reminders ?? []);
   if (!message) {
@@ -327,13 +348,13 @@ export async function POST(request: Request) {
   const intent = classifyReminderIntent(message);
   if (intent === "decision_query") {
     return NextResponse.json({
-      reply: formatDecisionReply(reminders),
+      reply: formatDecisionReply(reminders, timeZone),
       action: { type: "unknown" },
     } satisfies ReminderAgentResponse);
   }
   if (intent === "planning_query") {
     return NextResponse.json({
-      reply: formatPlanningReply(reminders),
+      reply: formatPlanningReply(reminders, timeZone),
       action: { type: "unknown" },
     } satisfies ReminderAgentResponse);
   }
@@ -352,7 +373,7 @@ export async function POST(request: Request) {
 
     if (dueAt && isValidFutureIsoDate(dueAt)) {
       return NextResponse.json({
-        reply: `Reminder created for ${new Date(dueAt).toLocaleString()}.`,
+        reply: `Reminder created for ${formatDueInUserZone(dueAt, timeZone)}.`,
         action: { type: "create_reminder", title, dueAt },
       } satisfies ReminderAgentResponse);
     }
@@ -375,13 +396,15 @@ export async function POST(request: Request) {
               today.length === 1
                 ? "Here is your reminder for today:"
                 : "Here are your reminders for today:",
-              ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${new Date(item.dueAt).toLocaleString()}`),
+              ...today.map((item, idx) =>
+                `${idx + 1}. ${item.title} — ${formatDueInUserZone(item.dueAt, timeZone)}`
+              ),
             ].join("\n"),
         action: { type: "list_reminders" },
       } satisfies ReminderAgentResponse);
     }
     return NextResponse.json({
-      reply: buildListRemindersReply(reminders, listScopeFromMessage, new Date(), 5),
+      reply: buildListRemindersReply(reminders, listScopeFromMessage, new Date(), 5, { timeZone }),
       action: { type: "list_reminders" },
     } satisfies ReminderAgentResponse);
   }
@@ -389,7 +412,7 @@ export async function POST(request: Request) {
   const nimApiKey = process.env.NVIDIA_NIM_API_KEY;
   if (!nimApiKey) {
     const fallback: ReminderAgentResponse = {
-      reply: fallbackDeterministicReply(message, reminders),
+      reply: fallbackDeterministicReply(message, reminders, timeZone),
       action: { type: "unknown" },
     };
     return NextResponse.json(fallback);
@@ -397,7 +420,7 @@ export async function POST(request: Request) {
 
   try {
     const model = process.env.NVIDIA_NIM_MODEL ?? DEFAULT_MODEL;
-    const digest = buildRemindersContextBlock(reminders);
+    const digest = buildRemindersContextBlock(reminders, new Date(), { timeZone });
     const nimResponse = await fetch(`${NIM_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -420,14 +443,14 @@ export async function POST(request: Request) {
 
     if (nimResponse.status === 429) {
       return NextResponse.json({
-        reply: fallbackDeterministicReply(message, reminders),
+        reply: fallbackDeterministicReply(message, reminders, timeZone),
         action: { type: "unknown" },
       } satisfies ReminderAgentResponse);
     }
 
     if (!nimResponse.ok) {
       return NextResponse.json({
-        reply: fallbackDeterministicReply(message, reminders),
+        reply: fallbackDeterministicReply(message, reminders, timeZone),
         action: { type: "unknown" },
       } satisfies ReminderAgentResponse);
     }
@@ -448,10 +471,12 @@ export async function POST(request: Request) {
           ? "You have no reminders for today."
           : [
             "Here are your reminders for today:",
-            ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${new Date(item.dueAt).toLocaleString()}`),
+            ...today.map((item, idx) =>
+              `${idx + 1}. ${item.title} — ${formatDueInUserZone(item.dueAt, timeZone)}`
+            ),
           ].join("\n");
       } else {
-        parsed.reply = buildListRemindersReply(reminders, scope, new Date(), 5);
+        parsed.reply = buildListRemindersReply(reminders, scope, new Date(), 5, { timeZone });
       }
     }
 
@@ -504,7 +529,9 @@ export async function POST(request: Request) {
         item.title.toLowerCase().includes(parsed.action.targetTitle!.toLowerCase())
       );
       if (matches.length > 1) {
-        const sample = matches.slice(0, 2).map((item) => `${item.title} at ${new Date(item.dueAt).toLocaleString()}`);
+        const sample = matches
+          .slice(0, 2)
+          .map((item) => `${item.title} at ${formatDueInUserZone(item.dueAt, timeZone)}`);
         return NextResponse.json({
           reply: `Do you mean ${sample.join(" or ")}?`,
           action: { type: "clarify", targetTitle: parsed.action.targetTitle },
@@ -515,7 +542,7 @@ export async function POST(request: Request) {
     return NextResponse.json(parsed);
   } catch {
     return NextResponse.json({
-      reply: fallbackDeterministicReply(message, reminders),
+      reply: fallbackDeterministicReply(message, reminders, timeZone),
       action: { type: "unknown" },
     });
   }

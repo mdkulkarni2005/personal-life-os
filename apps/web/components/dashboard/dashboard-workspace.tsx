@@ -3,6 +3,7 @@
 import {
   buildBriefingNarrative,
   buildFollowUpQuestions,
+  replaceFollowUpSlot,
   buildListRemindersReply,
   buildReminderSnapshot,
   getReminderBucket,
@@ -10,9 +11,9 @@ import {
   isCompoundReminderQuestion,
   tryGroundedReminderAnswer,
   type FollowUpQuestion,
+  type TaskItemBrief,
   type ReminderRecurrence,
   type ReminderItem,
-  type TaskItemBrief,
 } from "@repo/reminder";
 import { useUser } from "@clerk/nextjs";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -95,6 +96,8 @@ const STARTER_MESSAGE = {
   createdAt: new Date().toISOString(),
 };
 
+const SHOW_SUGGESTED_QUESTIONS_KEY = "remindos:showSuggestedQuestions";
+
 function usePersistentReminders(userId: string) {
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
 
@@ -132,6 +135,41 @@ function dedupeMessagesById(messages: ChatMessage[]) {
   return Array.from(map.values()).sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
+}
+
+/** Ensures server-side chat uses the same IANA zone as the browser (fixes UTC vs local due times). */
+function clientTimeZonePayload(): { timeZone?: string } {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return tz ? { timeZone: tz } : {};
+  } catch {
+    return {};
+  }
+}
+
+function mergeRemoteChat(local: ChatMessage[], remote: ChatMessage[]): ChatMessage[] {
+  if (remote.length === 0) return local;
+  const localBase = local.filter((m) => m.id !== "starter");
+  const remoteMap = new Map(remote.map((m) => [m.id, m]));
+  const out: ChatMessage[] = [];
+  const seen = new Set<string>();
+  for (const m of localBase) {
+    if (m.meta?.skipPersist) {
+      out.push(m);
+      seen.add(m.id);
+      continue;
+    }
+    const r = remoteMap.get(m.id);
+    out.push(r ?? m);
+    seen.add(m.id);
+  }
+  for (const m of remote) {
+    if (!seen.has(m.id)) {
+      out.push(m);
+      seen.add(m.id);
+    }
+  }
+  return dedupeMessagesById(out);
 }
 
 interface TaskRow {
@@ -264,6 +302,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [followUpQuestions, setFollowUpQuestions] = useState<FollowUpQuestion[]>([]);
+  const [showSuggestedQuestions, setShowSuggestedQuestions] = useState(true);
   const [reminderListTab, setReminderListTab] = useState<
     "missed" | "today" | "tomorrow" | "upcoming" | "done"
   >("missed");
@@ -274,6 +313,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [taskFormNotes, setTaskFormNotes] = useState("");
   const [taskFormError, setTaskFormError] = useState<string | null>(null);
   const briefingRanRef = useRef(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remindersRef = useRef(reminders);
   remindersRef.current = reminders;
   const listOpenRef = useRef(false);
@@ -297,6 +337,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   useEffect(() => {
     void refreshTasks();
   }, [userId, refreshTasks]);
+
+  useEffect(() => {
+    try {
+      if (typeof localStorage !== "undefined" && localStorage.getItem(SHOW_SUGGESTED_QUESTIONS_KEY) === "0") {
+        setShowSuggestedQuestions(false);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const runReminderQuickAction = useCallback(
     async (reminderId: string, action: "delete" | "done" | "snooze") => {
@@ -357,13 +407,50 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   useEffect(() => {
     if (!isHistoryLoaded) return;
-    const deduped = dedupeMessagesById(messages).filter((m) => !m.meta?.skipPersist);
-    void fetch("/api/chat/history", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: deduped }),
-    });
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      const deduped = dedupeMessagesById(messages).filter((m) => !m.meta?.skipPersist);
+      void fetch("/api/chat/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: deduped }),
+      });
+    }, 900);
+    return () => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    };
   }, [messages, isHistoryLoaded]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded) return;
+    const poll = async () => {
+      if (briefingStreaming) return;
+      try {
+        const response = await fetch("/api/chat/history");
+        if (!response.ok) return;
+        const data = (await response.json()) as { messages?: ChatMessage[] };
+        const remote = (data.messages ?? []).filter(
+          (item) =>
+            item.id
+            && item.content
+            && item.createdAt
+            && (item.role === "user" || item.role === "assistant" || item.role === "system")
+        );
+        setMessages((prev) => mergeRemoteChat(prev, remote));
+      } catch {
+        /* ignore */
+      }
+    };
+    const id = window.setInterval(poll, 2800);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void poll();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [isHistoryLoaded, briefingStreaming]);
 
   useEffect(() => {
     if (briefingStreaming) return;
@@ -846,7 +933,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: rebuiltPrompt, reminders }),
+          body: JSON.stringify({ message: rebuiltPrompt, reminders, ...clientTimeZonePayload() }),
         });
         const data = (await response.json()) as AgentResponse;
         applyAction(data.action);
@@ -892,7 +979,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
       const listScope = inferListScopeFromMessage(prompt);
       if (listScope && !isCompoundReminderQuestion(prompt)) {
-        const listReply = buildListRemindersReply(reminders, listScope);
+        const listReply = buildListRemindersReply(
+          reminders,
+          listScope,
+          new Date(),
+          5,
+          clientTimeZonePayload()
+        );
         setMessages((prev) => [
           ...prev,
           {
@@ -908,7 +1001,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: prompt, reminders }),
+        body: JSON.stringify({ message: prompt, reminders, ...clientTimeZonePayload() }),
       });
 
       const data = (await response.json()) as AgentResponse;
@@ -924,7 +1017,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         },
       ]);
     } catch {
-      const grounded = tryGroundedReminderAnswer(prompt, reminders);
+      const grounded = tryGroundedReminderAnswer(prompt, reminders, new Date(), clientTimeZonePayload());
       setMessages((prev) => [
         ...prev,
         {
@@ -1152,7 +1245,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           const response = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: question, reminders }),
+            body: JSON.stringify({ message: question, reminders, ...clientTimeZonePayload() }),
           });
           const data = (await response.json()) as AgentResponse;
           applyAction(data.action);
@@ -1166,7 +1259,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             },
           ]);
         } catch {
-          const grounded = tryGroundedReminderAnswer(question, reminders);
+          const grounded = tryGroundedReminderAnswer(question, reminders, new Date(), clientTimeZonePayload());
           setMessages((prev) => [
             ...prev,
             {
@@ -1380,9 +1473,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </div>
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
-          <div className="shrink-0 border-b border-white/10 px-3 py-2.5 sm:px-4">
-            <p className="text-sm font-semibold tracking-tight text-white">Life voice</p>
-            <p className="text-[10px] text-slate-400">Briefings, reminders, and tasks in one thread</p>
+          <div className="shrink-0 border-b border-white/10 px-3 py-2 sm:px-4">
+            <p className="text-sm font-semibold tracking-tight text-white">Chat</p>
           </div>
           <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 scrollbar-none sm:p-4">
           <div className="grid gap-3">
@@ -1494,24 +1586,40 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             ) : null}
           </div>
           </div>
-        </div>
 
-        {followUpQuestions.length > 0 ? (
-          <div className="mt-2 flex flex-col gap-1.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Suggested questions
+        {showSuggestedQuestions && followUpQuestions.length > 0 ? (
+          <div className="shrink-0 border-t border-white/10 px-3 pb-2 pt-2 sm:px-4">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+              Suggested
             </p>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible">
               {followUpQuestions.map((q, i) => (
                 <button
-                  key={`${q.kind}-${i}`}
+                  key={`${q.kind}-${i}-${q.text.slice(0, 24)}`}
                   type="button"
                   disabled={briefingStreaming}
-                  onClick={() => setInput(q.text)}
-                  className={`max-w-full rounded-full border px-2.5 py-1 text-left text-[11px] font-medium leading-snug transition sm:max-w-[32%] disabled:cursor-not-allowed disabled:opacity-40 ${
+                  onClick={() => {
+                    const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content;
+                    const taskBrief: TaskItemBrief[] = tasks.map((t) => ({
+                      id: t.id,
+                      title: t.title,
+                      dueAt: t.dueAt,
+                      status: t.status,
+                    }));
+                    setInput(q.text);
+                    setFollowUpQuestions((prev) =>
+                      replaceFollowUpSlot(prev, i as 0 | 1 | 2, {
+                        reminders,
+                        tasks: taskBrief,
+                        lastUserMessage: lastUser,
+                        firstName: user?.firstName,
+                      })
+                    );
+                  }}
+                  className={`shrink-0 rounded-2xl border px-3 py-2.5 text-left text-xs font-medium leading-snug transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 min-[480px]:max-w-[min(100%,20rem)] max-[479px]:w-[min(88vw,20rem)] ${
                     q.kind === "action"
-                      ? "border-emerald-500/50 bg-emerald-950/30 text-emerald-50 hover:bg-emerald-900/40"
-                      : "border-slate-600/80 bg-slate-900/40 text-slate-100 hover:bg-slate-800/60"
+                      ? "border-emerald-500/50 bg-emerald-950/35 text-emerald-50 hover:bg-emerald-900/45"
+                      : "border-slate-600/80 bg-slate-900/50 text-slate-100 hover:bg-slate-800/65"
                   }`}
                 >
                   {q.text}
@@ -1523,23 +1631,21 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
         <form
           onSubmit={handleChatSubmit}
-          className={`mt-3 grid shrink-0 grid-cols-[1fr_auto] items-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 ${
+          className={`grid shrink-0 grid-cols-[1fr_auto] items-end gap-2 border-t border-white/10 bg-slate-950/40 p-2 sm:p-3 ${
             briefingComposerLocked ? "opacity-90" : ""
           }`}
         >
-            <div className="relative rounded-xl border border-slate-300 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-950">
+            <div className="relative rounded-xl border border-slate-600/80 bg-slate-900/60 px-2 py-1.5 dark:border-slate-600">
               {!input.trim() ? (
                 <div
-                  className="pointer-events-none absolute left-2 top-1 z-0 min-h-[2.5rem] max-w-[calc(100%-0.5rem)] pr-2 text-sm leading-relaxed text-slate-400 dark:text-slate-500"
+                  className="pointer-events-none absolute left-2 top-1.5 z-0 min-h-[2.5rem] max-w-[calc(100%-0.5rem)] pr-2 text-sm leading-relaxed text-slate-500"
                   aria-hidden={!briefingStreaming}
                 >
                   {briefingStreaming ? (
-                    <span className="block text-slate-500 dark:text-slate-400">
-                      Briefing in progress…
-                    </span>
+                    <span className="block text-slate-400">Briefing in progress…</span>
                   ) : (
                     <TypingPlaceholderOverlay
-                      show={!input.trim()}
+                      show={!input.trim() && !isLoading}
                       lines={placeholderCycleLines}
                       className="block whitespace-pre-wrap break-words"
                     />
@@ -1560,7 +1666,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 readOnly={briefingComposerLocked}
                 aria-busy={briefingStreaming}
                 aria-label={briefingStreaming ? "Chat message (wait for briefing to finish)" : "Chat message"}
-                className={`relative z-10 max-h-32 min-h-10 w-full resize-none bg-transparent px-2 py-1 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100 ${
+                className={`relative z-10 max-h-32 min-h-11 w-full resize-none bg-transparent px-2 py-1.5 text-sm text-slate-100 outline-none placeholder:text-slate-500 ${
                   briefingComposerLocked ? "cursor-wait caret-transparent" : ""
                 }`}
               />
@@ -1568,12 +1674,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             <button
               type="submit"
               disabled={!input.trim() || isLoading || briefingStreaming}
-              className="h-11 w-11 rounded-full bg-emerald-600 text-base font-semibold text-white shadow-md transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-11 w-11 shrink-0 rounded-full bg-emerald-600 text-base font-semibold text-white shadow-md transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Send message"
             >
-              {isLoading ? "..." : briefingStreaming ? "…" : "➤"}
+              {isLoading ? "…" : briefingStreaming ? "…" : "➤"}
             </button>
         </form>
+        </div>
       </section>
 
       {isSnapshotOpen && (
@@ -1593,176 +1700,193 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-4">
-            <ul className="grid gap-3">
-              <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
-                {snapshot.pending} reminders pending
-              </li>
-              <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
-                {snapshot.today} due today
-              </li>
-              <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
-                {snapshot.missed} overdue items
-              </li>
-            </ul>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="flex aspect-square min-h-[4.25rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50 p-1 text-center dark:border-slate-700 dark:bg-slate-950">
+                <span className="text-xl font-bold tabular-nums leading-none text-slate-900 dark:text-white">
+                  {snapshot.pending}
+                </span>
+                <span className="mt-1 text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
+                  Left
+                </span>
+              </div>
+              <div className="flex aspect-square min-h-[4.25rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50 p-1 text-center dark:border-slate-700 dark:bg-slate-950">
+                <span className="text-xl font-bold tabular-nums leading-none text-slate-900 dark:text-white">
+                  {snapshot.today}
+                </span>
+                <span className="mt-1 text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
+                  Today
+                </span>
+              </div>
+              <div className="flex aspect-square min-h-[4.25rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50 p-1 text-center dark:border-slate-700 dark:bg-slate-950">
+                <span className="text-xl font-bold tabular-nums leading-none text-slate-900 dark:text-white">
+                  {snapshot.missed}
+                </span>
+                <span className="mt-1 text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
+                  Late
+                </span>
+              </div>
+            </div>
 
-            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/90 p-3 text-sm dark:border-slate-700 dark:bg-slate-950/80">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                Due-time notifications
-              </p>
-              <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                Get a system alert when a reminder’s time arrives. On phones, add this app to your home screen for the
-                best results. Large screens only alert if you opt in below.
-              </p>
+            <label className="mt-3 flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/90 px-2.5 py-2 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-100">
+              <input
+                type="checkbox"
+                className="mt-0.5 shrink-0"
+                checked={showSuggestedQuestions}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setShowSuggestedQuestions(on);
+                  try {
+                    localStorage.setItem(SHOW_SUGGESTED_QUESTIONS_KEY, on ? "1" : "0");
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
+              <span>Suggested questions in chat</span>
+            </label>
+
+            <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50/90 p-2 text-xs dark:border-slate-700 dark:bg-slate-950/80">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="flex cursor-pointer items-center gap-2 text-slate-800 dark:text-slate-100">
+                  <input
+                    type="checkbox"
+                    className="shrink-0"
+                    checked={dueNotifPrefs.enabled && Notification.permission === "granted"}
+                    onChange={(e) => {
+                      if (e.target.checked) void requestDueNotificationPermission();
+                      else persistDueNotifPrefs({ enabled: false });
+                    }}
+                    disabled={typeof Notification !== "undefined" && Notification.permission === "denied"}
+                  />
+                  <span>Due-time alerts</span>
+                </label>
+                {typeof Notification !== "undefined" && Notification.permission === "default" ? (
+                  <button
+                    type="button"
+                    onClick={() => void requestDueNotificationPermission()}
+                    className="shrink-0 rounded-full bg-violet-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-violet-500"
+                  >
+                    Allow
+                  </button>
+                ) : null}
+              </div>
+              <details className="mt-1.5 border-t border-slate-200 pt-1.5 dark:border-slate-700">
+                <summary className="cursor-pointer text-[11px] text-slate-600 dark:text-slate-400">
+                  More alert options
+                </summary>
+                <div className="mt-2 space-y-1.5 pl-0.5">
+                  <label className="flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 shrink-0"
+                      checked={dueNotifPrefs.notifyWhenForeground}
+                      onChange={(e) => persistDueNotifPrefs({ notifyWhenForeground: e.target.checked })}
+                      disabled={!dueNotifPrefs.enabled || Notification.permission !== "granted"}
+                    />
+                    <span>Also when this tab is visible</span>
+                  </label>
+                  <label className="flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 shrink-0"
+                      checked={dueNotifPrefs.desktopEnabled}
+                      onChange={(e) => persistDueNotifPrefs({ desktopEnabled: e.target.checked })}
+                      disabled={!dueNotifPrefs.enabled || Notification.permission !== "granted"}
+                    />
+                    <span>On large / desktop screens</span>
+                  </label>
+                </div>
+              </details>
               {typeof Notification !== "undefined" && Notification.permission === "denied" ? (
-                <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-                  Notifications are blocked for this site—enable them in the browser or system settings to use this
-                  feature.
+                <p className="mt-1.5 text-[10px] text-amber-700 dark:text-amber-300">
+                  Notifications blocked—enable in browser settings.
                 </p>
-              ) : null}
-              <label className="mt-3 flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={dueNotifPrefs.enabled && Notification.permission === "granted"}
-                  onChange={(e) => {
-                    if (e.target.checked) void requestDueNotificationPermission();
-                    else persistDueNotifPrefs({ enabled: false });
-                  }}
-                  disabled={typeof Notification !== "undefined" && Notification.permission === "denied"}
-                />
-                <span>Alert when a reminder is due</span>
-              </label>
-              <label className="mt-2 flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={dueNotifPrefs.notifyWhenForeground}
-                  onChange={(e) => persistDueNotifPrefs({ notifyWhenForeground: e.target.checked })}
-                  disabled={!dueNotifPrefs.enabled || Notification.permission !== "granted"}
-                />
-                <span>Also show the system notification when this tab is visible</span>
-              </label>
-              <label className="mt-2 flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={dueNotifPrefs.desktopEnabled}
-                  onChange={(e) => persistDueNotifPrefs({ desktopEnabled: e.target.checked })}
-                  disabled={!dueNotifPrefs.enabled || Notification.permission !== "granted"}
-                />
-                <span>Enable on desktop / large screens (not only phone-sized windows)</span>
-              </label>
-              {typeof Notification !== "undefined" && Notification.permission === "default" ? (
-                <button
-                  type="button"
-                  onClick={() => void requestDueNotificationPermission()}
-                  className="mt-3 w-full rounded-full bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-500"
-                >
-                  Ask browser for permission
-                </button>
               ) : null}
             </div>
 
-            <div className="mt-5 space-y-5 border-t border-slate-200 pt-5 dark:border-slate-800">
-              <div>
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Main actions
-                </p>
-                <div className="flex flex-col gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsSnapshotOpen(false);
-                      openCreateModal();
-                    }}
-                    className="w-full rounded-xl bg-violet-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
-                  >
-                    Create reminder
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsSnapshotOpen(false);
-                      setIsListOpen(true);
-                    }}
-                    className="w-full rounded-xl bg-violet-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
-                  >
-                    View reminders
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsSnapshotOpen(false);
-                      setTaskFormError(null);
-                      void refreshTasks();
-                      setIsTasksOpen(true);
-                    }}
-                    className="w-full rounded-xl bg-violet-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
-                  >
-                    Tasks
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Data &amp; chat
-                </p>
-                <div className="flex flex-col gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsSnapshotOpen(false);
-                      setImportStatus(null);
-                      setIsImportOpen(true);
-                    }}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                  >
-                    Import JSON
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsSnapshotOpen(false);
-                      handleExportChat();
-                    }}
-                    disabled={isLoading || messages.length === 0}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                  >
-                    Export chat
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBatchStatus(null);
-                      setIsSnapshotOpen(false);
-                      setIsBatchOpen(true);
-                    }}
-                    disabled={isBatchRunning || isLoading}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                  >
-                    Batch questions
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Clear history
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSnapshotOpen(false);
-                    void handleClearChat();
-                  }}
-                  disabled={isClearingChat || isLoading}
-                  className="w-full rounded-xl border border-rose-200 bg-rose-50/80 px-4 py-2.5 text-left text-sm font-medium text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100 dark:hover:bg-rose-950/60"
-                >
-                  {isClearingChat ? "Clearing…" : "Clear chat"}
-                </button>
-              </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSnapshotOpen(false);
+                  openCreateModal();
+                }}
+                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl bg-violet-600 px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSnapshotOpen(false);
+                  setIsListOpen(true);
+                }}
+                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl bg-violet-600 px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
+              >
+                Reminders
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSnapshotOpen(false);
+                  setTaskFormError(null);
+                  void refreshTasks();
+                  setIsTasksOpen(true);
+                }}
+                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl bg-violet-600 px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
+              >
+                Tasks
+              </button>
             </div>
+
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSnapshotOpen(false);
+                  setImportStatus(null);
+                  setIsImportOpen(true);
+                }}
+                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-white px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-slate-800 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              >
+                Import
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSnapshotOpen(false);
+                  handleExportChat();
+                }}
+                disabled={isLoading || messages.length === 0}
+                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-white px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              >
+                Export
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBatchStatus(null);
+                  setIsSnapshotOpen(false);
+                  setIsBatchOpen(true);
+                }}
+                disabled={isBatchRunning || isLoading}
+                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-white px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              >
+                Batch
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsSnapshotOpen(false);
+                void handleClearChat();
+              }}
+              disabled={isClearingChat || isLoading}
+              className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-50/80 py-2 text-center text-xs font-semibold text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100 dark:hover:bg-rose-950/60"
+            >
+              {isClearingChat ? "Clearing…" : "Clear chat"}
+            </button>
             </div>
           </aside>
         </div>
