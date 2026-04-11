@@ -33,16 +33,24 @@ export async function POST(request: Request) {
     tags?: string[];
     status?: "pending" | "done" | "archived";
   };
-  if (!body.title || !body.dueAt) {
+  if (!body.title?.trim() || body.dueAt == null) {
     return NextResponse.json({ error: "title and dueAt required" }, { status: 400 });
   }
+
+  const dueAt = Number(body.dueAt);
+  if (!Number.isFinite(dueAt)) {
+    return NextResponse.json({ error: "dueAt must be a valid timestamp" }, { status: 400 });
+  }
+
+  const notes =
+    typeof body.notes === "string" && body.notes.trim().length > 0 ? body.notes.trim() : undefined;
 
   const client = getConvexClient();
   const result = await client.mutation("reminders:create" as any, {
     userId,
-    title: body.title,
-    notes: body.notes,
-    dueAt: body.dueAt,
+    title: body.title.trim(),
+    notes,
+    dueAt,
     recurrence: body.recurrence ?? "none",
     priority: body.priority,
     urgency: body.urgency,

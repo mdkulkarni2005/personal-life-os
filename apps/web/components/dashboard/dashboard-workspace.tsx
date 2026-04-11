@@ -231,6 +231,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [newRecurrence, setNewRecurrence] = useState<ReminderRecurrence>("none");
   const [newNotes, setNewNotes] = useState("");
   const [pendingCreateDraft, setPendingCreateDraft] = useState<PendingCreateDraft | null>(null);
+  const [createFormError, setCreateFormError] = useState<string | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const refreshReminders = useCallback(async () => {
@@ -517,16 +518,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       );
       if (isDuplicate) return;
 
-      void fetch("/api/reminders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          dueAt: new Date(dueAt).getTime(),
-          notes: action.notes ?? "",
-          recurrence: "none",
-        }),
-      }).then(() => void refreshReminders());
+      void (async () => {
+        const res = await fetch("/api/reminders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title,
+            dueAt: new Date(dueAt).getTime(),
+            notes: action.notes?.trim() ? action.notes : undefined,
+            recurrence: "none",
+          }),
+        });
+        if (res.ok) await refreshReminders();
+      })();
       return;
     }
 
@@ -1012,10 +1016,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const openCreateModal = () => {
     resetReminderForm();
+    setCreateFormError(null);
     setIsCreateOpen(true);
   };
 
   const openEditModal = (reminder: ReminderItem) => {
+    setCreateFormError(null);
     const dueDate = new Date(reminder.dueAt);
     const datePart = dueDate.toISOString().slice(0, 10);
     const timePart = dueDate.toTimeString().slice(0, 5);
@@ -1032,21 +1038,36 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const handleManualCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!newTitle.trim() || !newDate || !newTime) return;
+    setCreateFormError(null);
     const dueAt = new Date(`${newDate}T${newTime}`).toISOString();
     const dueAtMs = new Date(dueAt).getTime();
+    if (!Number.isFinite(dueAtMs)) {
+      setCreateFormError("Invalid date or time.");
+      return;
+    }
 
     if (editingReminderId) {
-      await fetch(`/api/reminders/${editingReminderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: newTitle.trim(),
-          dueAt: dueAtMs,
-          recurrence: newRecurrence,
-          notes: newNotes.trim(),
-        }),
-      });
-      await refreshReminders();
+      try {
+        const res = await fetch(`/api/reminders/${editingReminderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: newTitle.trim(),
+            dueAt: dueAtMs,
+            recurrence: newRecurrence,
+            notes: newNotes.trim() ? newNotes.trim() : undefined,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          setCreateFormError(data.error ?? "Could not update reminder.");
+          return;
+        }
+        await refreshReminders();
+      } catch {
+        setCreateFormError("Network error. Try again.");
+        return;
+      }
     } else {
       const isDuplicate = reminders.some(
         (item) =>
@@ -1060,19 +1081,30 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         return;
       }
 
-      await fetch("/api/reminders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: newTitle.trim(),
-          dueAt: dueAtMs,
-          recurrence: newRecurrence,
-          notes: newNotes.trim(),
-        }),
-      });
-      await refreshReminders();
+      try {
+        const res = await fetch("/api/reminders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: newTitle.trim(),
+            dueAt: dueAtMs,
+            recurrence: newRecurrence,
+            notes: newNotes.trim() ? newNotes.trim() : undefined,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string; created?: boolean };
+        if (!res.ok) {
+          setCreateFormError(data.error ?? "Could not save reminder.");
+          return;
+        }
+        await refreshReminders();
+      } catch {
+        setCreateFormError("Network error. Try again.");
+        return;
+      }
     }
     resetReminderForm();
+    setCreateFormError(null);
     setIsCreateOpen(false);
   };
 
@@ -1526,6 +1558,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
                 />
               </label>
+              {createFormError ? (
+                <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
+                  {createFormError}
+                </p>
+              ) : null}
               <div className="mt-1 flex gap-2">
                 <button
                   type="submit"
@@ -1537,6 +1574,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   type="button"
                   onClick={() => {
                     resetReminderForm();
+                    setCreateFormError(null);
                     setIsCreateOpen(false);
                   }}
                   className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold"

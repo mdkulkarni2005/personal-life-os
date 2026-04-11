@@ -236,10 +236,20 @@ export function analyzeSchedule(reminders: ReminderItem[], now = new Date()): Sc
   return { nextTask, overdueTasks, upcomingTasks, conflicts, freeSlots };
 }
 
+/** True when the user is likely trying to create a new reminder (broad, natural phrasing). */
+export function looksLikeCreateIntent(message: string): boolean {
+  const n = message.toLowerCase();
+  if (/\bremind me to\b/.test(n)) return true;
+  if (/\b(create|add|set|make)\s+(a\s+)?reminder\b/.test(n)) return true;
+  if (/\b(schedule|set)\s+(a\s+)?(task|meeting|event|appointment|call)\b/.test(n)) return true;
+  if (/\b(add|create)\s+to\s+(my\s+)?(calendar|reminders)\b/.test(n)) return true;
+  return /\b(create|add|set|make|schedule|remind me)\b/.test(n) && /\b(reminder|remind)\b/.test(n);
+}
+
 export function classifyReminderIntent(message: string): ReminderIntent {
   const n = message.toLowerCase().trim();
   if (!n) return "ambiguous";
-  if (/\b(create|add|set|schedule|remind me)\b/.test(n) && /\b(reminder|remind)\b/.test(n)) {
+  if (looksLikeCreateIntent(message)) {
     return "create_reminder";
   }
   if (/\b(update|edit|change|move|reschedule|complete|done|mark|delete|remove|archive)\b/.test(n)) {
@@ -324,9 +334,7 @@ export function buildListRemindersReply(
 export function inferListScopeFromMessage(message: string): ReminderListScope | null {
   const n = message.toLowerCase().trim();
   if (classifyReminderIntent(message) === "decision_query") return null;
-  const looksLikeCreate =
-    /\b(create|add|set|make|schedule)\b/i.test(n) && /\b(reminder|remind)\b/i.test(n);
-  if (looksLikeCreate) return null;
+  if (looksLikeCreateIntent(message)) return null;
 
   // Detail-style questions are handled elsewhere, not as a bulk list
   if (/\bwhat'?s that\b/.test(n)) return null;

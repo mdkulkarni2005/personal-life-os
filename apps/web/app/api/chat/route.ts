@@ -7,6 +7,7 @@ import {
   filterToday,
   inferListScopeFromMessage,
   isCompoundReminderQuestion,
+  looksLikeCreateIntent,
   rankTasks,
   tryGroundedReminderAnswer,
   type ReminderListScope,
@@ -223,13 +224,14 @@ function isValidFutureIsoDate(value: string) {
   return Number.isFinite(date.getTime()) && date.getTime() > Date.now() - 60 * 1000;
 }
 
-function isCreateIntent(input: string) {
-  return /\b(create|add|set|make|remind me|schedule)\b/i.test(input)
-    && /\b(reminder|remind)\b/i.test(input);
-}
-
 function extractTitleFromCreateInput(input: string) {
-  const normalized = input
+  let working = input.trim();
+  const remindGlobal = /\bremind me to\s+/i.exec(working);
+  if (remindGlobal && remindGlobal.index !== undefined) {
+    working = working.slice(remindGlobal.index + remindGlobal[0].length);
+  }
+
+  const normalized = working
     .replace(/\b(create|add|set|make|schedule)\b/gi, " ")
     .replace(/\b(reminder|remind me|remind)\b/gi, " ")
     .replace(/\b(for|about)\b/gi, " ")
@@ -339,7 +341,7 @@ export async function POST(request: Request) {
   }
 
   // Deterministic path first: create reminder with explicit date/time should not rely on LLM.
-  if (isCreateIntent(message)) {
+  if (looksLikeCreateIntent(message)) {
     const title = extractTitleFromCreateInput(message);
     const dueAt = parseDateTimeFromInput(message);
 
