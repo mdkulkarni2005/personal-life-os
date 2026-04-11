@@ -275,6 +275,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [dueNotifPrefs, setDueNotifPrefs] = useState<DueNotificationPrefs>(() => loadDueNotificationPrefs());
   const [notifUiTick, setNotifUiTick] = useState(0);
   const [dueNotifBannerDismissed, setDueNotifBannerDismissed] = useState(false);
+  const messagesRef = useRef<ChatMessage[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
@@ -313,12 +314,77 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [taskFormNotes, setTaskFormNotes] = useState("");
   const [taskFormError, setTaskFormError] = useState<string | null>(null);
   const briefingRanRef = useRef(false);
+  const briefingPlaybackActiveRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remindersRef = useRef(reminders);
   remindersRef.current = reminders;
   const listOpenRef = useRef(false);
   const [briefingStreaming, setBriefingStreaming] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const isHistoryLoadedRef = useRef(false);
+
+  messagesRef.current = messages;
+  isHistoryLoadedRef.current = isHistoryLoaded;
+
+  /** Persists latest messages; uses sendBeacon/keepalive so a refresh does not drop unsaved debounced writes. */
+  const flushChatHistoryToServer = useCallback(() => {
+    if (!isHistoryLoadedRef.current) return;
+    const deduped = dedupeMessagesById(messagesRef.current).filter((m) => !m.meta?.skipPersist);
+    if (deduped.length === 0) return;
+    const body = JSON.stringify({ messages: deduped });
+    const url = "/api/chat/history";
+    try {
+      if (typeof navigator !== "undefined" && typeof Blob !== "undefined" && body.length < 55_000) {
+        const blob = new Blob([body], { type: "application/json" });
+        if (navigator.sendBeacon(url, blob)) return;
+      }
+    } catch {
+      /* fall through to fetch */
+    }
+    void fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    });
+  }, []);
+
+  const runBriefingStream = useCallback(() => {
+    if (!isHistoryLoaded || briefingPlaybackActiveRef.current) return;
+    briefingPlaybackActiveRef.current = true;
+    const full = buildBriefingNarrative(remindersRef.current);
+    const id = `briefing-${Date.now()}`;
+    setBriefingStreaming(true);
+
+    setMessages((prev) => {
+      const rest = prev.filter((m) => m.id !== "starter" && m.meta?.kind !== "briefing");
+      return [
+        {
+          id,
+          role: "assistant",
+          content: "",
+          createdAt: new Date().toISOString(),
+          meta: { kind: "briefing", skipPersist: true },
+        },
+        ...rest,
+      ];
+    });
+
+    let i = 0;
+    const step = () => {
+      i = Math.min(full.length, i + 2);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, content: full.slice(0, i) } : m))
+      );
+      if (i < full.length) {
+        window.setTimeout(step, 72);
+      } else {
+        briefingPlaybackActiveRef.current = false;
+        setBriefingStreaming(false);
+      }
+    };
+    window.setTimeout(step, 380);
+  }, [isHistoryLoaded]);
 
   const refreshReminders = useCallback(async () => {
     const response = await fetch("/api/reminders");
@@ -409,17 +475,32 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     if (!isHistoryLoaded) return;
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
-      const deduped = dedupeMessagesById(messages).filter((m) => !m.meta?.skipPersist);
-      void fetch("/api/chat/history", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: deduped }),
-      });
-    }, 900);
+      flushChatHistoryToServer();
+    }, 350);
     return () => {
       if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     };
-  }, [messages, isHistoryLoaded]);
+  }, [messages, isHistoryLoaded, flushChatHistoryToServer]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded || isLoading) return;
+    flushChatHistoryToServer();
+  }, [isLoading, isHistoryLoaded, flushChatHistoryToServer]);
+
+  useEffect(() => {
+    const onLeave = () => {
+      if (document.visibilityState === "hidden") flushChatHistoryToServer();
+    };
+    const onUnload = () => flushChatHistoryToServer();
+    document.addEventListener("visibilitychange", onLeave);
+    window.addEventListener("pagehide", onUnload);
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      document.removeEventListener("visibilitychange", onLeave);
+      window.removeEventListener("pagehide", onUnload);
+      window.removeEventListener("beforeunload", onUnload);
+    };
+  }, [flushChatHistoryToServer]);
 
   useEffect(() => {
     if (!isHistoryLoaded) return;
@@ -495,42 +576,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       } catch {
         /* ignore */
       }
-
-      const full = buildBriefingNarrative(remindersRef.current);
-      const id = `briefing-${Date.now()}`;
-      setBriefingStreaming(true);
-
-      setMessages((prev) => {
-        const rest = prev.filter((m) => m.id !== "starter");
-        return [
-          {
-            id,
-            role: "assistant",
-            content: "",
-            createdAt: new Date().toISOString(),
-            meta: { kind: "briefing", skipPersist: true },
-          },
-          ...rest,
-        ];
-      });
-
-      let i = 0;
-      const step = () => {
-        i = Math.min(full.length, i + 2);
-        setMessages((prev) =>
-          prev.map((m) => (m.id === id ? { ...m, content: full.slice(0, i) } : m))
-        );
-        if (i < full.length) {
-          window.setTimeout(step, 72);
-        } else {
-          setBriefingStreaming(false);
-        }
-      };
-      window.setTimeout(step, 380);
+      runBriefingStream();
     }, 650);
 
     return () => window.clearTimeout(timer);
-  }, [isHistoryLoaded, userId]);
+  }, [isHistoryLoaded, userId, runBriefingStream]);
 
   useEffect(() => {
     const openR = () => setIsListOpen(true);
@@ -1473,8 +1523,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </div>
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
-          <div className="shrink-0 border-b border-white/10 px-3 py-2 sm:px-4">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2 sm:px-4">
             <p className="text-sm font-semibold tracking-tight text-white">Chat</p>
+            <button
+              type="button"
+              onClick={() => runBriefingStream()}
+              disabled={!isHistoryLoaded || briefingStreaming || isLoading}
+              className="shrink-0 rounded-lg border border-violet-400/40 bg-violet-950/50 px-2.5 py-1 text-xs font-semibold text-violet-100 shadow-sm transition hover:bg-violet-900/60 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Briefing
+            </button>
           </div>
           <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 scrollbar-none sm:p-4">
           <div className="grid gap-3">
