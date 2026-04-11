@@ -13,6 +13,7 @@ import {
   type ReminderListScope,
   type ReminderItem,
 } from "@repo/reminder";
+import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../lib/server/convex-client";
 
@@ -296,10 +297,7 @@ function fromDbReminder(item: Record<string, unknown>): ReminderItem {
 async function loadRemindersForChat(userId: string, fallback: ReminderItem[]): Promise<ReminderItem[]> {
   try {
     const client = getConvexClient();
-    const raw = (await client.query("reminders:listForUser" as any, { userId })) as {
-      owned: Array<Record<string, unknown>>;
-      shared: Array<Record<string, unknown>>;
-    };
+    const raw = await client.query(api.reminders.listForUser, { userId });
     const dbReminders = [...raw.owned, ...raw.shared].sort(
       (a, b) => Number(a.dueAt) - Number(b.dueAt)
     );

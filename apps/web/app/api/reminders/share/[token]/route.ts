@@ -1,7 +1,12 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { appendSystemChatMessage } from "../../../../../lib/server/chat-notify";
 import { getConvexClient } from "../../../../../lib/server/convex-client";
+
+function errorMessage(err: unknown) {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export async function GET(
   _request: Request,
@@ -12,10 +17,15 @@ export async function GET(
     return NextResponse.json({ error: "Missing token" }, { status: 400 });
   }
 
-  const client = getConvexClient();
-  const preview = await client.query("reminderSharing:getInviteByToken" as any, {
-    token: decodeURIComponent(token),
-  });
+  let preview;
+  try {
+    const client = getConvexClient();
+    preview = await client.query(api.reminderSharing.getInviteByToken, {
+      token: decodeURIComponent(token),
+    });
+  } catch (err) {
+    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
+  }
   if (!preview) {
     return NextResponse.json({ error: "Invite not found" }, { status: 404 });
   }
@@ -42,12 +52,25 @@ export async function POST(
     || user?.primaryEmailAddress?.emailAddress
     || "Someone";
 
-  const client = getConvexClient();
-  const result = await client.mutation("reminderSharing:acceptInvite" as any, {
-    token: decodeURIComponent(token),
-    userId,
-    displayName,
-  });
+  let result: {
+    ok: boolean;
+    reason?: string;
+    title?: string;
+    ownerUserId?: string;
+    displayName?: string;
+    already?: boolean;
+    reminderId?: unknown;
+  };
+  try {
+    const client = getConvexClient();
+    result = await client.mutation(api.reminderSharing.acceptInvite, {
+      token: decodeURIComponent(token),
+      userId,
+      displayName,
+    });
+  } catch (err) {
+    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
+  }
 
   if (!result.ok) {
     if (result.reason === "owner_self") {

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.0.12",
+    "@repo/db": "workspace:*",
     "@repo/reminder": "workspace:*",
     "@repo/ui": "workspace:*",
     "convex": "^1.25.4",

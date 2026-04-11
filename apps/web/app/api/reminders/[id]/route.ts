@@ -1,7 +1,12 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { appendSystemChatMessage } from "../../../../lib/server/chat-notify";
 import { getConvexClient } from "../../../../lib/server/convex-client";
+
+function errorMessage(err: unknown) {
+  return err instanceof Error ? err.message : String(err);
+}
 
 function actorLabel(user: Awaited<ReturnType<typeof currentUser>>) {
   if (!user) return "Someone";
@@ -37,12 +42,17 @@ export async function PATCH(
     tags?: string[];
   };
 
-  const client = getConvexClient();
-  const reminder = await client.mutation("reminders:update" as any, {
-    userId,
-    reminderId: parseReminderId(id),
-    ...body,
-  });
+  let reminder: unknown;
+  try {
+    const client = getConvexClient();
+    reminder = await client.mutation(api.reminders.update, {
+      userId,
+      reminderId: parseReminderId(id),
+      ...body,
+    });
+  } catch (err) {
+    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
+  }
 
   if (reminder && typeof reminder === "object" && "userId" in reminder) {
     const ownerId = (reminder as { userId: string }).userId;
@@ -71,13 +81,18 @@ export async function DELETE(
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await context.params;
-  const client = getConvexClient();
-  const result = (await client.mutation("reminders:remove" as any, {
-    userId,
-    reminderId: parseReminderId(id),
-  })) as
+  let result:
     | { ok: false }
     | { ok: true; title: string; ownerUserId: string; actorWasOwner: boolean };
+  try {
+    const client = getConvexClient();
+    result = (await client.mutation(api.reminders.remove, {
+      userId,
+      reminderId: parseReminderId(id),
+    })) as typeof result;
+  } catch (err) {
+    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
+  }
 
   if (!result.ok) {
     return NextResponse.json({ ok: false }, { status: 404 });

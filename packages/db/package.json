@@ -5,7 +5,12 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./convex/schema": "./convex/schema.ts"
+    "./convex/schema": "./convex/schema.ts",
+    "./convex/api": {
+      "types": "./convex/_generated/api.d.ts",
+      "import": "./convex/_generated/api.js",
+      "default": "./convex/_generated/api.js"
+    }
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

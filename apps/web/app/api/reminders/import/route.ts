@@ -1,6 +1,11 @@
 import { auth } from "@clerk/nextjs/server";
+import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../../lib/server/convex-client";
+
+function errorMessage(err: unknown) {
+  return err instanceof Error ? err.message : String(err);
+}
 
 type ReminderRecurrence = "none" | "daily" | "weekly" | "monthly";
 
@@ -154,25 +159,29 @@ export async function POST(request: Request) {
     normalized.push(parsed.value);
   }
 
-  const client = getConvexClient();
-  const created: Array<unknown> = [];
-  for (const reminder of normalized) {
-    const result = await client.mutation("reminders:create" as any, {
-      userId,
-      title: reminder.title,
-      notes: reminder.notes,
-      dueAt: reminder.dueAt,
-      recurrence: reminder.recurrence,
-      priority: reminder.priority,
-      urgency: reminder.urgency,
-      tags: reminder.tags,
-      status: reminder.status ?? "pending",
-    });
-    created.push(result);
-  }
+  try {
+    const client = getConvexClient();
+    const created: Array<unknown> = [];
+    for (const reminder of normalized) {
+      const result = await client.mutation(api.reminders.create, {
+        userId,
+        title: reminder.title,
+        notes: reminder.notes,
+        dueAt: reminder.dueAt,
+        recurrence: reminder.recurrence,
+        priority: reminder.priority,
+        urgency: reminder.urgency,
+        tags: reminder.tags,
+        status: reminder.status ?? "pending",
+      });
+      created.push(result);
+    }
 
-  return NextResponse.json({
-    createdCount: created.length,
-    created,
-  });
+    return NextResponse.json({
+      createdCount: created.length,
+      created,
+    });
+  } catch (err) {
+    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
+  }
 }
