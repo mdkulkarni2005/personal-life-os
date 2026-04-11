@@ -7,8 +7,16 @@ export async function GET() {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const client = getConvexClient();
-  const reminders = await client.query("reminders:list" as any, { userId });
-  return NextResponse.json({ reminders });
+  const data = (await client.query("reminders:listForUser" as any, { userId })) as {
+    owned: Array<Record<string, unknown>>;
+    shared: Array<Record<string, unknown>>;
+  };
+  const merged: Array<Record<string, unknown>> = [
+    ...data.owned.map((r) => ({ ...r, _access: "owner" })),
+    ...data.shared.map((r) => ({ ...r, _access: "shared" })),
+  ];
+  merged.sort((a, b) => Number(a.dueAt) - Number(b.dueAt));
+  return NextResponse.json({ reminders: merged });
 }
 
 export async function POST(request: Request) {
@@ -20,6 +28,10 @@ export async function POST(request: Request) {
     notes?: string;
     dueAt?: number;
     recurrence?: "none" | "daily" | "weekly" | "monthly";
+    priority?: number;
+    urgency?: number;
+    tags?: string[];
+    status?: "pending" | "done" | "archived";
   };
   if (!body.title || !body.dueAt) {
     return NextResponse.json({ error: "title and dueAt required" }, { status: 400 });
@@ -32,6 +44,10 @@ export async function POST(request: Request) {
     notes: body.notes,
     dueAt: body.dueAt,
     recurrence: body.recurrence ?? "none",
+    priority: body.priority,
+    urgency: body.urgency,
+    tags: body.tags,
+    status: body.status ?? "pending",
   });
   return NextResponse.json(result);
 }

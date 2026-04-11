@@ -1,6 +1,17 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { appendSystemChatMessage } from "../../../../lib/server/chat-notify";
 import { getConvexClient } from "../../../../lib/server/convex-client";
+
+function actorLabel(user: Awaited<ReturnType<typeof currentUser>>) {
+  if (!user) return "Someone";
+  return (
+    [user.firstName, user.lastName].filter(Boolean).join(" ").trim()
+    || user.username
+    || user.primaryEmailAddress?.emailAddress
+    || "Someone"
+  );
+}
 
 function parseReminderId(id: string) {
   // Convex validates the id format at runtime.
@@ -19,8 +30,11 @@ export async function PATCH(
     title?: string;
     notes?: string;
     dueAt?: number;
-    status?: "pending" | "done";
+    status?: "pending" | "done" | "archived";
     recurrence?: "none" | "daily" | "weekly" | "monthly";
+    priority?: number;
+    urgency?: number;
+    tags?: string[];
   };
 
   const client = getConvexClient();
@@ -29,6 +43,23 @@ export async function PATCH(
     reminderId: parseReminderId(id),
     ...body,
   });
+
+  if (reminder && typeof reminder === "object" && "userId" in reminder) {
+    const ownerId = (reminder as { userId: string }).userId;
+    if (ownerId && ownerId !== userId) {
+      const user = await currentUser();
+      const actor = actorLabel(user);
+      const title = String((reminder as { title?: string }).title ?? "Reminder");
+      let line = `${actor} updated "${title}".`;
+      if (body.status === "done") line = `${actor} marked "${title}" as done.`;
+      else if (body.status === "pending") line = `${actor} put "${title}" back to pending.`;
+      else if (body.status === "archived") line = `${actor} archived "${title}".`;
+      else if (body.dueAt != null) line = `${actor} rescheduled "${title}".`;
+      else if (body.title != null) line = `${actor} edited the reminder (now "${title}").`;
+      await appendSystemChatMessage(ownerId, line);
+    }
+  }
+
   return NextResponse.json({ reminder });
 }
 
@@ -41,9 +72,25 @@ export async function DELETE(
 
   const { id } = await context.params;
   const client = getConvexClient();
-  const ok = await client.mutation("reminders:remove" as any, {
+  const result = (await client.mutation("reminders:remove" as any, {
     userId,
     reminderId: parseReminderId(id),
-  });
-  return NextResponse.json({ ok });
+  })) as
+    | { ok: false }
+    | { ok: true; title: string; ownerUserId: string; actorWasOwner: boolean };
+
+  if (!result.ok) {
+    return NextResponse.json({ ok: false }, { status: 404 });
+  }
+
+  if (!result.actorWasOwner) {
+    const user = await currentUser();
+    const actor = actorLabel(user);
+    await appendSystemChatMessage(
+      result.ownerUserId,
+      `${actor} deleted "${result.title}".`
+    );
+  }
+
+  return NextResponse.json({ ok: true });
 }

@@ -1,11 +1,20 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+export type ChatMessageMeta = {
+  kind?: "due_reminder";
+  reminderId?: string;
+  dueAt?: number;
+  title?: string;
+  notes?: string;
+};
+
 export interface StoredChatMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   createdAt: string;
+  meta?: ChatMessageMeta;
 }
 
 interface ChatStore {

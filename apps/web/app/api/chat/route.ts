@@ -1,9 +1,13 @@
 import { auth } from "@clerk/nextjs/server";
 import {
+  analyzeSchedule,
   buildListRemindersReply,
   buildRemindersContextBlock,
+  classifyReminderIntent,
+  filterToday,
   inferListScopeFromMessage,
   isCompoundReminderQuestion,
+  rankTasks,
   tryGroundedReminderAnswer,
   type ReminderListScope,
   type ReminderItem,
@@ -87,6 +91,65 @@ function mapAgentScopeToListScope(scope?: string): ReminderListScope | null {
     default:
       return null;
   }
+}
+
+function formatDecisionReply(reminders: ReminderItem[]) {
+  const ranked = rankTasks(reminders).slice(0, 3);
+  if (ranked.length === 0) return "You have no pending reminders right now.";
+  const lines = ranked.map(
+    (item, index) =>
+      `${index + 1}. ${item.title} — ${new Date(item.dueAt).toLocaleString()}`
+  );
+  return [
+    ranked.length === 1 ? "Your best next task is:" : "Your top next tasks are:",
+    ...lines,
+  ].join("\n");
+}
+
+function formatPlanningReply(reminders: ReminderItem[]) {
+  const analysis = analyzeSchedule(reminders);
+  const lines: string[] = [];
+  if (analysis.nextTask) {
+    lines.push(
+      `Start with ${analysis.nextTask.title} at ${new Date(analysis.nextTask.dueAt).toLocaleString()}.`
+    );
+  }
+  if (analysis.overdueTasks.length > 0) {
+    lines.push(`You have ${analysis.overdueTasks.length} overdue task(s).`);
+  }
+  if (analysis.conflicts.length > 0) {
+    const conflict = analysis.conflicts[0];
+    if (conflict) {
+      lines.push(
+        `Possible clash: ${conflict.first.title} and ${conflict.second.title} are ${conflict.minutesApart} minutes apart.`
+      );
+    }
+  }
+  if (analysis.freeSlots.length > 0) {
+    lines.push(`Free slot: ${analysis.freeSlots[0]}`);
+  }
+  return lines.join("\n") || "You have no pending reminders to plan right now.";
+}
+
+function fallbackDeterministicReply(message: string, reminders: ReminderItem[]) {
+  const intent = classifyReminderIntent(message);
+  if (intent === "decision_query") return formatDecisionReply(reminders);
+  if (intent === "planning_query") return formatPlanningReply(reminders);
+
+  const listScope = inferListScopeFromMessage(message);
+  if (listScope === "today") {
+    const today = filterToday(reminders).slice(0, 5);
+    if (today.length === 0) return "You have no reminders for today.";
+    return [
+      "Here are your reminders for today:",
+      ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${new Date(item.dueAt).toLocaleString()}`),
+    ].join("\n");
+  }
+  if (listScope) return buildListRemindersReply(reminders, listScope, new Date(), 5);
+  return (
+    tryGroundedReminderAnswer(message, reminders)
+    ?? "I can help with reminder lists, what to do next, planning your day, and reminder updates."
+  );
 }
 
 function hasExplicitTime(input: string) {
@@ -219,7 +282,10 @@ function fromDbReminder(item: Record<string, unknown>): ReminderItem {
         ? item.recurrence
         : "none",
     notes: typeof item.notes === "string" ? item.notes : "",
-    status: item.status === "done" ? "done" : "pending",
+    priority: typeof item.priority === "number" ? item.priority : undefined,
+    urgency: typeof item.urgency === "number" ? item.urgency : undefined,
+    tags: Array.isArray(item.tags) ? item.tags.filter((t): t is string => typeof t === "string") : undefined,
+    status: item.status === "done" || item.status === "archived" ? item.status : "pending",
     createdAt: new Date(createdAtMs).toISOString(),
     updatedAt: new Date(updatedAtMs).toISOString(),
   };
@@ -228,7 +294,13 @@ function fromDbReminder(item: Record<string, unknown>): ReminderItem {
 async function loadRemindersForChat(userId: string, fallback: ReminderItem[]): Promise<ReminderItem[]> {
   try {
     const client = getConvexClient();
-    const dbReminders = (await client.query("reminders:list" as any, { userId })) as Array<Record<string, unknown>>;
+    const raw = (await client.query("reminders:listForUser" as any, { userId })) as {
+      owned: Array<Record<string, unknown>>;
+      shared: Array<Record<string, unknown>>;
+    };
+    const dbReminders = [...raw.owned, ...raw.shared].sort(
+      (a, b) => Number(a.dueAt) - Number(b.dueAt)
+    );
     return dbReminders.map((item) => fromDbReminder(item));
   } catch {
     // Keep the chat functional if DB fetch temporarily fails.
@@ -250,6 +322,20 @@ export async function POST(request: Request) {
   const reminders = await loadRemindersForChat(userId, body.reminders ?? []);
   if (!message) {
     return NextResponse.json({ error: "Message is required" }, { status: 400 });
+  }
+
+  const intent = classifyReminderIntent(message);
+  if (intent === "decision_query") {
+    return NextResponse.json({
+      reply: formatDecisionReply(reminders),
+      action: { type: "unknown" },
+    } satisfies ReminderAgentResponse);
+  }
+  if (intent === "planning_query") {
+    return NextResponse.json({
+      reply: formatPlanningReply(reminders),
+      action: { type: "unknown" },
+    } satisfies ReminderAgentResponse);
   }
 
   // Deterministic path first: create reminder with explicit date/time should not rely on LLM.
@@ -279,19 +365,31 @@ export async function POST(request: Request) {
 
   const listScopeFromMessage = inferListScopeFromMessage(message);
   if (listScopeFromMessage && !isCompoundReminderQuestion(message)) {
+    if (listScopeFromMessage === "today") {
+      const today = filterToday(reminders).slice(0, 5);
+      return NextResponse.json({
+        reply:
+          today.length === 0
+            ? "You have no reminders for today."
+            : [
+              today.length === 1
+                ? "Here is your reminder for today:"
+                : "Here are your reminders for today:",
+              ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${new Date(item.dueAt).toLocaleString()}`),
+            ].join("\n"),
+        action: { type: "list_reminders" },
+      } satisfies ReminderAgentResponse);
+    }
     return NextResponse.json({
-      reply: buildListRemindersReply(reminders, listScopeFromMessage),
+      reply: buildListRemindersReply(reminders, listScopeFromMessage, new Date(), 5),
       action: { type: "list_reminders" },
     } satisfies ReminderAgentResponse);
   }
 
   const nimApiKey = process.env.NVIDIA_NIM_API_KEY;
   if (!nimApiKey) {
-    const grounded = tryGroundedReminderAnswer(message, reminders);
     const fallback: ReminderAgentResponse = {
-      reply:
-        grounded
-        ?? "I can answer simple list and detail questions from your saved reminders. For open-ended questions (compare, plan, or explain), add NVIDIA_NIM_API_KEY to enable the AI assistant.",
+      reply: fallbackDeterministicReply(message, reminders),
       action: { type: "unknown" },
     };
     return NextResponse.json(fallback);
@@ -320,12 +418,18 @@ export async function POST(request: Request) {
       }),
     });
 
-    if (!nimResponse.ok) {
-      const errorText = await nimResponse.text();
+    if (nimResponse.status === 429) {
       return NextResponse.json({
-        reply: `AI request failed: ${errorText}`,
+        reply: fallbackDeterministicReply(message, reminders),
         action: { type: "unknown" },
-      });
+      } satisfies ReminderAgentResponse);
+    }
+
+    if (!nimResponse.ok) {
+      return NextResponse.json({
+        reply: fallbackDeterministicReply(message, reminders),
+        action: { type: "unknown" },
+      } satisfies ReminderAgentResponse);
     }
 
     const data = (await nimResponse.json()) as {
@@ -338,7 +442,17 @@ export async function POST(request: Request) {
     if (parsed.action.type === "list_reminders") {
       const scope =
         mapAgentScopeToListScope(parsed.action.scope) ?? inferListScopeFromMessage(message) ?? "future";
-      parsed.reply = buildListRemindersReply(reminders, scope);
+      if (scope === "today") {
+        const today = filterToday(reminders).slice(0, 5);
+        parsed.reply = today.length === 0
+          ? "You have no reminders for today."
+          : [
+            "Here are your reminders for today:",
+            ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${new Date(item.dueAt).toLocaleString()}`),
+          ].join("\n");
+      } else {
+        parsed.reply = buildListRemindersReply(reminders, scope, new Date(), 5);
+      }
     }
 
     if (parsed.action.type === "create_reminder") {
@@ -367,12 +481,41 @@ export async function POST(request: Request) {
       }
     }
 
+    if (
+      (parsed.action.type === "delete_reminder"
+        || parsed.action.type === "mark_done"
+        || parsed.action.type === "reschedule_reminder")
+      && !parsed.action.targetId
+      && !parsed.action.targetTitle
+    ) {
+      return NextResponse.json({
+        reply: "Please tell me exactly which reminder you mean.",
+        action: { type: "clarify" },
+      } satisfies ReminderAgentResponse);
+    }
+
+    if (
+      (parsed.action.type === "delete_reminder"
+        || parsed.action.type === "mark_done"
+        || parsed.action.type === "reschedule_reminder")
+      && parsed.action.targetTitle
+    ) {
+      const matches = reminders.filter((item) =>
+        item.title.toLowerCase().includes(parsed.action.targetTitle!.toLowerCase())
+      );
+      if (matches.length > 1) {
+        const sample = matches.slice(0, 2).map((item) => `${item.title} at ${new Date(item.dueAt).toLocaleString()}`);
+        return NextResponse.json({
+          reply: `Do you mean ${sample.join(" or ")}?`,
+          action: { type: "clarify", targetTitle: parsed.action.targetTitle },
+        } satisfies ReminderAgentResponse);
+      }
+    }
+
     return NextResponse.json(parsed);
-  } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unexpected chat error.";
+  } catch {
     return NextResponse.json({
-      reply: `AI request failed: ${errorMessage}`,
+      reply: fallbackDeterministicReply(message, reminders),
       action: { type: "unknown" },
     });
   }

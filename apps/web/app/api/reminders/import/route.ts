@@ -9,6 +9,10 @@ interface ImportReminderInput {
   dueAt: number | string;
   notes?: string;
   recurrence?: ReminderRecurrence;
+  priority?: number;
+  urgency?: number;
+  tags?: string[];
+  status?: "pending" | "done" | "archived";
 }
 
 interface ImportRequestBody {
@@ -32,7 +36,19 @@ function normalizeDueAt(value: number | string): number | null {
 
 function normalizeReminder(
   value: unknown
-): { ok: true; value: { title: string; dueAt: number; notes?: string; recurrence: ReminderRecurrence } } | {
+): {
+  ok: true;
+  value: {
+    title: string;
+    dueAt: number;
+    notes?: string;
+    recurrence: ReminderRecurrence;
+    priority?: number;
+    urgency?: number;
+    tags?: string[];
+    status?: "pending" | "done" | "archived";
+  };
+} | {
   ok: false;
   error: string;
 } {
@@ -60,6 +76,18 @@ function normalizeReminder(
   }
 
   const notes = typeof input.notes === "string" ? input.notes : undefined;
+  const priority = typeof input.priority === "number" && Number.isFinite(input.priority)
+    ? input.priority
+    : undefined;
+  const urgency = typeof input.urgency === "number" && Number.isFinite(input.urgency)
+    ? input.urgency
+    : undefined;
+  const tags = Array.isArray(input.tags)
+    ? input.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+    : undefined;
+  const status = input.status === "done" || input.status === "archived" || input.status === "pending"
+    ? input.status
+    : undefined;
   return {
     ok: true,
     value: {
@@ -67,6 +95,10 @@ function normalizeReminder(
       dueAt,
       notes,
       recurrence: recurrenceRaw,
+      priority,
+      urgency,
+      tags,
+      status,
     },
   };
 }
@@ -103,6 +135,10 @@ export async function POST(request: Request) {
     dueAt: number;
     notes?: string;
     recurrence: ReminderRecurrence;
+    priority?: number;
+    urgency?: number;
+    tags?: string[];
+    status?: "pending" | "done" | "archived";
   }> = [];
 
   for (const [index, rawReminder] of remindersInput.entries()) {
@@ -127,6 +163,10 @@ export async function POST(request: Request) {
       notes: reminder.notes,
       dueAt: reminder.dueAt,
       recurrence: reminder.recurrence,
+      priority: reminder.priority,
+      urgency: reminder.urgency,
+      tags: reminder.tags,
+      status: reminder.status ?? "pending",
     });
     created.push(result);
   }

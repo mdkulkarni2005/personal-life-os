@@ -18,7 +18,7 @@ export interface ReminderChatProvider {
   complete(request: ReminderChatRequest): Promise<string>;
 }
 
-export type ReminderStatus = "pending" | "done";
+export type ReminderStatus = "pending" | "done" | "archived";
 export type ReminderRecurrence = "none" | "daily" | "weekly" | "monthly";
 
 export interface ReminderItem {
@@ -27,10 +27,23 @@ export interface ReminderItem {
   dueAt: string;
   recurrence?: ReminderRecurrence;
   notes?: string;
+  priority?: number;
+  urgency?: number;
+  tags?: string[];
   status: ReminderStatus;
   createdAt: string;
   updatedAt: string;
+  /** Present when loaded from dashboard API (owned vs shared invite). */
+  access?: "owner" | "shared";
 }
+
+export type ReminderIntent =
+  | "list_reminders"
+  | "create_reminder"
+  | "update_reminder"
+  | "decision_query"
+  | "planning_query"
+  | "ambiguous";
 
 export type ReminderBucket = "missed" | "today" | "tomorrow" | "upcoming" | "done";
 
@@ -118,6 +131,132 @@ export function filterRemindersByListScope(
   }
 }
 
+export function filterToday(reminders: ReminderItem[], now = new Date()): ReminderItem[] {
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(startOfDay);
+  endOfDay.setDate(endOfDay.getDate() + 1);
+
+  return reminders
+    .filter((r) => {
+      if (r.status === "done" || r.status === "archived") return false;
+      const dueAt = new Date(r.dueAt).getTime();
+      return dueAt >= startOfDay.getTime() && dueAt < endOfDay.getTime();
+    })
+    .sort(sortByDueAsc);
+}
+
+export function getTodayReminders(reminders: ReminderItem[], now = new Date()): ReminderItem[] {
+  return filterToday(reminders, now);
+}
+
+function reminderPriority(reminder: ReminderItem): number {
+  if (typeof reminder.priority === "number" && Number.isFinite(reminder.priority)) return reminder.priority;
+  return 0;
+}
+
+function reminderUrgency(reminder: ReminderItem): number {
+  if (typeof reminder.urgency === "number" && Number.isFinite(reminder.urgency)) return reminder.urgency;
+  return 0;
+}
+
+export function rankTasks(reminders: ReminderItem[], now = new Date()): ReminderItem[] {
+  const active = reminders.filter((r) => r.status !== "done" && r.status !== "archived");
+  return active.slice().sort((a, b) => {
+    const aOverdue = new Date(a.dueAt).getTime() < now.getTime() ? 1 : 0;
+    const bOverdue = new Date(b.dueAt).getTime() < now.getTime() ? 1 : 0;
+    if (aOverdue !== bOverdue) return bOverdue - aOverdue;
+
+    const byDue = new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
+    if (byDue !== 0) return byDue;
+
+    const byUrgency = reminderUrgency(b) - reminderUrgency(a);
+    if (byUrgency !== 0) return byUrgency;
+
+    return reminderPriority(b) - reminderPriority(a);
+  });
+}
+
+export interface ScheduleConflict {
+  first: ReminderItem;
+  second: ReminderItem;
+  minutesApart: number;
+}
+
+export interface ScheduleAnalysis {
+  nextTask: ReminderItem | null;
+  overdueTasks: ReminderItem[];
+  upcomingTasks: ReminderItem[];
+  conflicts: ScheduleConflict[];
+  freeSlots: string[];
+}
+
+export function analyzeSchedule(reminders: ReminderItem[], now = new Date()): ScheduleAnalysis {
+  const ranked = rankTasks(reminders, now);
+  const overdueTasks = ranked.filter((r) => new Date(r.dueAt).getTime() < now.getTime()).slice(0, 5);
+  const upcomingTasks = ranked.filter((r) => new Date(r.dueAt).getTime() >= now.getTime()).slice(0, 5);
+  const nextTask = upcomingTasks[0] ?? overdueTasks[0] ?? null;
+
+  const sortedByDue = reminders
+    .filter((r) => r.status !== "done" && r.status !== "archived")
+    .slice()
+    .sort(sortByDueAsc);
+  const conflicts: ScheduleConflict[] = [];
+  for (let i = 0; i < sortedByDue.length - 1; i += 1) {
+    const first = sortedByDue[i];
+    const second = sortedByDue[i + 1];
+    if (!first || !second) continue;
+    const minutesApart = Math.round(
+      (new Date(second.dueAt).getTime() - new Date(first.dueAt).getTime()) / 60000
+    );
+    if (minutesApart >= 0 && minutesApart <= 30) {
+      conflicts.push({ first, second, minutesApart });
+    }
+  }
+
+  const freeSlots: string[] = [];
+  for (let i = 0; i < sortedByDue.length - 1 && freeSlots.length < 3; i += 1) {
+    const current = sortedByDue[i];
+    const next = sortedByDue[i + 1];
+    if (!current || !next) continue;
+    const currentDue = new Date(current.dueAt);
+    const nextDue = new Date(next.dueAt);
+    const gapMinutes = Math.round((nextDue.getTime() - currentDue.getTime()) / 60000);
+    if (gapMinutes >= 90) {
+      const start = new Date(currentDue.getTime() + 30 * 60 * 1000);
+      freeSlots.push(
+        `${start.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} to ${nextDue.toLocaleTimeString(undefined, {
+          hour: "numeric",
+          minute: "2-digit",
+        })}`
+      );
+    }
+  }
+
+  return { nextTask, overdueTasks, upcomingTasks, conflicts, freeSlots };
+}
+
+export function classifyReminderIntent(message: string): ReminderIntent {
+  const n = message.toLowerCase().trim();
+  if (!n) return "ambiguous";
+  if (/\b(create|add|set|schedule|remind me)\b/.test(n) && /\b(reminder|remind)\b/.test(n)) {
+    return "create_reminder";
+  }
+  if (/\b(update|edit|change|move|reschedule|complete|done|mark|delete|remove|archive)\b/.test(n)) {
+    return "update_reminder";
+  }
+  if (/\b(what should i do right now|what should i do next|what next|next best|top priority|prioritize)\b/.test(n)) {
+    return "decision_query";
+  }
+  if (/\b(plan|planning|schedule my day|organize my day|how should i plan)\b/.test(n)) {
+    return "planning_query";
+  }
+  if (/\b(list|show|which|what|give me|reminders|due today|due tomorrow|upcoming)\b/.test(n)) {
+    return "list_reminders";
+  }
+  return "ambiguous";
+}
+
 /** Single-line, human-readable; never emits raw ISO strings */
 export function describeReminderForChat(reminder: ReminderItem, now = new Date()): string {
   const due = new Date(reminder.dueAt);
@@ -154,9 +293,10 @@ export function describeReminderForChat(reminder: ReminderItem, now = new Date()
 export function buildListRemindersReply(
   reminders: ReminderItem[],
   scope: ReminderListScope,
-  now = new Date()
+  now = new Date(),
+  limit = 5
 ): string {
-  const filtered = filterRemindersByListScope(reminders, scope, now);
+  const filtered = filterRemindersByListScope(reminders, scope, now).slice(0, Math.max(1, limit));
   if (filtered.length === 0) {
     const scopeHint =
       scope === "future"
@@ -172,7 +312,7 @@ export function buildListRemindersReply(
   const header =
     filtered.length === 1
       ? "Here is your reminder:"
-      : `Here are your ${filtered.length} reminders:`;
+      : `Here are your top ${filtered.length} reminders:`;
   const lines = filtered.map((r, i) => `${i + 1}. ${describeReminderForChat(r, now)}`);
   return [header, ...lines].join("\n");
 }
@@ -183,6 +323,7 @@ export function buildListRemindersReply(
  */
 export function inferListScopeFromMessage(message: string): ReminderListScope | null {
   const n = message.toLowerCase().trim();
+  if (classifyReminderIntent(message) === "decision_query") return null;
   const looksLikeCreate =
     /\b(create|add|set|make|schedule)\b/i.test(n) && /\b(reminder|remind)\b/i.test(n);
   if (looksLikeCreate) return null;
@@ -339,14 +480,45 @@ function answerReminderDetailHeuristic(query: string, reminders: ReminderItem[],
  * Fast grounded answers without an LLM (list + simple detail). Returns null if unclear.
  */
 export function tryGroundedReminderAnswer(message: string, reminders: ReminderItem[], now = new Date()): string | null {
-  if (isCompoundReminderQuestion(message)) return null;
+  const intent = classifyReminderIntent(message);
+  if (intent === "decision_query") {
+    const ranked = rankTasks(reminders, now).slice(0, 3);
+    if (ranked.length === 0) return "You have no pending reminders right now.";
+    return [
+      ranked.length === 1 ? "Your best next task is:" : "Your top next tasks are:",
+      ...ranked.map((item, idx) => `${idx + 1}. ${describeReminderForChat(item, now)}`),
+    ].join("\n");
+  }
+
+  if (isCompoundReminderQuestion(message) && intent !== "planning_query") return null;
 
   const listScope = inferListScopeFromMessage(message);
   if (listScope) {
-    return buildListRemindersReply(reminders, listScope, now);
+    if (listScope === "today") {
+      const today = filterToday(reminders, now).slice(0, 5);
+      if (today.length === 0) return "You have no reminders for today.";
+      return [
+        today.length === 1 ? "Here is your reminder for today:" : "Here are your reminders for today:",
+        ...today.map((r, i) => `${i + 1}. ${describeReminderForChat(r, now)}`),
+      ].join("\n");
+    }
+    return buildListRemindersReply(reminders, listScope, now, 5);
   }
   if (inferDetailQueryAboutReminders(message)) {
     return answerReminderDetailHeuristic(message, reminders, now);
+  }
+  if (intent === "planning_query") {
+    const analysis = analyzeSchedule(reminders, now);
+    const lines: string[] = [];
+    if (analysis.nextTask) lines.push(`Start with: ${describeReminderForChat(analysis.nextTask, now)}`);
+    if (analysis.conflicts.length > 0) {
+      const c = analysis.conflicts[0];
+      if (c) lines.push(`Potential clash: ${c.first.title} and ${c.second.title} are ${c.minutesApart} minutes apart.`);
+    }
+    if (analysis.freeSlots.length > 0) {
+      lines.push(`Free slot: ${analysis.freeSlots[0]}`);
+    }
+    return lines.join("\n") || "You have no pending reminders to plan right now.";
   }
   return null;
 }

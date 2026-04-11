@@ -20,7 +20,10 @@ export async function POST(request: Request) {
 
   const body = (await request.json()) as { messages?: StoredChatMessage[] };
   const messages = (body.messages ?? []).filter(
-    (item) => item?.id && item?.content && (item?.role === "user" || item?.role === "assistant")
+    (item) =>
+      item?.id
+      && item?.content
+      && (item?.role === "user" || item?.role === "assistant" || item?.role === "system")
   );
   if (messages.length === 0) {
     return NextResponse.json({ error: "Messages are required" }, { status: 400 });

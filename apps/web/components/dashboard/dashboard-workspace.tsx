@@ -10,15 +10,25 @@ import {
   type ReminderRecurrence,
   type ReminderItem,
 } from "@repo/reminder";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
-type ChatRole = "user" | "assistant";
+type ChatRole = "user" | "assistant" | "system";
+
+interface ChatMessageMeta {
+  kind?: "due_reminder";
+  reminderId?: string;
+  dueAt?: number;
+  title?: string;
+  notes?: string;
+}
 
 interface ChatMessage {
   id: string;
   role: ChatRole;
   content: string;
   createdAt: string;
+  meta?: ChatMessageMeta;
 }
 
 interface AgentAction {
@@ -106,6 +116,7 @@ function dedupeMessagesById(messages: ChatMessage[]) {
 }
 
 function fromApiReminder(item: Record<string, unknown>): ReminderItem {
+  const access = item._access === "shared" ? "shared" : "owner";
   return {
     id: String(item._id ?? item.id ?? crypto.randomUUID()),
     title: String(item.title ?? ""),
@@ -118,6 +129,7 @@ function fromApiReminder(item: Record<string, unknown>): ReminderItem {
     status: item.status === "done" ? "done" : "pending",
     createdAt: new Date(Number(item.createdAt ?? Date.now())).toISOString(),
     updatedAt: new Date(Number(item.updatedAt ?? Date.now())).toISOString(),
+    access,
   };
 }
 
@@ -127,7 +139,55 @@ function matchesReminder(reminder: ReminderItem, targetId?: string, targetTitle?
   return reminder.title.toLowerCase().includes(targetTitle.toLowerCase());
 }
 
+const DUE_SHOWN_KEY = "remindos:dueShown";
+
+function dueMinuteKey(reminder: ReminderItem) {
+  const d = new Date(reminder.dueAt);
+  return `${reminder.id}|${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}-${d.getMinutes()}`;
+}
+
+function isDueThisMinute(dueAtIso: string, now: Date) {
+  const d = new Date(dueAtIso);
+  return (
+    d.getFullYear() === now.getFullYear()
+    && d.getMonth() === now.getMonth()
+    && d.getDate() === now.getDate()
+    && d.getHours() === now.getHours()
+    && d.getMinutes() === now.getMinutes()
+  );
+}
+
+function readDueShown(): Set<string> {
+  if (typeof sessionStorage === "undefined") return new Set();
+  try {
+    const raw = sessionStorage.getItem(DUE_SHOWN_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function markDueShown(key: string) {
+  if (typeof sessionStorage === "undefined") return;
+  const next = readDueShown();
+  next.add(key);
+  sessionStorage.setItem(DUE_SHOWN_KEY, JSON.stringify([...next]));
+}
+
+function extractInviteToken(text: string): string | null {
+  const trimmed = text.trim();
+  const fromUrl = trimmed.match(/[?&]invite=([^&\s#]+)/i);
+  if (fromUrl?.[1]) return decodeURIComponent(fromUrl[1]);
+  const acceptHex = trimmed.match(/\baccept\s+invite\s+([a-f\d]{16,64})\b/i);
+  if (acceptHex?.[1]) return acceptHex[1];
+  const plainHex = trimmed.match(/\b([a-f\d]{24,40})\b/i);
+  if (plainHex?.[1] && /\b(accept|invite|join)\b/i.test(trimmed)) return plainHex[1];
+  return null;
+}
+
 export function DashboardWorkspace({ userId }: WorkspaceProps) {
+  const searchParams = useSearchParams();
   const [reminders, setReminders] = usePersistentReminders(userId);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
@@ -155,12 +215,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [pendingCreateDraft, setPendingCreateDraft] = useState<PendingCreateDraft | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  const refreshReminders = async () => {
+  const refreshReminders = useCallback(async () => {
     const response = await fetch("/api/reminders");
     if (!response.ok) return;
     const data = (await response.json()) as { reminders?: Array<Record<string, unknown>> };
     setReminders(() => (data.reminders ?? []).map((item) => fromApiReminder(item)));
-  };
+  }, [setReminders]);
 
   useEffect(() => {
     if (!isLoading) return;
@@ -177,7 +237,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         if (!response.ok) throw new Error("Failed to load chat history");
         const data = (await response.json()) as { messages?: ChatMessage[] };
         const parsed = (data.messages ?? []).filter(
-          (item) => item.id && item.content && item.createdAt
+          (item) =>
+            item.id
+            && item.content
+            && item.createdAt
+            && (item.role === "user" || item.role === "assistant" || item.role === "system")
         );
         if (parsed.length > 0) {
           setMessages(dedupeMessagesById(parsed));
@@ -214,6 +278,100 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     window.addEventListener("dashboard:snapshot-open", openSnapshot);
     return () => window.removeEventListener("dashboard:snapshot-open", openSnapshot);
   }, []);
+
+  useEffect(() => {
+    const token = searchParams.get("invite");
+    if (!token?.trim() || !isHistoryLoaded) return;
+    const storageKey = `remindos:inviteAccepted:${token}`;
+    if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(storageKey)) {
+      if (typeof window !== "undefined") window.history.replaceState({}, "", "/dashboard");
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/reminders/share/${encodeURIComponent(token)}`, {
+          method: "POST",
+        });
+        const data = (await res.json()) as { error?: string; title?: string };
+        if (!cancelled && typeof window !== "undefined") {
+          window.history.replaceState({}, "", "/dashboard");
+        }
+        if (cancelled) return;
+        if (!res.ok) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: data.error ?? "Could not accept that invite.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+        if (typeof sessionStorage !== "undefined") sessionStorage.setItem(storageKey, "1");
+        await refreshReminders();
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: data.title
+              ? `You're in on "${data.title}". Shared reminders appear in your list.`
+              : "Invite accepted.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      } catch {
+        if (!cancelled) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: "Could not accept the invite. Try again from chat with the link.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, isHistoryLoaded, refreshReminders]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded) return;
+    const tick = () => {
+      const now = new Date();
+      for (const r of reminders) {
+        if (r.status !== "pending") continue;
+        if (!isDueThisMinute(r.dueAt, now)) continue;
+        const key = dueMinuteKey(r);
+        if (readDueShown().has(key)) continue;
+        markDueShown(key);
+        const msg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `Reminder due: ${r.title}`,
+          createdAt: new Date().toISOString(),
+          meta: {
+            kind: "due_reminder",
+            reminderId: r.id,
+            dueAt: new Date(r.dueAt).getTime(),
+            title: r.title,
+            notes: r.notes,
+          },
+        };
+        setMessages((prev) => [...prev, msg]);
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 15000);
+    return () => window.clearInterval(id);
+  }, [reminders, isHistoryLoaded]);
 
   const snapshot = useMemo(() => buildReminderSnapshot(reminders), [reminders]);
 
@@ -320,6 +478,39 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setLoadingTextIndex(0);
 
     try {
+      const inviteToken = extractInviteToken(prompt);
+      if (inviteToken) {
+        const res = await fetch(`/api/reminders/share/${encodeURIComponent(inviteToken)}`, {
+          method: "POST",
+        });
+        const data = (await res.json()) as { error?: string; title?: string };
+        if (!res.ok) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: data.error ?? "Could not accept that invite.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+        await refreshReminders();
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: data.title
+              ? `You're in on "${data.title}". It is now in your reminder list.`
+              : "Invite accepted.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+
       const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant")?.content ?? "";
 
       if (pendingCreateDraft && looksLikeYes(prompt)) {
@@ -512,12 +703,92 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
   };
 
+  const copyReminderInviteLink = async (reminderId: string) => {
+    try {
+      const response = await fetch(`/api/reminders/${reminderId}/invite`, { method: "POST" });
+      if (!response.ok) return;
+      const data = (await response.json()) as { url?: string };
+      if (data.url && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(data.url);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const resolveDueLine = (messageId: string, line: string) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, meta: undefined, content: line } : m))
+    );
+  };
+
+  const handleDueReminderAction = async (
+    messageId: string,
+    reminderId: string,
+    action: "delete" | "done" | "snooze" | "reschedule"
+  ) => {
+    const title = reminders.find((x) => x.id === reminderId)?.title ?? "Reminder";
+    try {
+      if (action === "delete") {
+        await fetch(`/api/reminders/${reminderId}`, { method: "DELETE" });
+        await refreshReminders();
+        resolveDueLine(messageId, `Deleted "${title}".`);
+        return;
+      }
+      if (action === "done") {
+        await fetch(`/api/reminders/${reminderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "done" }),
+        });
+        await refreshReminders();
+        resolveDueLine(messageId, `Marked "${title}" as done.`);
+        return;
+      }
+      if (action === "snooze") {
+        const next = Date.now() + 60 * 60 * 1000;
+        await fetch(`/api/reminders/${reminderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dueAt: next }),
+        });
+        await refreshReminders();
+        resolveDueLine(messageId, `Snoozed "${title}" by one hour.`);
+        return;
+      }
+      const raw = typeof window !== "undefined" ? window.prompt("New date and time (e.g. 2026-04-12T17:00)", "") : "";
+      if (raw == null || !raw.trim()) return;
+      let dueMs = Date.parse(raw.trim());
+      if (Number.isNaN(dueMs)) {
+        dueMs = Date.parse(`${new Date().toDateString()} ${raw.trim()}`);
+      }
+      if (Number.isNaN(dueMs)) {
+        resolveDueLine(messageId, `Could not parse that time for "${title}".`);
+        return;
+      }
+      await fetch(`/api/reminders/${reminderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dueAt: dueMs }),
+      });
+      await refreshReminders();
+      resolveDueLine(messageId, `Rescheduled "${title}" to ${new Date(dueMs).toLocaleString()}.`);
+    } catch {
+      resolveDueLine(messageId, `Something went wrong updating "${title}".`);
+    }
+  };
+
   const handleExportChat = () => {
     if (messages.length === 0) return;
     const lines = messages.map((message) => {
       const date = new Date(message.createdAt);
       const timestamp = date.toLocaleString();
-      const sender = message.role === "user" ? "You" : "RemindOS (System)";
+      const sender =
+        message.role === "user"
+          ? "You"
+          : message.role === "system"
+            ? "Notice"
+            : "RemindOS (System)";
       return `[${timestamp}] ${sender}: ${message.content}`;
     });
     const content = lines.join("\n\n");
@@ -700,65 +971,93 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   return (
     <>
-      <section className="relative h-[calc(100dvh-4.5rem)] overflow-hidden bg-transparent lg:grid lg:grid-cols-3 lg:gap-4">
-        <article className="flex h-[calc(100dvh-4.5rem)] flex-col px-3 pb-3 pt-2 sm:h-[calc(100dvh-6rem)] sm:px-2 lg:col-span-2 lg:h-[calc(100dvh-7rem)] lg:px-0">
-          <div className="sticky top-0 z-10 mb-2 flex items-center justify-between bg-transparent pb-1">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                RemindOS chat
-              </p>
-              <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">
-                Reminder assistant
-              </h2>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                Fast WhatsApp-style reminders, built for mobile first.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setBatchStatus(null);
-                  setIsBatchOpen(true);
-                }}
-                disabled={isBatchRunning || isLoading}
-                className="rounded-full border border-indigo-300 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30"
-              >
-                Batch questions
-              </button>
-              <button
-                type="button"
-                onClick={handleExportChat}
-                disabled={isLoading || messages.length === 0}
-                className="rounded-full border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-900/30"
-              >
-                Export chat
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleClearChat()}
-                disabled={isClearingChat || isLoading}
-                className="rounded-full border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-800 dark:text-rose-200 dark:hover:bg-rose-900/30"
-              >
-                {isClearingChat ? "Clearing..." : "Clear chat"}
-              </button>
-            </div>
-          </div>
-          <div
-            ref={chatScrollRef}
-            className="mt-2 flex-1 overflow-y-auto rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] p-3 scrollbar-none"
-          >
-            <div className="grid gap-3">
-              {messages.map((message) => (
+      <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent px-3 pb-3 pt-1 sm:px-4 lg:mx-auto lg:max-w-3xl lg:px-6">
+        <div
+          ref={chatScrollRef}
+          className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] p-3 scrollbar-none"
+        >
+          <div className="grid gap-3">
+            {messages.map((message) => {
+              if (message.role === "system") {
+                return (
+                  <div
+                    key={message.id}
+                    className="mx-auto max-w-[92%] rounded-2xl border border-amber-400/35 bg-amber-950/40 px-3 py-2 text-center text-xs text-amber-50 shadow-sm"
+                  >
+                    <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                    <p className="mt-1 text-[10px] text-amber-200/80">
+                      {new Date(message.createdAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  </div>
+                );
+              }
+              const dueMeta = message.meta?.kind === "due_reminder" ? message.meta : null;
+              return (
                 <div
                   key={message.id}
-                  className={`max-w-[84%] rounded-3xl px-4 py-2 text-sm shadow-sm ${
+                  className={`max-w-[92%] rounded-3xl px-4 py-2 text-sm shadow-sm ${
                     message.role === "user"
                       ? "ml-auto rounded-br-lg bg-emerald-600 text-white"
                       : "rounded-bl-lg bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                  {dueMeta?.reminderId ? (
+                    <>
+                      <p className="font-semibold text-slate-900 dark:text-white">Reminder due</p>
+                      <p className="mt-1 whitespace-pre-wrap leading-relaxed text-slate-800 dark:text-slate-100">
+                        {dueMeta.title}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                        {new Date(dueMeta.dueAt ?? Date.now()).toLocaleString()}
+                      </p>
+                      {dueMeta.notes ? (
+                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">{dueMeta.notes}</p>
+                      ) : null}
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleDueReminderAction(message.id, dueMeta.reminderId!, "done")
+                          }
+                          className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500"
+                        >
+                          Done
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleDueReminderAction(message.id, dueMeta.reminderId!, "snooze")
+                          }
+                          className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                        >
+                          Snooze 1h
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleDueReminderAction(message.id, dueMeta.reminderId!, "reschedule")
+                          }
+                          className="rounded-full border border-violet-400 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/60 dark:text-violet-100"
+                        >
+                          Set new time
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleDueReminderAction(message.id, dueMeta.reminderId!, "delete")
+                          }
+                          className="rounded-full bg-rose-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-rose-500"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                  )}
                   <p
                     className={`mt-1 text-[10px] ${
                       message.role === "user" ? "text-emerald-100" : "text-slate-500 dark:text-slate-400"
@@ -770,19 +1069,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     })}
                   </p>
                 </div>
-              ))}
-              {isLoading ? (
-                <div className="max-w-[84%] rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-100">
-                  {loadingTexts[loadingTextIndex]}
-                </div>
-              ) : null}
-            </div>
+              );
+            })}
+            {isLoading ? (
+              <div className="max-w-[84%] rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-100">
+                {loadingTexts[loadingTextIndex]}
+              </div>
+            ) : null}
           </div>
+        </div>
 
-          <form
-            onSubmit={handleChatSubmit}
-            className="sticky bottom-0 mt-3 grid grid-cols-[1fr_auto] items-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
-          >
+        <form
+          onSubmit={handleChatSubmit}
+          className="mt-3 grid shrink-0 grid-cols-[1fr_auto] items-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
+        >
             <div className="rounded-xl border border-slate-300 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-950">
               <textarea
                 rows={1}
@@ -806,60 +1106,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             >
               {isLoading ? "..." : "➤"}
             </button>
-          </form>
-        </article>
-
-        <article className="hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:block">
-          <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Today snapshot</h2>
-          <ul className="mt-4 grid gap-3">
-            <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
-              {snapshot.pending} reminders pending
-            </li>
-            <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
-              {snapshot.today} due today
-            </li>
-            <li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
-              {snapshot.missed} overdue items
-            </li>
-          </ul>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={openCreateModal}
-              className="rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
-            >
-              Create reminder
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsListOpen(true)}
-              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              View reminders
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setImportStatus(null);
-                setIsImportOpen(true);
-              }}
-              className="rounded-full border border-violet-300 px-4 py-2 text-sm font-semibold text-violet-700 transition hover:bg-violet-50 dark:border-violet-700 dark:text-violet-200 dark:hover:bg-violet-900/40"
-            >
-              Import JSON
-            </button>
-          </div>
-        </article>
+        </form>
       </section>
 
       {isSnapshotOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 lg:hidden" onClick={() => setIsSnapshotOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setIsSnapshotOpen(false)}>
           <aside
             className="absolute right-0 top-0 h-full w-[92%] max-w-sm overflow-y-auto border-l border-slate-200 bg-white p-4 shadow-xl dark:border-slate-800 dark:bg-slate-900"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Today snapshot</h2>
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Dashboard menu</h2>
               <button
                 type="button"
                 onClick={() => setIsSnapshotOpen(false)}
@@ -911,18 +1168,44 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               >
                 Import JSON
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBatchStatus(null);
+                  setIsSnapshotOpen(false);
+                  setIsBatchOpen(true);
+                }}
+                disabled={isBatchRunning || isLoading}
+                className="rounded-full border border-indigo-300 px-4 py-2 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30"
+              >
+                Batch questions
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSnapshotOpen(false);
+                  handleExportChat();
+                }}
+                disabled={isLoading || messages.length === 0}
+                className="rounded-full border border-emerald-300 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-900/30"
+              >
+                Export chat
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSnapshotOpen(false);
+                  void handleClearChat();
+                }}
+                disabled={isClearingChat || isLoading}
+                className="rounded-full border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-800 dark:text-rose-200 dark:hover:bg-rose-900/30"
+              >
+                {isClearingChat ? "Clearing..." : "Clear chat"}
+              </button>
             </div>
           </aside>
         </div>
       )}
-
-      <button
-        type="button"
-        onClick={() => setIsListOpen(true)}
-        className="fixed bottom-24 right-4 z-40 rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-violet-500 sm:bottom-28 lg:hidden"
-      >
-        Reminders
-      </button>
 
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -1039,7 +1322,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         key={reminder.id}
                         className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"
                       >
-                        <p className="font-semibold">{reminder.title}</p>
+                        <p className="font-semibold">
+                          {reminder.title}
+                          {reminder.access === "shared" ? (
+                            <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
+                              Shared
+                            </span>
+                          ) : null}
+                        </p>
                         <p className="text-sm text-slate-500">
                           Due: {new Date(reminder.dueAt).toLocaleString()}
                         </p>
@@ -1050,6 +1340,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           <p className="mt-1 text-sm text-slate-600">{reminder.notes}</p>
                         ) : null}
                         <div className="mt-3 flex flex-wrap gap-2">
+                          {reminder.access !== "shared" ? (
+                            <button
+                              type="button"
+                              onClick={() => void copyReminderInviteLink(reminder.id)}
+                              className="rounded-full border border-sky-400 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/50 dark:text-sky-100"
+                            >
+                              Copy invite link
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => openEditModal(reminder)}

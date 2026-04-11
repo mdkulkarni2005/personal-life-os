@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as reminderSharing from "../reminderSharing.js";
 import type * as reminders from "../reminders.js";
 
 import type {
@@ -17,6 +18,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  reminderSharing: typeof reminderSharing;
   reminders: typeof reminders;
 }>;
 
