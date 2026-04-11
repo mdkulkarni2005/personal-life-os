@@ -5,6 +5,7 @@ import Image from "next/image";
 import localFont from "next/font/local";
 import { InstallAppBanner } from "../components/pwa/install-app-banner";
 import { RegisterServiceWorker } from "../components/pwa/register-sw";
+import { OpenRemindersButton } from "../components/dashboard/open-reminders-button";
 import { SnapshotNavTrigger } from "../components/dashboard/snapshot-nav-trigger";
 import { UserMenu } from "../components/auth/user-menu";
 import { ThemeProvider } from "../components/theme/theme-provider";
@@ -61,12 +62,7 @@ export default function RootLayout({
                     </Link>
                   </Show>
                   <Show when="signed-in">
-                    <Link
-                      href="/dashboard"
-                      className="text-sm font-medium text-slate-700 transition hover:text-slate-950 dark:text-slate-200 dark:hover:text-white"
-                    >
-                      Dashboard
-                    </Link>
+                    <OpenRemindersButton />
                     <SnapshotNavTrigger />
                     <UserMenu />
                   </Show>

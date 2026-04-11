@@ -1,14 +1,18 @@
 "use client";
 
 import {
+  buildBriefingNarrative,
+  buildFollowUpQuestions,
   buildListRemindersReply,
   buildReminderSnapshot,
   getReminderBucket,
   inferListScopeFromMessage,
   isCompoundReminderQuestion,
   tryGroundedReminderAnswer,
+  type FollowUpQuestion,
   type ReminderRecurrence,
   type ReminderItem,
+  type TaskItemBrief,
 } from "@repo/reminder";
 import { useUser } from "@clerk/nextjs";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -29,11 +33,13 @@ import {
 type ChatRole = "user" | "assistant" | "system";
 
 interface ChatMessageMeta {
-  kind?: "due_reminder";
+  kind?: "due_reminder" | "briefing";
   reminderId?: string;
   dueAt?: number;
   title?: string;
   notes?: string;
+  /** When true, message is not written to chat history file */
+  skipPersist?: boolean;
 }
 
 interface ChatMessage {
@@ -126,6 +132,30 @@ function dedupeMessagesById(messages: ChatMessage[]) {
   return Array.from(map.values()).sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
+}
+
+interface TaskRow {
+  id: string;
+  title: string;
+  notes?: string;
+  dueAt?: string;
+  status: "pending" | "done";
+}
+
+function fromApiTask(row: Record<string, unknown>): TaskRow {
+  return {
+    id: String(row._id ?? row.id ?? crypto.randomUUID()),
+    title: String(row.title ?? ""),
+    notes: typeof row.notes === "string" ? row.notes : undefined,
+    dueAt: row.dueAt != null ? new Date(Number(row.dueAt)).toISOString() : undefined,
+    status: row.status === "done" ? "done" : "pending",
+  };
+}
+
+function taskBucket(task: TaskRow, now: Date): "missed" | "later" | "done" {
+  if (task.status === "done") return "done";
+  if (task.dueAt && new Date(task.dueAt).getTime() < now.getTime()) return "missed";
+  return "later";
 }
 
 function fromApiReminder(item: Record<string, unknown>): ReminderItem {
@@ -232,6 +262,22 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [newNotes, setNewNotes] = useState("");
   const [pendingCreateDraft, setPendingCreateDraft] = useState<PendingCreateDraft | null>(null);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [followUpQuestions, setFollowUpQuestions] = useState<FollowUpQuestion[]>([]);
+  const [reminderListTab, setReminderListTab] = useState<
+    "missed" | "today" | "tomorrow" | "upcoming" | "done"
+  >("missed");
+  const [isTasksOpen, setIsTasksOpen] = useState(false);
+  const [taskTab, setTaskTab] = useState<"missed" | "pending" | "done">("pending");
+  const [taskFormTitle, setTaskFormTitle] = useState("");
+  const [taskFormDue, setTaskFormDue] = useState("");
+  const [taskFormNotes, setTaskFormNotes] = useState("");
+  const [taskFormError, setTaskFormError] = useState<string | null>(null);
+  const briefingRanRef = useRef(false);
+  const remindersRef = useRef(reminders);
+  remindersRef.current = reminders;
+  const listOpenRef = useRef(false);
+  const [briefingStreaming, setBriefingStreaming] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const refreshReminders = useCallback(async () => {
@@ -240,6 +286,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     const data = (await response.json()) as { reminders?: Array<Record<string, unknown>> };
     setReminders(() => (data.reminders ?? []).map((item) => fromApiReminder(item)));
   }, [setReminders]);
+
+  const refreshTasks = useCallback(async () => {
+    const response = await fetch("/api/tasks");
+    if (!response.ok) return;
+    const data = (await response.json()) as { tasks?: Array<Record<string, unknown>> };
+    setTasks((data.tasks ?? []).map((item) => fromApiTask(item)));
+  }, []);
+
+  useEffect(() => {
+    void refreshTasks();
+  }, [userId, refreshTasks]);
 
   const runReminderQuickAction = useCallback(
     async (reminderId: string, action: "delete" | "done" | "snooze") => {
@@ -300,13 +357,113 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   useEffect(() => {
     if (!isHistoryLoaded) return;
-    const deduped = dedupeMessagesById(messages);
+    const deduped = dedupeMessagesById(messages).filter((m) => !m.meta?.skipPersist);
     void fetch("/api/chat/history", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: deduped }),
     });
   }, [messages, isHistoryLoaded]);
+
+  useEffect(() => {
+    if (briefingStreaming) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content;
+    const taskBrief: TaskItemBrief[] = tasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      dueAt: t.dueAt,
+      status: t.status,
+    }));
+    setFollowUpQuestions(
+      buildFollowUpQuestions({
+        reminders,
+        tasks: taskBrief,
+        lastUserMessage: lastUser,
+        firstName: user?.firstName,
+      })
+    );
+  }, [messages, reminders, tasks, user?.firstName, briefingStreaming]);
+
+  useEffect(() => {
+    briefingRanRef.current = false;
+  }, [userId]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded || briefingRanRef.current) return;
+    const key = `remindos:briefingSession:${userId}`;
+    try {
+      if (sessionStorage.getItem(key)) {
+        briefingRanRef.current = true;
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const timer = window.setTimeout(() => {
+      if (briefingRanRef.current) return;
+      briefingRanRef.current = true;
+      try {
+        sessionStorage.setItem(`remindos:briefingSession:${userId}`, "1");
+      } catch {
+        /* ignore */
+      }
+
+      const full = buildBriefingNarrative(remindersRef.current, user?.firstName);
+      const id = `briefing-${Date.now()}`;
+      setBriefingStreaming(true);
+
+      setMessages((prev) => {
+        const rest = prev.filter((m) => m.id !== "starter");
+        return [
+          {
+            id,
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            meta: { kind: "briefing", skipPersist: true },
+          },
+          ...rest,
+        ];
+      });
+
+      let i = 0;
+      const step = () => {
+        i = Math.min(full.length, i + 2);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, content: full.slice(0, i) } : m))
+        );
+        if (i < full.length) {
+          window.setTimeout(step, 72);
+        } else {
+          setBriefingStreaming(false);
+        }
+      };
+      window.setTimeout(step, 380);
+    }, 650);
+
+    return () => window.clearTimeout(timer);
+  }, [isHistoryLoaded, user?.firstName, userId]);
+
+  useEffect(() => {
+    const openR = () => setIsListOpen(true);
+    const openT = () => setIsTasksOpen(true);
+    window.addEventListener("dashboard:open-reminders", openR);
+    window.addEventListener("dashboard:open-tasks", openT);
+    return () => {
+      window.removeEventListener("dashboard:open-reminders", openR);
+      window.removeEventListener("dashboard:open-tasks", openT);
+    };
+  }, []);
+
+  useEffect(() => {
+    const o = searchParams.get("open");
+    if (o === "reminders") setIsListOpen(true);
+    if (o === "tasks") setIsTasksOpen(true);
+    if (o && typeof window !== "undefined") {
+      window.history.replaceState({}, "", "/dashboard");
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const container = chatScrollRef.current;
@@ -504,6 +661,30 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       done: reminders.filter((r) => getReminderBucket(r) === "done"),
     };
   }, [reminders]);
+
+  useEffect(() => {
+    if (isListOpen && !listOpenRef.current) {
+      const order = ["missed", "today", "tomorrow", "upcoming", "done"] as const;
+      const hit = order.find((k) => grouped[k].length > 0) ?? "missed";
+      setReminderListTab(hit);
+    }
+    listOpenRef.current = isListOpen;
+  }, [isListOpen, grouped]);
+
+  const tasksGrouped = useMemo(() => {
+    const now = new Date();
+    return {
+      missed: tasks.filter((t) => taskBucket(t, now) === "missed"),
+      pending: tasks.filter((t) => t.status === "pending" && taskBucket(t, now) !== "missed"),
+      done: tasks.filter((t) => t.status === "done"),
+    };
+  }, [tasks]);
+
+  const voiceTitle = useMemo(() => {
+    const n = user?.firstName?.trim();
+    if (n) return `${n} life voice`;
+    return "Your life voice";
+  }, [user?.firstName]);
 
   const applyAction = (action: AgentAction) => {
     if (action.type === "create_reminder" && action.title && action.dueAt) {
@@ -1134,9 +1315,46 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setDueNotifBannerDismissed(true);
   }, []);
 
+  const handleTaskCreate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!taskFormTitle.trim()) return;
+    setTaskFormError(null);
+    let dueAt: number | undefined;
+    if (taskFormDue.trim()) {
+      const ms = new Date(taskFormDue).getTime();
+      if (!Number.isFinite(ms)) {
+        setTaskFormError("Invalid date or time.");
+        return;
+      }
+      dueAt = ms;
+    }
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: taskFormTitle.trim(),
+          notes: taskFormNotes.trim() ? taskFormNotes.trim() : undefined,
+          dueAt,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setTaskFormError(data.error ?? "Could not save task.");
+        return;
+      }
+      setTaskFormTitle("");
+      setTaskFormDue("");
+      setTaskFormNotes("");
+      await refreshTasks();
+    } catch {
+      setTaskFormError("Network error. Try again.");
+    }
+  };
+
   return (
     <>
-      <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent px-3 pb-3 pt-1 sm:px-4 lg:mx-auto lg:max-w-3xl lg:px-6">
+      <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1 sm:px-4 lg:mx-auto lg:max-w-3xl lg:px-6">
         {typeof Notification !== "undefined"
         && Notification.permission === "default"
         && !dueNotifBannerDismissed ? (
@@ -1163,10 +1381,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             </div>
           </div>
         ) : null}
-        <div
-          ref={chatScrollRef}
-          className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] p-3 scrollbar-none"
-        >
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
+          <div className="shrink-0 border-b border-white/10 px-3 py-2.5 sm:px-4">
+            <p className="text-sm font-semibold tracking-tight text-white">{voiceTitle}</p>
+            <p className="text-[10px] text-slate-400">Briefings, reminders, and tasks in one thread</p>
+          </div>
+          <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 scrollbar-none sm:p-4">
           <div className="grid gap-3">
             {messages.map((message) => {
               if (message.role === "system") {
@@ -1247,7 +1467,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       </div>
                     </>
                   ) : (
-                    <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                    <>
+                      {message.meta?.kind === "briefing" ? (
+                        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          Session briefing
+                        </p>
+                      ) : null}
+                      <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                    </>
                   )}
                   <p
                     className={`mt-1 text-[10px] ${
@@ -1268,7 +1495,32 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </div>
             ) : null}
           </div>
+          </div>
         </div>
+
+        {followUpQuestions.length > 0 ? (
+          <div className="mt-2 flex flex-col gap-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Suggested questions
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {followUpQuestions.map((q, i) => (
+                <button
+                  key={`${q.kind}-${i}`}
+                  type="button"
+                  onClick={() => setInput(q.text)}
+                  className={`max-w-full rounded-full border px-2.5 py-1 text-left text-[11px] font-medium leading-snug transition sm:max-w-[32%] ${
+                    q.kind === "action"
+                      ? "border-emerald-500/50 bg-emerald-950/30 text-emerald-50 hover:bg-emerald-900/40"
+                      : "border-slate-600/80 bg-slate-900/40 text-slate-100 hover:bg-slate-800/60"
+                  }`}
+                >
+                  {q.text}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <form
           onSubmit={handleChatSubmit}
@@ -1320,7 +1572,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Dashboard menu</h2>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Menu</h2>
               <button
                 type="button"
                 onClick={() => setIsSnapshotOpen(false)}
@@ -1399,14 +1651,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               ) : null}
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               <button
                 type="button"
                 onClick={() => {
                   setIsSnapshotOpen(false);
                   openCreateModal();
                 }}
-                className="rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500"
+                className="rounded-full bg-violet-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-violet-500 sm:px-4 sm:text-sm"
               >
                 Create reminder
               </button>
@@ -1414,9 +1666,21 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 type="button"
                 onClick={() => {
                   setIsSnapshotOpen(false);
+                  setTaskFormError(null);
+                  void refreshTasks();
+                  setIsTasksOpen(true);
+                }}
+                className="rounded-full border border-teal-400 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-900 transition hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-100 dark:hover:bg-teal-900/50 sm:px-4 sm:text-sm"
+              >
+                Tasks
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSnapshotOpen(false);
                   setIsListOpen(true);
                 }}
-                className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                className="rounded-full border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:px-4 sm:text-sm"
               >
                 View reminders
               </button>
@@ -1427,7 +1691,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   setImportStatus(null);
                   setIsImportOpen(true);
                 }}
-                className="rounded-full border border-violet-300 px-4 py-2 text-sm font-semibold text-violet-700 transition hover:bg-violet-50 dark:border-violet-700 dark:text-violet-200 dark:hover:bg-violet-900/40"
+                className="col-span-2 rounded-full border border-violet-300 px-3 py-2 text-xs font-semibold text-violet-700 transition hover:bg-violet-50 dark:border-violet-700 dark:text-violet-200 dark:hover:bg-violet-900/40 sm:col-span-1 sm:px-4 sm:text-sm"
               >
                 Import JSON
               </button>
@@ -1439,7 +1703,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   setIsBatchOpen(true);
                 }}
                 disabled={isBatchRunning || isLoading}
-                className="rounded-full border border-indigo-300 px-4 py-2 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30"
+                className="rounded-full border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30 sm:px-4 sm:text-sm"
               >
                 Batch questions
               </button>
@@ -1450,7 +1714,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   handleExportChat();
                 }}
                 disabled={isLoading || messages.length === 0}
-                className="rounded-full border border-emerald-300 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-900/30"
+                className="rounded-full border border-emerald-300 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-900/30 sm:px-4 sm:text-sm"
               >
                 Export chat
               </button>
@@ -1461,7 +1725,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   void handleClearChat();
                 }}
                 disabled={isClearingChat || isLoading}
-                className="rounded-full border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-800 dark:text-rose-200 dark:hover:bg-rose-900/30"
+                className="col-span-2 rounded-full border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-800 dark:text-rose-200 dark:hover:bg-rose-900/30 sm:col-span-1 sm:px-4 sm:text-sm"
               >
                 {isClearingChat ? "Clearing..." : "Clear chat"}
               </button>
@@ -1469,30 +1733,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </aside>
         </div>
       )}
-
-      <button
-        type="button"
-        onClick={() => setIsListOpen(true)}
-        className="fixed right-4 z-40 flex items-center gap-2 rounded-full bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow-lg ring-1 ring-white/15 transition hover:bg-violet-500 active:scale-[0.98] lg:hidden"
-        style={{
-          bottom: "calc(6rem + env(safe-area-inset-bottom, 0px))",
-        }}
-        aria-label="Quick reminder view"
-        title="Open your reminder list"
-      >
-        <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/20 text-[15px]"
-          aria-hidden
-        >
-          📋
-        </span>
-        <span className="max-w-[9rem] text-left leading-tight">
-          <span className="block text-[10px] font-semibold uppercase tracking-wide text-violet-200">
-            Quick view
-          </span>
-          <span className="block">Reminders</span>
-        </span>
-      </button>
 
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -1588,99 +1828,279 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       )}
 
       {isListOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4">
-          <div className="mx-auto w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold">All reminders</h3>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
+          <div className="flex max-h-[min(92vh,720px)] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:rounded-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+              <h3 className="text-base font-semibold sm:text-lg">Reminders</h3>
               <button
                 type="button"
                 onClick={() => setIsListOpen(false)}
-                className="rounded-full border border-slate-300 px-3 py-1 text-sm"
+                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
               >
                 Close
               </button>
             </div>
-
-            {(["missed", "today", "tomorrow", "upcoming", "done"] as const).map((bucket) => (
-              <section key={bucket} className="mb-6">
-                <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-                  {bucket}
-                </h4>
-                <div className="grid gap-3">
-                  {grouped[bucket].length === 0 ? (
-                    <p className="text-sm text-slate-500">No reminders.</p>
-                  ) : (
-                    grouped[bucket].map((reminder) => (
-                      <article
-                        key={reminder.id}
-                        className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"
-                      >
-                        <p className="font-semibold">
-                          {reminder.title}
-                          {reminder.access === "shared" ? (
-                            <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
-                              Shared
-                            </span>
-                          ) : null}
-                        </p>
-                        <p className="text-sm text-slate-500">
-                          Due: {new Date(reminder.dueAt).toLocaleString()}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          Repeat: {reminder.recurrence ?? "none"}
-                        </p>
-                        {reminder.notes ? (
-                          <p className="mt-1 text-sm text-slate-600">{reminder.notes}</p>
+            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 px-2 py-2 dark:border-slate-800">
+              {(
+                [
+                  ["missed", "Missed"],
+                  ["today", "Today"],
+                  ["tomorrow", "Tomorrow"],
+                  ["upcoming", "Later"],
+                  ["done", "Done"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setReminderListTab(key)}
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                    reminderListTab === key
+                      ? "bg-violet-600 text-white"
+                      : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  }`}
+                >
+                  {label}{" "}
+                  <span className="opacity-80">({grouped[key].length})</span>
+                </button>
+              ))}
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="grid gap-3">
+                {grouped[reminderListTab].length === 0 ? (
+                  <p className="text-sm text-slate-500">Nothing in this tab.</p>
+                ) : (
+                  grouped[reminderListTab].map((reminder) => (
+                    <article
+                      key={reminder.id}
+                      className="rounded-xl border border-slate-200 p-3 dark:border-slate-700 sm:p-4"
+                    >
+                      <p className="font-semibold">
+                        {reminder.title}
+                        {reminder.access === "shared" ? (
+                          <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
+                            Shared
+                          </span>
                         ) : null}
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {reminder.access !== "shared" ? (
-                            <button
-                              type="button"
-                              onClick={() => void copyReminderInviteLink(reminder.id)}
-                              className="rounded-full border border-sky-400 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/50 dark:text-sky-100"
-                            >
-                              Copy invite link
-                            </button>
-                          ) : null}
+                      </p>
+                      <p className="text-sm text-slate-500">
+                        Due: {new Date(reminder.dueAt).toLocaleString()}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Repeat: {reminder.recurrence ?? "none"}
+                      </p>
+                      {reminder.notes ? (
+                        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{reminder.notes}</p>
+                      ) : null}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {reminder.access !== "shared" ? (
                           <button
                             type="button"
-                            onClick={() => openEditModal(reminder)}
-                            className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
+                            onClick={() => void copyReminderInviteLink(reminder.id)}
+                            className="rounded-full border border-sky-400 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/50 dark:text-sky-100"
                           >
-                            Edit
+                            Copy invite link
                           </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(reminder)}
+                          className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextStatus = reminder.status === "done" ? "pending" : "done";
+                            void fetch(`/api/reminders/${reminder.id}`, {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ status: nextStatus }),
+                            }).then(() => void refreshReminders());
+                          }}
+                          className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
+                        >
+                          {reminder.status === "done" ? "Mark pending" : "Mark done"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void fetch(`/api/reminders/${reminder.id}`, {
+                              method: "DELETE",
+                            }).then(() => void refreshReminders());
+                          }}
+                          className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isTasksOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
+          <div className="flex max-h-[min(92vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:rounded-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+              <h3 className="text-base font-semibold sm:text-lg">Tasks</h3>
+              <button
+                type="button"
+                onClick={() => setIsTasksOpen(false)}
+                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+              >
+                Close
+              </button>
+            </div>
+            <form
+              className="shrink-0 space-y-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800"
+              onSubmit={handleTaskCreate}
+            >
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">New task</p>
+              <input
+                value={taskFormTitle}
+                onChange={(e) => setTaskFormTitle(e.target.value)}
+                placeholder="Title"
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+              />
+              <input
+                type="datetime-local"
+                value={taskFormDue}
+                onChange={(e) => setTaskFormDue(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+              />
+              <textarea
+                value={taskFormNotes}
+                onChange={(e) => setTaskFormNotes(e.target.value)}
+                placeholder="Notes (optional)"
+                rows={2}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+              />
+              {taskFormError ? (
+                <p className="text-xs text-rose-600 dark:text-rose-400">{taskFormError}</p>
+              ) : null}
+              <button
+                type="submit"
+                className="w-full rounded-full bg-teal-600 py-2 text-sm font-semibold text-white hover:bg-teal-500"
+              >
+                Add task
+              </button>
+            </form>
+            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 px-2 py-2 dark:border-slate-800">
+              {(
+                [
+                  ["missed", "Missed"],
+                  ["pending", "Upcoming"],
+                  ["done", "Done"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTaskTab(key)}
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                    taskTab === key
+                      ? "bg-teal-600 text-white"
+                      : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  }`}
+                >
+                  {label}{" "}
+                  <span className="opacity-80">
+                    (
+                    {key === "missed"
+                      ? tasksGrouped.missed.length
+                      : key === "pending"
+                        ? tasksGrouped.pending.length
+                        : tasksGrouped.done.length}
+                    )
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="grid gap-3">
+                {(taskTab === "missed"
+                  ? tasksGrouped.missed
+                  : taskTab === "pending"
+                    ? tasksGrouped.pending
+                    : tasksGrouped.done
+                ).length === 0 ? (
+                  <p className="text-sm text-slate-500">No tasks here.</p>
+                ) : (
+                  (taskTab === "missed"
+                    ? tasksGrouped.missed
+                    : taskTab === "pending"
+                      ? tasksGrouped.pending
+                      : tasksGrouped.done
+                  ).map((task) => (
+                    <article
+                      key={task.id}
+                      className="rounded-xl border border-slate-200 p-3 dark:border-slate-700"
+                    >
+                      <p className="font-semibold">{task.title}</p>
+                      {task.dueAt ? (
+                        <p className="text-sm text-slate-500">
+                          {taskTab === "missed" ? "Was due: " : "Due: "}
+                          {new Date(task.dueAt).toLocaleString()}
+                        </p>
+                      ) : (
+                        <p className="text-sm text-slate-500">No due date</p>
+                      )}
+                      {task.notes ? (
+                        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{task.notes}</p>
+                      ) : null}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {task.status === "pending" ? (
                           <button
                             type="button"
                             onClick={() => {
-                              const nextStatus = reminder.status === "done" ? "pending" : "done";
-                              void fetch(`/api/reminders/${reminder.id}`, {
+                              void fetch(`/api/tasks/${task.id}`, {
                                 method: "PATCH",
                                 headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ status: nextStatus }),
-                              }).then(() => void refreshReminders());
+                                body: JSON.stringify({ status: "done" }),
+                              }).then(() => void refreshTasks());
                             }}
                             className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
                           >
-                            {reminder.status === "done" ? "Mark pending" : "Mark done"}
+                            Mark done
                           </button>
+                        ) : (
                           <button
                             type="button"
                             onClick={() => {
-                              void fetch(`/api/reminders/${reminder.id}`, {
-                                method: "DELETE",
-                              }).then(() => void refreshReminders());
+                              void fetch(`/api/tasks/${task.id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ status: "pending" }),
+                              }).then(() => void refreshTasks());
                             }}
-                            className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
+                            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
                           >
-                            Delete
+                            Reopen
                           </button>
-                        </div>
-                      </article>
-                    ))
-                  )}
-                </div>
-              </section>
-            ))}
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void fetch(`/api/tasks/${task.id}`, { method: "DELETE" }).then(() =>
+                              void refreshTasks()
+                            );
+                          }}
+                          className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

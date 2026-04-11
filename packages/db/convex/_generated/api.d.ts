@@ -10,6 +10,7 @@
 
 import type * as reminderSharing from "../reminderSharing.js";
 import type * as reminders from "../reminders.js";
+import type * as tasks from "../tasks.js";
 
 import type {
   ApiFromModules,
@@ -20,6 +21,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   reminderSharing: typeof reminderSharing;
   reminders: typeof reminders;
+  tasks: typeof tasks;
 }>;
 
 /**

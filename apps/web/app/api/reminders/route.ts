@@ -13,10 +13,13 @@ export async function GET() {
 
   try {
     const client = getConvexClient();
-    const data = await client.query(api.reminders.listForUser, { userId });
+    const data = (await client.query(api.reminders.listForUser, { userId })) as {
+      owned: Array<Record<string, unknown>>;
+      shared: Array<Record<string, unknown>>;
+    };
     const merged: Array<Record<string, unknown>> = [
-      ...data.owned.map((r) => ({ ...r, _access: "owner" })),
-      ...data.shared.map((r) => ({ ...r, _access: "shared" })),
+      ...data.owned.map((r: Record<string, unknown>) => ({ ...r, _access: "owner" })),
+      ...data.shared.map((r: Record<string, unknown>) => ({ ...r, _access: "shared" })),
     ];
     merged.sort((a, b) => Number(a.dueAt) - Number(b.dueAt));
     return NextResponse.json({ reminders: merged });

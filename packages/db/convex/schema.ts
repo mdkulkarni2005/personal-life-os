@@ -38,8 +38,19 @@ const reminderParticipants = defineTable({
   .index("by_reminder_user", ["reminderId", "userId"])
   .index("by_user", ["userId"]);
 
+const tasks = defineTable({
+  userId: v.string(),
+  title: v.string(),
+  notes: v.optional(v.string()),
+  dueAt: v.optional(v.number()),
+  status: v.union(v.literal("pending"), v.literal("done")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+}).index("by_user_status", ["userId", "status"]);
+
 export default defineSchema({
   reminders,
   reminderInvites,
   reminderParticipants,
+  tasks,
 });

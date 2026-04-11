@@ -580,3 +580,10 @@ export function createNvidiaNimChatProvider(
     },
   };
 }
+
+export {
+  buildBriefingNarrative,
+  buildFollowUpQuestions,
+  type FollowUpQuestion,
+  type TaskItemBrief,
+} from "./briefing-and-followups";

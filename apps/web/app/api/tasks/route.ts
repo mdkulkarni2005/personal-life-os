@@ -1,0 +1,53 @@
+import { auth } from "@clerk/nextjs/server";
+import { api } from "@repo/db/convex/api";
+import { NextResponse } from "next/server";
+import { getConvexClient } from "../../../lib/server/convex-client";
+
+function errorMessage(err: unknown) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export async function GET() {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  try {
+    const client = getConvexClient();
+    const tasks = await client.query(api.tasks.listForUser, { userId });
+    return NextResponse.json({ tasks });
+  } catch (err) {
+    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = (await request.json()) as {
+    title?: string;
+    notes?: string;
+    dueAt?: number | null;
+    status?: "pending" | "done";
+  };
+  if (!body.title?.trim()) {
+    return NextResponse.json({ error: "title required" }, { status: 400 });
+  }
+
+  const dueAt =
+    body.dueAt != null && Number.isFinite(Number(body.dueAt)) ? Number(body.dueAt) : undefined;
+
+  try {
+    const client = getConvexClient();
+    const task = await client.mutation(api.tasks.create, {
+      userId,
+      title: body.title.trim(),
+      notes: typeof body.notes === "string" && body.notes.trim() ? body.notes.trim() : undefined,
+      dueAt,
+      status: body.status ?? "pending",
+    });
+    return NextResponse.json({ task });
+  } catch (err) {
+    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
+  }
+}

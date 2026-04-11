@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
+    "convex:dev": "pnpm --filter @repo/db exec convex dev",
+    "convex:deploy": "pnpm --filter @repo/db exec convex deploy",
     "dev": "turbo run dev",
     "dev:apps": "concurrently -n web -c cyan \"pnpm --filter web dev\"",
     "lint": "turbo run lint",
