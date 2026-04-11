@@ -1207,6 +1207,30 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         </div>
       )}
 
+      <button
+        type="button"
+        onClick={() => setIsListOpen(true)}
+        className="fixed right-4 z-40 flex items-center gap-2 rounded-full bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow-lg ring-1 ring-white/15 transition hover:bg-violet-500 active:scale-[0.98] lg:hidden"
+        style={{
+          bottom: "calc(6rem + env(safe-area-inset-bottom, 0px))",
+        }}
+        aria-label="Quick reminder view"
+        title="Open your reminder list"
+      >
+        <span
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/20 text-[15px]"
+          aria-hidden
+        >
+          📋
+        </span>
+        <span className="max-w-[9rem] text-left leading-tight">
+          <span className="block text-[10px] font-semibold uppercase tracking-wide text-violet-200">
+            Quick view
+          </span>
+          <span className="block">Reminders</span>
+        </span>
+      </button>
+
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
