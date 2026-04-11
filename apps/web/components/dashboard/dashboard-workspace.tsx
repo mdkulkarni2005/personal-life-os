@@ -172,6 +172,68 @@ function mergeRemoteChat(local: ChatMessage[], remote: ChatMessage[]): ChatMessa
   return dedupeMessagesById(out);
 }
 
+const CHAT_THREAD_BACKUP_PREFIX = "remindos:chatThread:";
+
+function chatThreadBackupKey(userId: string) {
+  return `${CHAT_THREAD_BACKUP_PREFIX}${userId}`;
+}
+
+function loadChatBackup(userId: string): ChatMessage[] | null {
+  if (typeof localStorage === "undefined" || !userId) return null;
+  try {
+    const raw = localStorage.getItem(chatThreadBackupKey(userId));
+    if (!raw) return null;
+    const data = JSON.parse(raw) as unknown;
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const out: ChatMessage[] = [];
+    for (const item of data) {
+      if (!item || typeof item !== "object") continue;
+      const m = item as Record<string, unknown>;
+      const id = typeof m.id === "string" ? m.id : null;
+      const role = m.role;
+      const content = typeof m.content === "string" ? m.content : "";
+      const createdAt = typeof m.createdAt === "string" ? m.createdAt : null;
+      if (!id || !createdAt) continue;
+      if (role !== "user" && role !== "assistant" && role !== "system") continue;
+      if (!content.trim()) continue;
+      out.push({
+        id,
+        role,
+        content,
+        createdAt,
+        meta: m.meta as ChatMessage["meta"],
+      });
+    }
+    return out.length > 0 ? dedupeMessagesById(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveChatBackup(userId: string, messages: ChatMessage[]): void {
+  if (typeof localStorage === "undefined" || !userId) return;
+  try {
+    const persistable = dedupeMessagesById(messages).filter((m) => !m.meta?.skipPersist);
+    if (persistable.length === 0) {
+      localStorage.removeItem(chatThreadBackupKey(userId));
+      return;
+    }
+    const capped = persistable.slice(-400);
+    localStorage.setItem(chatThreadBackupKey(userId), JSON.stringify(capped));
+  } catch {
+    /* quota or private mode */
+  }
+}
+
+function clearChatBackup(userId: string): void {
+  if (typeof localStorage === "undefined" || !userId) return;
+  try {
+    localStorage.removeItem(chatThreadBackupKey(userId));
+  } catch {
+    /* ignore */
+  }
+}
+
 interface TaskRow {
   id: string;
   title: string;
@@ -276,6 +338,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [notifUiTick, setNotifUiTick] = useState(0);
   const [dueNotifBannerDismissed, setDueNotifBannerDismissed] = useState(false);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const userIdRef = useRef(userId);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
@@ -324,11 +387,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const isHistoryLoadedRef = useRef(false);
 
   messagesRef.current = messages;
+  userIdRef.current = userId;
   isHistoryLoadedRef.current = isHistoryLoaded;
 
   /** Persists latest messages; uses sendBeacon/keepalive so a refresh does not drop unsaved debounced writes. */
   const flushChatHistoryToServer = useCallback(() => {
     if (!isHistoryLoadedRef.current) return;
+    saveChatBackup(userIdRef.current, messagesRef.current);
     const deduped = dedupeMessagesById(messagesRef.current).filter((m) => !m.meta?.skipPersist);
     if (deduped.length === 0) return;
     const body = JSON.stringify({ messages: deduped });
@@ -446,6 +511,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   useEffect(() => {
     const loadHistory = async () => {
+      const fallbackStarter = () =>
+        setMessages([{ ...STARTER_MESSAGE, createdAt: new Date().toISOString() }]);
+
+      const syncServer = (list: ChatMessage[]) => {
+        const persistable = dedupeMessagesById(list).filter((m) => !m.meta?.skipPersist);
+        if (persistable.length === 0) return;
+        void fetch("/api/chat/history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: persistable }),
+        });
+      };
+
       try {
         const response = await fetch("/api/chat/history");
         if (!response.ok) throw new Error("Failed to load chat history");
@@ -458,18 +536,34 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             && (item.role === "user" || item.role === "assistant" || item.role === "system")
         );
         if (parsed.length > 0) {
-          setMessages(dedupeMessagesById(parsed));
+          const next = dedupeMessagesById(parsed);
+          setMessages(next);
+          saveChatBackup(userId, next);
         } else {
-          setMessages([{ ...STARTER_MESSAGE, createdAt: new Date().toISOString() }]);
+          const backup = loadChatBackup(userId);
+          if (backup && backup.length > 0) {
+            const next = dedupeMessagesById(backup);
+            setMessages(next);
+            syncServer(next);
+          } else {
+            fallbackStarter();
+          }
         }
       } catch {
-        setMessages([{ ...STARTER_MESSAGE, createdAt: new Date().toISOString() }]);
+        const backup = loadChatBackup(userId);
+        if (backup && backup.length > 0) {
+          const next = dedupeMessagesById(backup);
+          setMessages(next);
+          syncServer(next);
+        } else {
+          fallbackStarter();
+        }
       } finally {
         setIsHistoryLoaded(true);
       }
     };
     void loadHistory();
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     if (!isHistoryLoaded) return;
@@ -1138,6 +1232,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setIsClearingChat(true);
     try {
       await fetch("/api/chat/history", { method: "DELETE" });
+      clearChatBackup(userId);
       setPendingCreateDraft(null);
       setMessages([{ ...STARTER_MESSAGE, createdAt: new Date().toISOString() }]);
     } finally {
