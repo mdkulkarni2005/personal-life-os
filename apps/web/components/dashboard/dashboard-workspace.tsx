@@ -10,8 +10,20 @@ import {
   type ReminderRecurrence,
   type ReminderItem,
 } from "@repo/reminder";
+import { useUser } from "@clerk/nextjs";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { getContextualChatPlaceholder } from "../../lib/chat-placeholder";
+import { showDueReminderSystemNotification } from "../../lib/due-notifications-client";
+import {
+  isCompactViewport,
+  loadDueNotificationPrefs,
+  markNotifDueSent,
+  readNotifDueSent,
+  saveDueNotificationPrefs,
+  shouldShowSystemDueNotification,
+  type DueNotificationPrefs,
+} from "../../lib/reminder-notification-prefs";
 
 type ChatRole = "user" | "assistant" | "system";
 
@@ -187,8 +199,14 @@ function extractInviteToken(text: string): string | null {
 }
 
 export function DashboardWorkspace({ userId }: WorkspaceProps) {
+  const { user } = useUser();
   const searchParams = useSearchParams();
+  const notifUrlHandledRef = useRef<string | null>(null);
   const [reminders, setReminders] = usePersistentReminders(userId);
+  const [dueNotifPrefs, setDueNotifPrefs] = useState<DueNotificationPrefs>(() => loadDueNotificationPrefs());
+  const [placeholderRotation, setPlaceholderRotation] = useState(0);
+  const [notifUiTick, setNotifUiTick] = useState(0);
+  const [dueNotifBannerDismissed, setDueNotifBannerDismissed] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
@@ -221,6 +239,28 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     const data = (await response.json()) as { reminders?: Array<Record<string, unknown>> };
     setReminders(() => (data.reminders ?? []).map((item) => fromApiReminder(item)));
   }, [setReminders]);
+
+  const runReminderQuickAction = useCallback(
+    async (reminderId: string, action: "delete" | "done" | "snooze") => {
+      if (action === "delete") {
+        await fetch(`/api/reminders/${reminderId}`, { method: "DELETE" });
+      } else if (action === "done") {
+        await fetch(`/api/reminders/${reminderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "done" }),
+        });
+      } else {
+        await fetch(`/api/reminders/${reminderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dueAt: Date.now() + 60 * 60 * 1000 }),
+        });
+      }
+      await refreshReminders();
+    },
+    [refreshReminders]
+  );
 
   useEffect(() => {
     if (!isLoading) return;
@@ -343,6 +383,63 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, [searchParams, isHistoryLoaded, refreshReminders]);
 
   useEffect(() => {
+    const rid = searchParams.get("reminderId")?.trim();
+    const act = searchParams.get("notifAction")?.trim();
+    if (!rid) return;
+    const sig = `${act ?? ""}:${rid}`;
+    if (notifUrlHandledRef.current === sig) return;
+    if (!act || act === "open") {
+      notifUrlHandledRef.current = sig;
+      if (typeof window !== "undefined") window.history.replaceState({}, "", "/dashboard");
+      return;
+    }
+    if (act !== "done" && act !== "snooze" && act !== "delete") return;
+    notifUrlHandledRef.current = sig;
+    void runReminderQuickAction(rid, act).finally(() => {
+      if (typeof window !== "undefined") window.history.replaceState({}, "", "/dashboard");
+    });
+  }, [searchParams, runReminderQuickAction]);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const nav = navigator.serviceWorker;
+    const handler = (event: MessageEvent) => {
+      const d = event.data as { type?: string; action?: string; reminderId?: string };
+      if (d?.type !== "REMINDER_NOTIF" || !d.reminderId) return;
+      const a = d.action ?? "open";
+      if (a === "open") return;
+      if (a === "done" || a === "snooze" || a === "delete") {
+        void runReminderQuickAction(d.reminderId, a);
+      }
+    };
+    nav.addEventListener("message", handler);
+    return () => nav.removeEventListener("message", handler);
+  }, [runReminderQuickAction]);
+
+  useEffect(() => {
+    try {
+      if (typeof sessionStorage !== "undefined" && sessionStorage.getItem("remindos:dueNotifBannerDismissed") === "1") {
+        setDueNotifBannerDismissed(true);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setPlaceholderRotation((x) => x + 1);
+    }, 45000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const onVis = () => setNotifUiTick((t) => t + 1);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  useEffect(() => {
     if (!isHistoryLoaded) return;
     const tick = () => {
       const now = new Date();
@@ -350,30 +447,60 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         if (r.status !== "pending") continue;
         if (!isDueThisMinute(r.dueAt, now)) continue;
         const key = dueMinuteKey(r);
-        if (readDueShown().has(key)) continue;
-        markDueShown(key);
-        const msg: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `Reminder due: ${r.title}`,
-          createdAt: new Date().toISOString(),
-          meta: {
-            kind: "due_reminder",
-            reminderId: r.id,
-            dueAt: new Date(r.dueAt).getTime(),
-            title: r.title,
-            notes: r.notes,
-          },
-        };
-        setMessages((prev) => [...prev, msg]);
+
+        if (!readDueShown().has(key)) {
+          markDueShown(key);
+          const msg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Reminder due: ${r.title}`,
+            createdAt: new Date().toISOString(),
+            meta: {
+              kind: "due_reminder",
+              reminderId: r.id,
+              dueAt: new Date(r.dueAt).getTime(),
+              title: r.title,
+              notes: r.notes,
+            },
+          };
+          setMessages((prev) => [...prev, msg]);
+          if (typeof navigator !== "undefined" && navigator.vibrate && isCompactViewport()) {
+            navigator.vibrate(80);
+          }
+        }
+
+        if (
+          shouldShowSystemDueNotification(dueNotifPrefs)
+          && !readNotifDueSent(key)
+        ) {
+          markNotifDueSent(key);
+          void (async () => {
+            try {
+              await showDueReminderSystemNotification(r, key);
+            } catch {
+              /* iOS / unsupported */
+            }
+          })();
+        }
       }
     };
     tick();
-    const id = window.setInterval(tick, 15000);
+    const id = window.setInterval(tick, 12000);
     return () => window.clearInterval(id);
-  }, [reminders, isHistoryLoaded]);
+  }, [reminders, isHistoryLoaded, dueNotifPrefs, notifUiTick]);
 
   const snapshot = useMemo(() => buildReminderSnapshot(reminders), [reminders]);
+
+  const chatPlaceholder = useMemo(
+    () =>
+      getContextualChatPlaceholder({
+        reminders,
+        messages,
+        firstName: user?.firstName,
+        rotation: placeholderRotation,
+      }),
+    [reminders, messages, user?.firstName, placeholderRotation]
+  );
 
   const grouped = useMemo(() => {
     return {
@@ -730,29 +857,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     const title = reminders.find((x) => x.id === reminderId)?.title ?? "Reminder";
     try {
       if (action === "delete") {
-        await fetch(`/api/reminders/${reminderId}`, { method: "DELETE" });
-        await refreshReminders();
+        await runReminderQuickAction(reminderId, "delete");
         resolveDueLine(messageId, `Deleted "${title}".`);
         return;
       }
       if (action === "done") {
-        await fetch(`/api/reminders/${reminderId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "done" }),
-        });
-        await refreshReminders();
+        await runReminderQuickAction(reminderId, "done");
         resolveDueLine(messageId, `Marked "${title}" as done.`);
         return;
       }
       if (action === "snooze") {
-        const next = Date.now() + 60 * 60 * 1000;
-        await fetch(`/api/reminders/${reminderId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dueAt: next }),
-        });
-        await refreshReminders();
+        await runReminderQuickAction(reminderId, "snooze");
         resolveDueLine(messageId, `Snoozed "${title}" by one hour.`);
         return;
       }
@@ -969,9 +1084,61 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setIsCreateOpen(false);
   };
 
+  const persistDueNotifPrefs = useCallback((patch: Partial<DueNotificationPrefs>) => {
+    setDueNotifPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      saveDueNotificationPrefs(next);
+      return next;
+    });
+  }, []);
+
+  const requestDueNotificationPermission = useCallback(async () => {
+    if (!("Notification" in window)) return;
+    const p = await Notification.requestPermission();
+    setNotifUiTick((t) => t + 1);
+    if (p === "granted") {
+      persistDueNotifPrefs({ enabled: true });
+    }
+  }, [persistDueNotifPrefs]);
+
+  const dismissDueNotifBanner = useCallback(() => {
+    try {
+      sessionStorage.setItem("remindos:dueNotifBannerDismissed", "1");
+    } catch {
+      /* ignore */
+    }
+    setDueNotifBannerDismissed(true);
+  }, []);
+
   return (
     <>
       <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent px-3 pb-3 pt-1 sm:px-4 lg:mx-auto lg:max-w-3xl lg:px-6">
+        {typeof Notification !== "undefined"
+        && Notification.permission === "default"
+        && !dueNotifBannerDismissed ? (
+          <div className="mb-2 flex flex-col gap-2 rounded-xl border border-violet-400/35 bg-violet-950/50 px-3 py-2 text-xs text-violet-50 shadow-sm lg:hidden">
+            <p className="leading-snug">
+              Allow notifications to get an instant alert when a reminder’s time hits—then use Done, Snooze, or Delete
+              from the notification (best when this app is installed to your home screen).
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void requestDueNotificationPermission()}
+                className="rounded-full bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500"
+              >
+                Allow alerts
+              </button>
+              <button
+                type="button"
+                onClick={dismissDueNotifBanner}
+                className="rounded-full border border-white/25 px-3 py-1.5 text-xs font-semibold text-violet-100 hover:bg-white/10"
+              >
+                Not now
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div
           ref={chatScrollRef}
           className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] p-3 scrollbar-none"
@@ -1094,7 +1261,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder="Type message..."
+                placeholder={chatPlaceholder}
                 className="max-h-32 min-h-10 w-full resize-none bg-transparent px-2 py-1 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100"
               />
             </div>
@@ -1136,6 +1303,65 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 {snapshot.missed} overdue items
               </li>
             </ul>
+
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/90 p-3 text-sm dark:border-slate-700 dark:bg-slate-950/80">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Due-time notifications
+              </p>
+              <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                Get a system alert when a reminder’s time arrives. On phones, add this app to your home screen for the
+                best results. Large screens only alert if you opt in below.
+              </p>
+              {typeof Notification !== "undefined" && Notification.permission === "denied" ? (
+                <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                  Notifications are blocked for this site—enable them in the browser or system settings to use this
+                  feature.
+                </p>
+              ) : null}
+              <label className="mt-3 flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={dueNotifPrefs.enabled && Notification.permission === "granted"}
+                  onChange={(e) => {
+                    if (e.target.checked) void requestDueNotificationPermission();
+                    else persistDueNotifPrefs({ enabled: false });
+                  }}
+                  disabled={typeof Notification !== "undefined" && Notification.permission === "denied"}
+                />
+                <span>Alert when a reminder is due</span>
+              </label>
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={dueNotifPrefs.notifyWhenForeground}
+                  onChange={(e) => persistDueNotifPrefs({ notifyWhenForeground: e.target.checked })}
+                  disabled={!dueNotifPrefs.enabled || Notification.permission !== "granted"}
+                />
+                <span>Also show the system notification when this tab is visible</span>
+              </label>
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={dueNotifPrefs.desktopEnabled}
+                  onChange={(e) => persistDueNotifPrefs({ desktopEnabled: e.target.checked })}
+                  disabled={!dueNotifPrefs.enabled || Notification.permission !== "granted"}
+                />
+                <span>Enable on desktop / large screens (not only phone-sized windows)</span>
+              </label>
+              {typeof Notification !== "undefined" && Notification.permission === "default" ? (
+                <button
+                  type="button"
+                  onClick={() => void requestDueNotificationPermission()}
+                  className="mt-3 w-full rounded-full bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-500"
+                >
+                  Ask browser for permission
+                </button>
+              ) : null}
+            </div>
+
             <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
