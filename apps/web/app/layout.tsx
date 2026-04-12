@@ -40,18 +40,30 @@ export default async function RootLayout({
   const raw = user?.firstName?.trim();
   const firstDisplay =
     raw && raw.length > 0 ? `${raw[0]!.toUpperCase()}${raw.slice(1)}` : null;
-  const headerBrand = firstDisplay ? `${firstDisplay} · RemindOS` : "RemindOS";
-
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <ClerkProvider>
           <ThemeProvider>
-            <header className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+            <header className="sticky top-0 z-40 shrink-0 border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
               <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
-                <Link href="/" className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                <Link
+                  href="/"
+                  className="flex min-w-0 items-center gap-2 text-slate-900 dark:text-slate-100"
+                >
                   <Image src="/logo-remindos.svg" alt="RemindOS logo" width={24} height={24} />
-                  {headerBrand}
+                  <span className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-baseline sm:gap-1.5">
+                    <span className="truncate text-sm font-semibold tracking-tight">RemindOS</span>
+                    {firstDisplay ? (
+                      <span className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">
+                        {firstDisplay}
+                      </span>
+                    ) : (
+                      <span className="hidden text-xs font-medium text-slate-500 dark:text-slate-400 sm:inline">
+                        Personal Life OS
+                      </span>
+                    )}
+                  </span>
                 </Link>
                 <div className="flex items-center gap-3">
                   <Show when="signed-out">

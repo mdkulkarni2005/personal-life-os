@@ -1,21 +1,12 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
+import { formatNameWithInitial } from "../../../../lib/actor-display";
 import { appendSystemChatMessage } from "../../../../lib/server/chat-notify";
 import { getConvexClient } from "../../../../lib/server/convex-client";
 
 function errorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err);
-}
-
-function actorLabel(user: Awaited<ReturnType<typeof currentUser>>) {
-  if (!user) return "Someone";
-  return (
-    [user.firstName, user.lastName].filter(Boolean).join(" ").trim()
-    || user.username
-    || user.primaryEmailAddress?.emailAddress
-    || "Someone"
-  );
 }
 
 function parseReminderId(id: string) {
@@ -58,7 +49,7 @@ export async function PATCH(
     const ownerId = (reminder as { userId: string }).userId;
     if (ownerId && ownerId !== userId) {
       const user = await currentUser();
-      const actor = actorLabel(user);
+      const actor = formatNameWithInitial(user);
       const title = String((reminder as { title?: string }).title ?? "Reminder");
       let line = `${actor} updated "${title}".`;
       if (body.status === "done") line = `${actor} marked "${title}" as done.`;
@@ -100,7 +91,7 @@ export async function DELETE(
 
   if (!result.actorWasOwner) {
     const user = await currentUser();
-    const actor = actorLabel(user);
+    const actor = formatNameWithInitial(user);
     await appendSystemChatMessage(
       result.ownerUserId,
       `${actor} deleted "${result.title}".`

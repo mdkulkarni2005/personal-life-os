@@ -16,6 +16,10 @@ import {
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../lib/server/convex-client";
+import {
+  buildMessageWithReplyContext,
+  type ReplyContextPayload,
+} from "../../../lib/chat-reply-context";
 
 type ReminderAgentActionType =
   | "create_reminder"
@@ -337,6 +341,7 @@ export async function POST(request: Request) {
     message?: string;
     reminders?: ReminderItem[];
     timeZone?: string;
+    replyContext?: ReplyContextPayload;
   };
   const timeZone = normalizeClientTimeZone(body.timeZone);
   const message = body.message?.trim();
@@ -345,7 +350,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Message is required" }, { status: 400 });
   }
 
-  const intent = classifyReminderIntent(message);
+  const replyContext =
+    body.replyContext
+    && typeof body.replyContext.id === "string"
+    && typeof body.replyContext.content === "string"
+    && (body.replyContext.role === "user"
+      || body.replyContext.role === "assistant"
+      || body.replyContext.role === "system")
+      ? body.replyContext
+      : undefined;
+  const effectiveMessage = buildMessageWithReplyContext(message, replyContext);
+
+  const intent = classifyReminderIntent(effectiveMessage);
   if (intent === "decision_query") {
     return NextResponse.json({
       reply: formatDecisionReply(reminders, timeZone),
@@ -360,9 +376,9 @@ export async function POST(request: Request) {
   }
 
   // Deterministic path first: create reminder with explicit date/time should not rely on LLM.
-  if (looksLikeCreateIntent(message)) {
-    const title = extractTitleFromCreateInput(message);
-    const dueAt = parseDateTimeFromInput(message);
+  if (looksLikeCreateIntent(effectiveMessage)) {
+    const title = extractTitleFromCreateInput(effectiveMessage);
+    const dueAt = parseDateTimeFromInput(effectiveMessage);
 
     if (!title) {
       return NextResponse.json({
@@ -384,8 +400,8 @@ export async function POST(request: Request) {
     } satisfies ReminderAgentResponse);
   }
 
-  const listScopeFromMessage = inferListScopeFromMessage(message);
-  if (listScopeFromMessage && !isCompoundReminderQuestion(message)) {
+  const listScopeFromMessage = inferListScopeFromMessage(effectiveMessage);
+  if (listScopeFromMessage && !isCompoundReminderQuestion(effectiveMessage)) {
     if (listScopeFromMessage === "today") {
       const today = filterToday(reminders).slice(0, 5);
       return NextResponse.json({
@@ -412,7 +428,7 @@ export async function POST(request: Request) {
   const nimApiKey = process.env.NVIDIA_NIM_API_KEY;
   if (!nimApiKey) {
     const fallback: ReminderAgentResponse = {
-      reply: fallbackDeterministicReply(message, reminders, timeZone),
+      reply: fallbackDeterministicReply(effectiveMessage, reminders, timeZone),
       action: { type: "unknown" },
     };
     return NextResponse.json(fallback);
@@ -433,7 +449,7 @@ export async function POST(request: Request) {
           { role: "system", content: systemPrompt },
           {
             role: "user",
-            content: `User message:\n${message}\n\n--- REMINDER DIGEST (authoritative) ---\n${digest}\n\n--- REMINDERS JSON (same data, machine-readable) ---\n${JSON.stringify(reminders)}`,
+            content: `User message:\n${effectiveMessage}\n\n--- REMINDER DIGEST (authoritative) ---\n${digest}\n\n--- REMINDERS JSON (same data, machine-readable) ---\n${JSON.stringify(reminders)}`,
           },
         ],
         temperature: 0.2,
@@ -443,14 +459,14 @@ export async function POST(request: Request) {
 
     if (nimResponse.status === 429) {
       return NextResponse.json({
-        reply: fallbackDeterministicReply(message, reminders, timeZone),
+        reply: fallbackDeterministicReply(effectiveMessage, reminders, timeZone),
         action: { type: "unknown" },
       } satisfies ReminderAgentResponse);
     }
 
     if (!nimResponse.ok) {
       return NextResponse.json({
-        reply: fallbackDeterministicReply(message, reminders, timeZone),
+        reply: fallbackDeterministicReply(effectiveMessage, reminders, timeZone),
         action: { type: "unknown" },
       } satisfies ReminderAgentResponse);
     }
@@ -464,7 +480,7 @@ export async function POST(request: Request) {
 
     if (parsed.action.type === "list_reminders") {
       const scope =
-        mapAgentScopeToListScope(parsed.action.scope) ?? inferListScopeFromMessage(message) ?? "future";
+        mapAgentScopeToListScope(parsed.action.scope) ?? inferListScopeFromMessage(effectiveMessage) ?? "future";
       if (scope === "today") {
         const today = filterToday(reminders).slice(0, 5);
         parsed.reply = today.length === 0
@@ -481,13 +497,13 @@ export async function POST(request: Request) {
     }
 
     if (parsed.action.type === "create_reminder") {
-      const deterministicDueAt = parseDateTimeFromInput(message);
+      const deterministicDueAt = parseDateTimeFromInput(effectiveMessage);
       if (deterministicDueAt) {
         parsed.action.dueAt = deterministicDueAt;
       }
 
       const asksForRelativeDate =
-        hasTodayHint(message) || hasTomorrowHint(message) || hasDayAfterTomorrowHint(message);
+        hasTodayHint(effectiveMessage) || hasTomorrowHint(effectiveMessage) || hasDayAfterTomorrowHint(effectiveMessage);
 
       if (asksForRelativeDate && !deterministicDueAt) {
         return NextResponse.json({
@@ -497,7 +513,7 @@ export async function POST(request: Request) {
         } satisfies ReminderAgentResponse);
       }
 
-      if (!parsed.action.dueAt || !hasExplicitTime(message) || !isValidFutureIsoDate(parsed.action.dueAt)) {
+      if (!parsed.action.dueAt || !hasExplicitTime(effectiveMessage) || !isValidFutureIsoDate(parsed.action.dueAt)) {
         return NextResponse.json({
           reply:
             "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
@@ -542,7 +558,7 @@ export async function POST(request: Request) {
     return NextResponse.json(parsed);
   } catch {
     return NextResponse.json({
-      reply: fallbackDeterministicReply(message, reminders, timeZone),
+      reply: fallbackDeterministicReply(effectiveMessage, reminders, timeZone),
       action: { type: "unknown" },
     });
   }

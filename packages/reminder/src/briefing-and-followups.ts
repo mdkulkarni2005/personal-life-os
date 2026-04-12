@@ -37,58 +37,104 @@ function fmtTime(iso: string) {
   }
 }
 
-/** Short narrative: missed (up to 3 oldest overdue) + upcoming (next 3). */
+function fmtUpdated(iso: string) {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+/**
+ * Full session briefing: greeting + completed + overdue + today + tomorrow + later upcoming (all items per section).
+ */
 export function buildBriefingNarrative(
   reminders: ReminderItem[],
-  _firstName?: string | null,
+  firstName?: string | null,
   now = new Date()
 ): string {
-  const pending = reminders.filter((r) => r.status !== "done" && r.status !== "archived");
-  const missed = pending
+  const name = firstName?.trim();
+  const greet = name
+    ? `Hello, ${name} — this is your briefing.`
+    : "Hello — this is your briefing.";
+
+  const active = reminders.filter((r) => r.status !== "done" && r.status !== "archived");
+  const completed = reminders
+    .filter((r) => r.status === "done")
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+  const missed = active
     .filter((r) => bucketOf(r, now) === "missed")
     .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
-  const missedPick = missed.slice(0, 3);
-
-  const upcomingPool = pending
-    .filter((r) => bucketOf(r, now) !== "missed")
+  const today = active
+    .filter((r) => bucketOf(r, now) === "today")
     .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
-  const upcomingPick = upcomingPool.slice(0, 3);
+  const tomorrow = active
+    .filter((r) => bucketOf(r, now) === "tomorrow")
+    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+  const later = active
+    .filter((r) => bucketOf(r, now) === "upcoming")
+    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
 
-  const lines: string[] = [];
-  lines.push("Here is your quick briefing.");
+  const lines: string[] = [greet, ""];
 
-  if (missed.length === 0 && upcomingPick.length === 0) {
-    lines.push("No pending reminders on your list—nice and clear.");
-    return lines.join("\n");
+  lines.push(`COMPLETED (${completed.length})`);
+  if (completed.length === 0) {
+    lines.push("• None yet.");
+  } else {
+    for (const r of completed) {
+      lines.push(`• ${r.title} — completed ${fmtUpdated(r.updatedAt)}`);
+    }
   }
+  lines.push("");
 
-  if (missed.length > 0) {
-    lines.push(
-      missed.length > 3
-        ? `You have ${missed.length} overdue reminders; focusing on the ${missedPick.length} earliest:`
-        : `Overdue (${missed.length}):`
-    );
-    for (const m of missedPick) {
+  lines.push(`OVERDUE / MISSED (${missed.length})`);
+  if (missed.length === 0) {
+    lines.push("• None — you're caught up on overdue items.");
+  } else {
+    for (const m of missed) {
       lines.push(`• ${m.title} — was due ${fmtTime(m.dueAt)}`);
     }
+  }
+  lines.push("");
+
+  lines.push(`TODAY (${today.length})`);
+  if (today.length === 0) {
+    lines.push("• Nothing else scheduled for today.");
   } else {
-    lines.push("Nothing overdue.");
-  }
-
-  if (upcomingPick.length > 0) {
-    lines.push(
-      upcomingPool.length > 3
-        ? `Next up (${upcomingPick.length} of ${upcomingPool.length} upcoming):`
-        : "Coming up:"
-    );
-    for (const u of upcomingPick) {
-      lines.push(`• ${u.title} — ${fmtTime(u.dueAt)}`);
+    for (const r of today) {
+      lines.push(`• ${r.title} — ${fmtTime(r.dueAt)}`);
     }
-  } else if (missed.length === 0) {
-    lines.push("No further upcoming times scheduled.");
+  }
+  lines.push("");
+
+  lines.push(`TOMORROW (${tomorrow.length})`);
+  if (tomorrow.length === 0) {
+    lines.push("• Nothing scheduled for tomorrow yet.");
+  } else {
+    for (const r of tomorrow) {
+      lines.push(`• ${r.title} — ${fmtTime(r.dueAt)}`);
+    }
+  }
+  lines.push("");
+
+  lines.push(`COMING UP LATER (${later.length})`);
+  if (later.length === 0) {
+    lines.push("• Nothing further out on the calendar.");
+  } else {
+    for (const r of later) {
+      lines.push(`• ${r.title} — ${fmtTime(r.dueAt)}`);
+    }
   }
 
-  lines.push("Ask me anything about these, or say what you want to reschedule.");
+  lines.push("");
+  lines.push("Ask me anything about these, or tell me what to reschedule.");
+
   return lines.join("\n");
 }
 

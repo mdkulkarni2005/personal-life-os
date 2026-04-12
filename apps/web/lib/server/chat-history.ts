@@ -7,6 +7,9 @@ export type ChatMessageMeta = {
   dueAt?: number;
   title?: string;
   notes?: string;
+  /** Quoted message when the user replied in-thread (WhatsApp-style). */
+  replyTo?: { id: string; content: string; role: "user" | "assistant" | "system" };
+  editedAt?: string;
 };
 
 export interface StoredChatMessage {

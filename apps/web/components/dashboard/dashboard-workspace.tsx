@@ -16,11 +16,16 @@ import {
   type ReminderItem,
 } from "@repo/reminder";
 import { useUser } from "@clerk/nextjs";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { getChatPlaceholderCycle } from "../../lib/chat-placeholder";
 import { TypingPlaceholderOverlay } from "./typing-placeholder-overlay";
 import { showDueReminderSystemNotification } from "../../lib/due-notifications-client";
+import {
+  showCollaborationNotification,
+  shouldNotifyForCollaboration,
+} from "../../lib/collaboration-notifications";
+import type { ReplyContextPayload } from "../../lib/chat-reply-context";
 import {
   isCompactViewport,
   loadDueNotificationPrefs,
@@ -33,6 +38,12 @@ import {
 
 type ChatRole = "user" | "assistant" | "system";
 
+interface ChatReplyToRef {
+  id: string;
+  content: string;
+  role: ChatRole;
+}
+
 interface ChatMessageMeta {
   kind?: "due_reminder" | "briefing";
   reminderId?: string;
@@ -41,6 +52,8 @@ interface ChatMessageMeta {
   notes?: string;
   /** When true, message is not written to chat history file */
   skipPersist?: boolean;
+  replyTo?: ChatReplyToRef;
+  editedAt?: string;
 }
 
 interface ChatMessage {
@@ -318,6 +331,81 @@ function markDueShown(key: string) {
   sessionStorage.setItem(DUE_SHOWN_KEY, JSON.stringify([...next]));
 }
 
+function toReplyContextPayload(target: ChatMessage | null | undefined): ReplyContextPayload | undefined {
+  if (!target?.content?.trim()) return undefined;
+  return {
+    id: target.id,
+    content: target.content,
+    role: target.role === "system" ? "system" : target.role,
+  };
+}
+
+function chatReplyLabel(role: ChatRole): string {
+  if (role === "user") return "You";
+  if (role === "assistant") return "RemindOS";
+  return "Notice";
+}
+
+function ChatBubbleShell({
+  children,
+  onReply,
+  onEdit,
+  showEdit,
+  actionAlign = "end",
+  showActionsAlways = false,
+}: {
+  children: ReactNode;
+  onReply: () => void;
+  onEdit?: () => void;
+  showEdit: boolean;
+  actionAlign?: "start" | "center" | "end";
+  showActionsAlways?: boolean;
+}) {
+  const touchStart = useRef({ x: 0, y: 0 });
+  const justify =
+    actionAlign === "center" ? "justify-center" : actionAlign === "start" ? "justify-start" : "justify-end";
+  return (
+    <div
+      className="group relative"
+      onTouchStart={(e) => {
+        const t = e.touches[0];
+        if (t) touchStart.current = { x: t.clientX, y: t.clientY };
+      }}
+      onTouchEnd={(e) => {
+        const t = e.changedTouches[0];
+        if (!t) return;
+        const dx = t.clientX - touchStart.current.x;
+        const dy = t.clientY - touchStart.current.y;
+        if (dx > 52 && Math.abs(dy) < 50) onReply();
+      }}
+    >
+      {children}
+      <div
+        className={`mt-1 flex flex-wrap gap-2 ${justify} transition-opacity ${
+          showActionsAlways ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+        }`}
+      >
+        <button
+          type="button"
+          className="rounded-md px-1 text-[10px] font-semibold text-amber-200/95 hover:underline"
+          onClick={onReply}
+        >
+          Reply
+        </button>
+        {showEdit && onEdit ? (
+          <button
+            type="button"
+            className="rounded-md px-1 text-[10px] font-semibold text-emerald-100/95 hover:underline"
+            onClick={onEdit}
+          >
+            Edit
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function extractInviteToken(text: string): string | null {
   const trimmed = text.trim();
   const fromUrl = trimmed.match(/[?&]invite=([^&\s#]+)/i);
@@ -376,6 +464,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [taskFormDue, setTaskFormDue] = useState("");
   const [taskFormNotes, setTaskFormNotes] = useState("");
   const [taskFormError, setTaskFormError] = useState<string | null>(null);
+  const [inviteLinkToast, setInviteLinkToast] = useState<string | null>(null);
+  const inviteLinkToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const briefingRanRef = useRef(false);
   const briefingPlaybackActiveRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -384,6 +476,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const listOpenRef = useRef(false);
   const [briefingStreaming, setBriefingStreaming] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  /** After clear chat, ignore poll merges briefly so in-flight GETs cannot restore deleted history. */
+  const skipRemotePollMergeUntilRef = useRef(0);
   const isHistoryLoadedRef = useRef(false);
 
   messagesRef.current = messages;
@@ -417,13 +511,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const runBriefingStream = useCallback(() => {
     if (!isHistoryLoaded || briefingPlaybackActiveRef.current) return;
     briefingPlaybackActiveRef.current = true;
-    const full = buildBriefingNarrative(remindersRef.current);
+    const full = buildBriefingNarrative(remindersRef.current, user?.firstName ?? null);
     const id = `briefing-${Date.now()}`;
     setBriefingStreaming(true);
 
+    // Append briefing at the bottom so it stays in view (standard chat UX); no scroll-to-top wait.
     setMessages((prev) => {
       const rest = prev.filter((m) => m.id !== "starter" && m.meta?.kind !== "briefing");
       return [
+        ...rest,
         {
           id,
           role: "assistant",
@@ -431,7 +527,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           createdAt: new Date().toISOString(),
           meta: { kind: "briefing", skipPersist: true },
         },
-        ...rest,
       ];
     });
 
@@ -449,7 +544,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       }
     };
     window.setTimeout(step, 380);
-  }, [isHistoryLoaded]);
+  }, [isHistoryLoaded, user?.firstName]);
 
   const refreshReminders = useCallback(async () => {
     const response = await fetch("/api/reminders");
@@ -457,6 +552,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     const data = (await response.json()) as { reminders?: Array<Record<string, unknown>> };
     setReminders(() => (data.reminders ?? []).map((item) => fromApiReminder(item)));
   }, [setReminders]);
+
+  const refreshRemindersRef = useRef(refreshReminders);
+  refreshRemindersRef.current = refreshReminders;
 
   const refreshTasks = useCallback(async () => {
     const response = await fetch("/api/tasks");
@@ -540,14 +638,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           setMessages(next);
           saveChatBackup(userId, next);
         } else {
-          const backup = loadChatBackup(userId);
-          if (backup && backup.length > 0) {
-            const next = dedupeMessagesById(backup);
-            setMessages(next);
-            syncServer(next);
-          } else {
-            fallbackStarter();
-          }
+          // Server is empty — trust it (do not restore localStorage backup or cleared chat comes back on refresh).
+          clearChatBackup(userId);
+          fallbackStarter();
         }
       } catch {
         const backup = loadChatBackup(userId);
@@ -611,7 +704,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             && item.createdAt
             && (item.role === "user" || item.role === "assistant" || item.role === "system")
         );
-        setMessages((prev) => mergeRemoteChat(prev, remote));
+        setMessages((prev) => {
+          if (Date.now() < skipRemotePollMergeUntilRef.current) {
+            return prev;
+          }
+          return mergeRemoteChat(prev, remote);
+        });
       } catch {
         /* ignore */
       }
@@ -645,6 +743,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       })
     );
   }, [messages, reminders, tasks, user?.firstName, briefingStreaming]);
+
+  useEffect(() => {
+    return () => {
+      if (inviteLinkToastTimerRef.current) clearTimeout(inviteLinkToastTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     briefingRanRef.current = false;
@@ -699,8 +803,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   useEffect(() => {
     const container = chatScrollRef.current;
     if (!container) return;
-    container.scrollTop = container.scrollHeight;
-  }, [messages, isLoading]);
+    const id = requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+    return () => cancelAnimationFrame(id);
+  }, [messages, isLoading, briefingStreaming]);
 
   useEffect(() => {
     const openSnapshot = () => setIsSnapshotOpen(true);
@@ -708,14 +815,26 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     return () => window.removeEventListener("dashboard:snapshot-open", openSnapshot);
   }, []);
 
+  const inviteQueryParam = searchParams.get("invite");
+
   useEffect(() => {
-    const token = searchParams.get("invite");
-    if (!token?.trim() || !isHistoryLoaded) return;
-    const storageKey = `remindos:inviteAccepted:${token}`;
-    if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(storageKey)) {
-      if (typeof window !== "undefined") window.history.replaceState({}, "", "/dashboard");
+    const token = inviteQueryParam?.trim();
+    if (!token || !isHistoryLoaded) return;
+
+    const handledKey = `remindos:inviteUiHandled:${token}`;
+    if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(handledKey)) {
+      if (typeof window !== "undefined") {
+        window.history.replaceState({}, "", "/dashboard");
+      }
       return;
     }
+
+    // Strip ?invite= from the URL immediately so this effect does not re-fire in a loop
+    // (each run would otherwise append another error/success message).
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", "/dashboard");
+    }
+
     let cancelled = false;
     void (async () => {
       try {
@@ -723,10 +842,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           method: "POST",
         });
         const data = (await res.json()) as { error?: string; title?: string };
-        if (!cancelled && typeof window !== "undefined") {
-          window.history.replaceState({}, "", "/dashboard");
-        }
         if (cancelled) return;
+
+        if (typeof sessionStorage !== "undefined") {
+          sessionStorage.setItem(handledKey, "1");
+        }
+
         if (!res.ok) {
           setMessages((prev) => [
             ...prev,
@@ -739,8 +860,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           ]);
           return;
         }
-        if (typeof sessionStorage !== "undefined") sessionStorage.setItem(storageKey, "1");
-        await refreshReminders();
+
+        await refreshRemindersRef.current();
         setMessages((prev) => [
           ...prev,
           {
@@ -754,6 +875,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         ]);
       } catch {
         if (!cancelled) {
+          if (typeof sessionStorage !== "undefined") {
+            sessionStorage.setItem(handledKey, "1");
+          }
           setMessages((prev) => [
             ...prev,
             {
@@ -766,10 +890,22 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         }
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [searchParams, isHistoryLoaded, refreshReminders]);
+  }, [inviteQueryParam, isHistoryLoaded]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded) return;
+    for (const m of messages) {
+      if (m.role !== "system") continue;
+      if (!/\bwas accepted by\b|\byou joined\b/i.test(m.content)) continue;
+      if (!shouldNotifyForCollaboration(m.id, m.createdAt)) continue;
+      const title = /\bwas accepted by\b/i.test(m.content) ? "Reminder shared" : "Shared reminder";
+      void showCollaborationNotification(title, m.content.slice(0, 200), `collab-${m.id}`);
+    }
+  }, [messages, isHistoryLoaded]);
 
   useEffect(() => {
     const rid = searchParams.get("reminderId")?.trim();
@@ -994,18 +1130,54 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const handleChatSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = input.trim();
-    if (!prompt || isLoading || briefingStreaming) return;
+    if (!prompt || isLoading) return;
+
+    if (editingMessageId) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === editingMessageId && m.role === "user"
+            ? {
+                ...m,
+                content: prompt,
+                meta: { ...m.meta, editedAt: new Date().toISOString() },
+              }
+            : m
+        )
+      );
+      setInput("");
+      setEditingMessageId(null);
+      setReplyTarget(null);
+      return;
+    }
+
+    if (briefingStreaming) return;
+
+    const replySnapshot = replyTarget;
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       content: prompt,
       createdAt: new Date().toISOString(),
+      ...(replySnapshot
+        ? {
+            meta: {
+              replyTo: {
+                id: replySnapshot.id,
+                content: replySnapshot.content,
+                role: replySnapshot.role,
+              },
+            },
+          }
+        : {}),
     };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
+    setReplyTarget(null);
     setIsLoading(true);
     setLoadingTextIndex(0);
+
+    const replyPayload = toReplyContextPayload(replySnapshot);
 
     try {
       const inviteToken = extractInviteToken(prompt);
@@ -1077,7 +1249,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: rebuiltPrompt, reminders, ...clientTimeZonePayload() }),
+          body: JSON.stringify({
+            message: rebuiltPrompt,
+            reminders,
+            ...clientTimeZonePayload(),
+            ...(replyPayload ? { replyContext: replyPayload } : {}),
+          }),
         });
         const data = (await response.json()) as AgentResponse;
         applyAction(data.action);
@@ -1145,7 +1322,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: prompt, reminders, ...clientTimeZonePayload() }),
+        body: JSON.stringify({
+          message: prompt,
+          reminders,
+          ...clientTimeZonePayload(),
+          ...(replyPayload ? { replyContext: replyPayload } : {}),
+        }),
       });
 
       const data = (await response.json()) as AgentResponse;
@@ -1231,25 +1413,62 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     if (isClearingChat) return;
     setIsClearingChat(true);
     try {
-      await fetch("/api/chat/history", { method: "DELETE" });
+      const del = await fetch("/api/chat/history", { method: "DELETE" });
+      if (!del.ok) {
+        return;
+      }
       clearChatBackup(userId);
+      skipRemotePollMergeUntilRef.current = Date.now() + 12_000;
       setPendingCreateDraft(null);
-      setMessages([{ ...STARTER_MESSAGE, createdAt: new Date().toISOString() }]);
+      setReplyTarget(null);
+      setEditingMessageId(null);
+      const starter: ChatMessage = { ...STARTER_MESSAGE, createdAt: new Date().toISOString() };
+      setMessages([starter]);
+      // Persist fresh thread on server so refresh and other tabs see the new baseline, not old history.
+      await fetch("/api/chat/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            {
+              id: starter.id,
+              role: starter.role,
+              content: starter.content,
+              createdAt: starter.createdAt,
+            },
+          ],
+        }),
+      });
     } finally {
       setIsClearingChat(false);
     }
   };
 
+  const showInviteLinkToast = useCallback((message: string) => {
+    setInviteLinkToast(message);
+    if (inviteLinkToastTimerRef.current) clearTimeout(inviteLinkToastTimerRef.current);
+    inviteLinkToastTimerRef.current = setTimeout(() => {
+      setInviteLinkToast(null);
+      inviteLinkToastTimerRef.current = null;
+    }, 3200);
+  }, []);
+
   const copyReminderInviteLink = async (reminderId: string) => {
     try {
       const response = await fetch(`/api/reminders/${reminderId}/invite`, { method: "POST" });
-      if (!response.ok) return;
+      if (!response.ok) {
+        showInviteLinkToast("Could not get invite link. Try again.");
+        return;
+      }
       const data = (await response.json()) as { url?: string };
       if (data.url && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(data.url);
+        showInviteLinkToast("Link copied to clipboard");
+      } else {
+        showInviteLinkToast("Could not copy link.");
       }
     } catch {
-      /* ignore */
+      showInviteLinkToast("Could not copy link.");
     }
   };
 
@@ -1540,7 +1759,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, [persistDueNotifPrefs]);
 
   /** Only lock during session briefing stream — avoid clashing typewriter placeholder + caret. */
-  const briefingComposerLocked = briefingStreaming;
+  const briefingComposerLocked = briefingStreaming && !editingMessageId;
 
   const dismissDueNotifBanner = useCallback(() => {
     try {
@@ -1590,7 +1809,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   return (
     <>
-      <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1 sm:px-4 lg:mx-auto lg:max-w-3xl lg:px-6">
+      <section className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-transparent px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1 sm:px-4 lg:mx-auto lg:max-w-3xl lg:px-6">
         {typeof Notification !== "undefined"
         && Notification.permission === "default"
         && !dueNotifBannerDismissed ? (
@@ -1618,46 +1837,72 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </div>
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2 sm:px-4">
-            <p className="text-sm font-semibold tracking-tight text-white">Chat</p>
-            <button
-              type="button"
-              onClick={() => runBriefingStream()}
-              disabled={!isHistoryLoaded || briefingStreaming || isLoading}
-              className="shrink-0 rounded-lg border border-violet-400/40 bg-violet-950/50 px-2.5 py-1 text-xs font-semibold text-violet-100 shadow-sm transition hover:bg-violet-900/60 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Briefing
-            </button>
-          </div>
           <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 scrollbar-none sm:p-4">
           <div className="grid gap-3">
             {messages.map((message) => {
+              const startReplyTo = () => {
+                setReplyTarget(message);
+                setEditingMessageId(null);
+              };
+              const startEditUser = () => {
+                if (message.role !== "user") return;
+                setEditingMessageId(message.id);
+                setInput(message.content);
+                setReplyTarget(null);
+              };
+
               if (message.role === "system") {
                 return (
-                  <div
+                  <ChatBubbleShell
                     key={message.id}
-                    className="mx-auto max-w-[92%] rounded-2xl border border-amber-400/35 bg-amber-950/40 px-3 py-2 text-center text-xs text-amber-50 shadow-sm"
+                    onReply={startReplyTo}
+                    showEdit={false}
+                    actionAlign="center"
+                    showActionsAlways
                   >
-                    <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
-                    <p className="mt-1 text-[10px] text-amber-200/80">
-                      {new Date(message.createdAt).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  </div>
+                    <div className="mx-auto max-w-[92%] rounded-2xl border border-amber-400/35 bg-amber-950/40 px-3 py-2 text-center text-xs text-amber-50 shadow-sm">
+                      <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                      <p className="mt-1 text-[10px] text-amber-200/80">
+                        {new Date(message.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    </div>
+                  </ChatBubbleShell>
                 );
               }
               const dueMeta = message.meta?.kind === "due_reminder" ? message.meta : null;
-              return (
-                <div
-                  key={message.id}
-                  className={`max-w-[92%] rounded-3xl px-4 py-2 text-sm shadow-sm ${
-                    message.role === "user"
-                      ? "ml-auto rounded-br-lg bg-emerald-600 text-white"
-                      : "rounded-bl-lg bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100"
-                  }`}
-                >
+              const replyQuote = message.meta?.replyTo;
+              const bubbleClass =
+                message.role === "user"
+                  ? "ml-auto max-w-[92%] rounded-3xl rounded-br-lg bg-emerald-600 px-4 py-2 text-sm text-white shadow-sm"
+                  : "max-w-[92%] rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-800 shadow-sm dark:bg-slate-800 dark:text-slate-100";
+
+              const inner = (
+                <div className={bubbleClass}>
+                  {replyQuote ? (
+                    <div
+                      className={`mb-2 rounded-lg border-l-4 border-amber-400/95 pl-2.5 ${
+                        message.role === "user" ? "bg-emerald-800/45" : "bg-slate-100/90 dark:bg-slate-900/80"
+                      }`}
+                    >
+                      <p
+                        className={`text-[10px] font-semibold ${
+                          message.role === "user" ? "text-amber-100" : "text-amber-700 dark:text-amber-200"
+                        }`}
+                      >
+                        {chatReplyLabel(replyQuote.role)}
+                      </p>
+                      <p
+                        className={`line-clamp-5 whitespace-pre-wrap text-[11px] leading-snug ${
+                          message.role === "user" ? "text-emerald-50/95" : "text-slate-700 dark:text-slate-200"
+                        }`}
+                      >
+                        {replyQuote.content}
+                      </p>
+                    </div>
+                  ) : null}
                   {dueMeta?.reminderId ? (
                     <>
                       <p className="font-semibold text-slate-900 dark:text-white">Reminder due</p>
@@ -1720,16 +1965,36 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     </>
                   )}
                   <p
-                    className={`mt-1 text-[10px] ${
+                    className={`mt-1 flex flex-wrap items-center gap-2 text-[10px] ${
                       message.role === "user" ? "text-emerald-100" : "text-slate-500 dark:text-slate-400"
                     }`}
                   >
-                    {new Date(message.createdAt).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    <span>
+                      {new Date(message.createdAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    {message.meta?.editedAt && message.role === "user" ? (
+                      <span className="rounded bg-emerald-800/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-100/90">
+                        Edited
+                      </span>
+                    ) : null}
                   </p>
                 </div>
+              );
+
+              return (
+                <ChatBubbleShell
+                  key={message.id}
+                  onReply={startReplyTo}
+                  onEdit={message.role === "user" ? startEditUser : undefined}
+                  showEdit={message.role === "user"}
+                  actionAlign={message.role === "user" ? "end" : "start"}
+                  showActionsAlways={message.role === "user"}
+                >
+                  {inner}
+                </ChatBubbleShell>
               );
             })}
             {isLoading ? (
@@ -1745,7 +2010,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
               Suggested
             </p>
-            <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible">
+            <div className="flex flex-col gap-2">
               {followUpQuestions.map((q, i) => (
                 <button
                   key={`${q.kind}-${i}-${q.text.slice(0, 24)}`}
@@ -1769,7 +2034,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       })
                     );
                   }}
-                  className={`shrink-0 rounded-2xl border px-3 py-2.5 text-left text-xs font-medium leading-snug transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 min-[480px]:max-w-[min(100%,20rem)] max-[479px]:w-[min(88vw,20rem)] ${
+                  className={`w-full rounded-2xl border px-3 py-2.5 text-left text-xs font-medium leading-snug transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 ${
                     q.kind === "action"
                       ? "border-emerald-500/50 bg-emerald-950/35 text-emerald-50 hover:bg-emerald-900/45"
                       : "border-slate-600/80 bg-slate-900/50 text-slate-100 hover:bg-slate-800/65"
@@ -1784,11 +2049,53 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
         <form
           onSubmit={handleChatSubmit}
-          className={`grid shrink-0 grid-cols-[1fr_auto] items-end gap-2 border-t border-white/10 bg-slate-950/40 p-2 sm:p-3 ${
+          className={`shrink-0 border-t border-white/10 bg-slate-950/40 p-2 sm:p-3 ${
             briefingComposerLocked ? "opacity-90" : ""
           }`}
         >
-            <div className="relative rounded-xl border border-slate-600/80 bg-slate-900/60 px-2 py-1.5 dark:border-slate-600">
+          {editingMessageId ? (
+            <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-violet-500/35 bg-violet-950/45 px-3 py-2 text-xs text-violet-100">
+              <span className="font-medium">Editing your message</span>
+              <button
+                type="button"
+                className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold text-violet-200 hover:bg-violet-900/60"
+                onClick={() => {
+                  setEditingMessageId(null);
+                  setInput("");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : null}
+          {replyTarget && !editingMessageId ? (
+            <div className="mb-2 flex items-start gap-2 rounded-xl border border-amber-500/35 bg-amber-950/35 px-3 py-2">
+              <div className="min-w-0 flex-1 border-l-4 border-amber-400 pl-2.5">
+                <p className="text-[10px] font-semibold text-amber-200">{chatReplyLabel(replyTarget.role)}</p>
+                <p className="line-clamp-4 whitespace-pre-wrap text-xs leading-snug text-slate-100">
+                  {replyTarget.content}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="shrink-0 rounded-full px-2 py-0.5 text-lg leading-none text-slate-300 hover:bg-white/10 hover:text-white"
+                aria-label="Cancel reply"
+                onClick={() => setReplyTarget(null)}
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
+          <div className="flex w-full min-w-0 flex-wrap items-end gap-2">
+            <button
+              type="button"
+              onClick={() => runBriefingStream()}
+              disabled={!isHistoryLoaded || briefingStreaming || isLoading}
+              className="shrink-0 rounded-xl border border-violet-400/40 bg-violet-950/50 px-3 py-2.5 text-xs font-semibold text-violet-100 shadow-sm transition hover:bg-violet-900/60 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Briefing
+            </button>
+            <div className="relative min-h-[2.75rem] min-w-0 flex-1 rounded-xl border border-slate-600/80 bg-slate-900/60 px-2 py-1.5 dark:border-slate-600">
               {!input.trim() ? (
                 <div
                   className="pointer-events-none absolute left-2 top-1.5 z-0 min-h-[2.5rem] max-w-[calc(100%-0.5rem)] pr-2 text-sm leading-relaxed text-slate-500"
@@ -1816,22 +2123,23 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   }
                 }}
                 placeholder=""
-                readOnly={briefingComposerLocked}
+                readOnly={briefingComposerLocked && !editingMessageId}
                 aria-busy={briefingStreaming}
-                aria-label={briefingStreaming ? "Chat message (wait for briefing to finish)" : "Chat message"}
+                aria-label={briefingStreaming ? "Message (wait for briefing to finish)" : "Message"}
                 className={`relative z-10 max-h-32 min-h-11 w-full resize-none bg-transparent px-2 py-1.5 text-sm text-slate-100 outline-none placeholder:text-slate-500 ${
-                  briefingComposerLocked ? "cursor-wait caret-transparent" : ""
+                  briefingComposerLocked && !editingMessageId ? "cursor-wait caret-transparent" : ""
                 }`}
               />
             </div>
             <button
               type="submit"
-              disabled={!input.trim() || isLoading || briefingStreaming}
+              disabled={!input.trim() || isLoading || (briefingStreaming && !editingMessageId)}
               className="h-11 w-11 shrink-0 rounded-full bg-emerald-600 text-base font-semibold text-white shadow-md transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Send message"
             >
-              {isLoading ? "…" : briefingStreaming ? "…" : "➤"}
+              {isLoading ? "…" : briefingStreaming && !editingMessageId ? "…" : "➤"}
             </button>
+          </div>
         </form>
         </div>
       </section>
@@ -2203,49 +2511,51 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       {reminder.notes ? (
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{reminder.notes}</p>
                       ) : null}
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {reminder.access !== "shared" ? (
+                      {reminderListTab === "done" ? null : (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {reminder.access !== "shared" ? (
+                            <button
+                              type="button"
+                              onClick={() => void copyReminderInviteLink(reminder.id)}
+                              className="rounded-full border border-sky-400 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/50 dark:text-sky-100"
+                            >
+                              Copy invite link
+                            </button>
+                          ) : null}
                           <button
                             type="button"
-                            onClick={() => void copyReminderInviteLink(reminder.id)}
-                            className="rounded-full border border-sky-400 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/50 dark:text-sky-100"
+                            onClick={() => openEditModal(reminder)}
+                            className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
                           >
-                            Copy invite link
+                            Edit
                           </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(reminder)}
-                          className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const nextStatus = reminder.status === "done" ? "pending" : "done";
-                            void fetch(`/api/reminders/${reminder.id}`, {
-                              method: "PATCH",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ status: nextStatus }),
-                            }).then(() => void refreshReminders());
-                          }}
-                          className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
-                        >
-                          {reminder.status === "done" ? "Mark pending" : "Mark done"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void fetch(`/api/reminders/${reminder.id}`, {
-                              method: "DELETE",
-                            }).then(() => void refreshReminders());
-                          }}
-                          className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
-                        >
-                          Delete
-                        </button>
-                      </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextStatus = reminder.status === "done" ? "pending" : "done";
+                              void fetch(`/api/reminders/${reminder.id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ status: nextStatus }),
+                              }).then(() => void refreshReminders());
+                            }}
+                            className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
+                          >
+                            {reminder.status === "done" ? "Mark pending" : "Mark done"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void fetch(`/api/reminders/${reminder.id}`, {
+                                method: "DELETE",
+                              }).then(() => void refreshReminders());
+                            }}
+                            className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
                     </article>
                   ))
                 )}
@@ -2459,6 +2769,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </div>
         </div>
       )}
+
+      {inviteLinkToast ? (
+        <div
+          className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 z-[60] -translate-x-1/2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-lg dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+          role="status"
+          aria-live="polite"
+        >
+          {inviteLinkToast}
+        </div>
+      ) : null}
 
       {isBatchOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

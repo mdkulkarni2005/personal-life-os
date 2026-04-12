@@ -1,6 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
+import { formatNameWithInitial } from "../../../../../lib/actor-display";
 import { appendSystemChatMessage } from "../../../../../lib/server/chat-notify";
 import { getConvexClient } from "../../../../../lib/server/convex-client";
 
@@ -51,6 +52,7 @@ export async function POST(
     || user?.username
     || user?.primaryEmailAddress?.emailAddress
     || "Someone";
+  const displayWithInitial = formatNameWithInitial(user);
 
   let result: {
     ok: boolean;
@@ -89,11 +91,11 @@ export async function POST(
   if (!result.already) {
     await appendSystemChatMessage(
       ownerUserId,
-      `Your reminder "${title}" was accepted by ${name}.`
+      `Your reminder "${title}" was accepted by ${displayWithInitial}.`
     );
     await appendSystemChatMessage(
       userId,
-      `You joined the shared reminder "${title}". You can mark it done, edit, or delete from your reminders.`
+      `${displayWithInitial} — you joined "${title}" (shared by the owner). Manage it under Reminders.`
     );
   }
 
