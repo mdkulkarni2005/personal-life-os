@@ -1,6 +1,14 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const lifeDomain = v.union(
+  v.literal("health"),
+  v.literal("finance"),
+  v.literal("career"),
+  v.literal("hobby"),
+  v.literal("fun")
+);
+
 const reminders = defineTable({
   userId: v.string(),
   title: v.string(),
@@ -13,11 +21,14 @@ const reminders = defineTable({
   priority: v.optional(v.number()),
   urgency: v.optional(v.number()),
   tags: v.optional(v.array(v.string())),
+  linkedTaskId: v.optional(v.id("tasks")),
+  domain: v.optional(lifeDomain),
   createdAt: v.number(),
   updatedAt: v.number(),
 })
   .index("by_user_dueAt", ["userId", "dueAt"])
-  .index("by_user_status_dueAt", ["userId", "status", "dueAt"]);
+  .index("by_user_status_dueAt", ["userId", "status", "dueAt"])
+  .index("by_linked_task", ["linkedTaskId"]);
 
 const reminderInvites = defineTable({
   token: v.string(),
@@ -46,6 +57,7 @@ const tasks = defineTable({
   status: v.union(v.literal("pending"), v.literal("done")),
   /** 1–5, higher = more important (same as reminders). */
   priority: v.optional(v.number()),
+  domain: v.optional(lifeDomain),
   createdAt: v.number(),
   updatedAt: v.number(),
 }).index("by_user_status", ["userId", "status"]);

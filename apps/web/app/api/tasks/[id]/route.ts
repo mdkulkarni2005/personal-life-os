@@ -25,6 +25,7 @@ export async function PATCH(
     dueAt?: number | null;
     status?: "pending" | "done";
     priority?: number;
+    domain?: "health" | "finance" | "career" | "hobby" | "fun" | null;
   };
 
   const needsStarPriority = body.title !== undefined || body.notes !== undefined;
@@ -49,11 +50,13 @@ export async function PATCH(
     dueAt?: number;
     status?: "pending" | "done";
     priority?: number;
+    domain?: "health" | "finance" | "career" | "hobby" | "fun" | null;
   } = { userId, taskId: parseTaskId(id) };
   if (body.title !== undefined) patch.title = body.title;
   if (body.notes !== undefined) patch.notes = body.notes;
   if (body.status !== undefined) patch.status = body.status;
   if (body.priority !== undefined) patch.priority = body.priority;
+  if (body.domain !== undefined) patch.domain = body.domain;
   if (body.dueAt === null) {
     /* keep dueAt unset — Convex optional clear not implemented */
   } else if (body.dueAt != null && Number.isFinite(Number(body.dueAt))) {

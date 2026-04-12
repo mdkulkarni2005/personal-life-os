@@ -8,9 +8,11 @@ import {
   buildReminderSnapshot,
   getReminderBucket,
   inferListScopeFromMessage,
+  isAdhocReminder,
   isCompoundReminderQuestion,
   tryGroundedReminderAnswer,
   type FollowUpQuestion,
+  type LifeDomain,
   type TaskItemBrief,
   type ReminderRecurrence,
   type ReminderItem,
@@ -246,6 +248,12 @@ function clearChatBackup(userId: string): void {
   }
 }
 
+const LIFE_DOMAINS = new Set<string>(["health", "finance", "career", "hobby", "fun"]);
+
+function parseLifeDomain(value: unknown): LifeDomain | undefined {
+  return typeof value === "string" && LIFE_DOMAINS.has(value) ? (value as LifeDomain) : undefined;
+}
+
 interface TaskRow {
   id: string;
   title: string;
@@ -253,6 +261,7 @@ interface TaskRow {
   dueAt?: string;
   status: "pending" | "done";
   priority?: number;
+  domain?: LifeDomain;
 }
 
 function fromApiTask(row: Record<string, unknown>): TaskRow {
@@ -264,6 +273,7 @@ function fromApiTask(row: Record<string, unknown>): TaskRow {
     dueAt: row.dueAt != null ? new Date(Number(row.dueAt)).toISOString() : undefined,
     status: row.status === "done" ? "done" : "pending",
     priority: typeof pr === "number" && Number.isFinite(pr) ? pr : undefined,
+    domain: parseLifeDomain(row.domain),
   };
 }
 
@@ -276,6 +286,7 @@ function taskBucket(task: TaskRow, now: Date): "missed" | "later" | "done" {
 function fromApiReminder(item: Record<string, unknown>): ReminderItem {
   const access = item._access === "shared" ? "shared" : "owner";
   const p = item.priority;
+  const linked = item.linkedTaskId;
   return {
     id: String(item._id ?? item.id ?? crypto.randomUUID()),
     title: String(item.title ?? ""),
@@ -285,11 +296,16 @@ function fromApiReminder(item: Record<string, unknown>): ReminderItem {
       item.recurrence === "daily" || item.recurrence === "weekly" || item.recurrence === "monthly"
         ? item.recurrence
         : "none",
-    status: item.status === "done" ? "done" : "pending",
+    status:
+      item.status === "done" || item.status === "archived"
+        ? item.status
+        : "pending",
     priority: typeof p === "number" && Number.isFinite(p) ? p : undefined,
     createdAt: new Date(Number(item.createdAt ?? Date.now())).toISOString(),
     updatedAt: new Date(Number(item.updatedAt ?? Date.now())).toISOString(),
     access,
+    linkedTaskId: typeof linked === "string" ? linked : undefined,
+    domain: parseLifeDomain(item.domain),
   };
 }
 
@@ -479,6 +495,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [reminderStars, setReminderStars] = useState(0);
   const [taskStars, setTaskStars] = useState(0);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [reminderLinkedTaskId, setReminderLinkedTaskId] = useState("");
+  const [reminderDomain, setReminderDomain] = useState<"" | LifeDomain>("");
+  const [reminderTaskFilter, setReminderTaskFilter] = useState<"all" | "adhoc" | string>("all");
+  const [taskFormDomain, setTaskFormDomain] = useState<"" | LifeDomain>("");
   const [inviteLinkToast, setInviteLinkToast] = useState<string | null>(null);
   const inviteLinkToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
@@ -1077,6 +1097,18 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     };
   }, [tasks]);
 
+  const taskTitleById = useMemo(
+    () => Object.fromEntries(tasks.map((t) => [t.id, t.title] as const)),
+    [tasks]
+  );
+
+  const reminderListRows = useMemo(() => {
+    const base = grouped[reminderListTab];
+    if (reminderTaskFilter === "all") return base;
+    if (reminderTaskFilter === "adhoc") return base.filter((r) => isAdhocReminder(r));
+    return base.filter((r) => r.linkedTaskId === reminderTaskFilter);
+  }, [grouped, reminderListTab, reminderTaskFilter]);
+
 
   const applyAction = (action: AgentAction) => {
     if (action.type === "create_reminder" && action.title && action.dueAt) {
@@ -1285,6 +1317,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           body: JSON.stringify({
             message: rebuiltPrompt,
             reminders,
+            tasks: tasks.map((t) => ({
+              id: t.id,
+              title: t.title,
+              notes: t.notes,
+              dueAt: t.dueAt,
+              status: t.status,
+              priority: t.priority,
+              domain: t.domain,
+            })),
             ...clientTimeZonePayload(),
             ...(replyPayload ? { replyContext: replyPayload } : {}),
           }),
@@ -1358,6 +1399,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         body: JSON.stringify({
           message: prompt,
           reminders,
+          tasks: tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            notes: t.notes,
+            dueAt: t.dueAt,
+            status: t.status,
+            priority: t.priority,
+            domain: t.domain,
+          })),
           ...clientTimeZonePayload(),
           ...(replyPayload ? { replyContext: replyPayload } : {}),
         }),
@@ -1401,6 +1451,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setNewNotes("");
     setEditingReminderId(null);
     setReminderStars(0);
+    setReminderLinkedTaskId("");
+    setReminderDomain("");
   };
 
   const resetTaskForm = () => {
@@ -1410,6 +1462,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setTaskStars(0);
     setEditingTaskId(null);
     setTaskFormError(null);
+    setTaskFormDomain("");
   };
 
   const handleJsonImport = async (event: FormEvent<HTMLFormElement>) => {
@@ -1652,7 +1705,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           const response = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: question, reminders, ...clientTimeZonePayload() }),
+            body: JSON.stringify({
+              message: question,
+              reminders,
+              tasks: tasks.map((t) => ({
+                id: t.id,
+                title: t.title,
+                notes: t.notes,
+                dueAt: t.dueAt,
+                status: t.status,
+                priority: t.priority,
+                domain: t.domain,
+              })),
+              ...clientTimeZonePayload(),
+            }),
           });
           const data = (await response.json()) as AgentResponse;
           applyAction(data.action);
@@ -1712,6 +1778,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         ? reminder.priority
         : 0
     );
+    setReminderLinkedTaskId(reminder.linkedTaskId ?? "");
+    setReminderDomain(reminder.domain ?? "");
     setIsListOpen(false);
     setIsCreateOpen(true);
   };
@@ -1733,6 +1801,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
     if (editingReminderId) {
       try {
+        const canLink =
+          reminders.find((r) => r.id === editingReminderId)?.access !== "shared";
+        const linkPayload: Record<string, unknown> = {};
+        if (canLink) {
+          linkPayload.linkedTaskId = reminderLinkedTaskId.trim() || null;
+          linkPayload.domain = reminderDomain || null;
+        }
         const res = await fetch(`/api/reminders/${editingReminderId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1742,6 +1817,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             recurrence: newRecurrence,
             notes: newNotes.trim() ? newNotes.trim() : undefined,
             priority: reminderStars,
+            ...linkPayload,
           }),
         });
         const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -1768,16 +1844,23 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       }
 
       try {
+        const createBody: Record<string, unknown> = {
+          title: newTitle.trim(),
+          dueAt: dueAtMs,
+          recurrence: newRecurrence,
+          notes: newNotes.trim() ? newNotes.trim() : undefined,
+          priority: reminderStars,
+        };
+        if (reminderLinkedTaskId.trim()) {
+          createBody.linkedTaskId = reminderLinkedTaskId.trim();
+        }
+        if (reminderDomain) {
+          createBody.domain = reminderDomain;
+        }
         const res = await fetch("/api/reminders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: newTitle.trim(),
-            dueAt: dueAtMs,
-            recurrence: newRecurrence,
-            notes: newNotes.trim() ? newNotes.trim() : undefined,
-            priority: reminderStars,
-          }),
+          body: JSON.stringify(createBody),
         });
         const data = (await res.json().catch(() => ({}))) as { error?: string; created?: boolean };
         if (!res.ok) {
@@ -1832,6 +1915,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setTaskStars(
       typeof task.priority === "number" && task.priority >= 1 && task.priority <= 5 ? task.priority : 0
     );
+    setTaskFormDomain(task.domain ?? "");
     setTaskFormError(null);
   };
 
@@ -1853,12 +1937,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       dueAt = ms;
     }
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         title: taskFormTitle.trim(),
         notes: taskFormNotes.trim() ? taskFormNotes.trim() : undefined,
         dueAt,
         priority: taskStars,
       };
+      if (editingTaskId) {
+        payload.domain = taskFormDomain || null;
+      } else if (taskFormDomain) {
+        payload.domain = taskFormDomain;
+      }
       const res = editingTaskId
         ? await fetch(`/api/tasks/${editingTaskId}`, {
             method: "PATCH",
@@ -2510,6 +2599,59 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
                 />
               </label>
+              {(() => {
+                const editingRem = editingReminderId
+                  ? reminders.find((r) => r.id === editingReminderId)
+                  : undefined;
+                const canEditLinks = !editingRem || editingRem.access !== "shared";
+                return (
+                  <>
+                    <label
+                      className={`grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 ${
+                        !canEditLinks ? "opacity-60" : ""
+                      }`}
+                    >
+                      Related task (optional)
+                      <select
+                        value={reminderLinkedTaskId}
+                        onChange={(e) => setReminderLinkedTaskId(e.target.value)}
+                        disabled={!canEditLinks}
+                        className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 disabled:cursor-not-allowed"
+                      >
+                        <option value="">None — counts as ADHOC</option>
+                        {tasks.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.title}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-[11px] font-normal text-slate-500">
+                        No task selected → reminder is ADHOC (standalone).
+                      </span>
+                    </label>
+                    <label
+                      className={`grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 ${
+                        !canEditLinks ? "opacity-60" : ""
+                      }`}
+                    >
+                      Domain (optional)
+                      <select
+                        value={reminderDomain}
+                        onChange={(e) => setReminderDomain(e.target.value as "" | LifeDomain)}
+                        disabled={!canEditLinks}
+                        className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 disabled:cursor-not-allowed"
+                      >
+                        <option value="">No domain</option>
+                        {(["health", "finance", "career", "hobby", "fun"] as const).map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                );
+              })()}
               <StarRating value={reminderStars} onChange={setReminderStars} label="Priority (required)" />
               {createFormError ? (
                 <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
@@ -2578,12 +2720,30 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 </button>
               ))}
             </div>
+            <div className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
+              <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                <span className="font-medium">Filter</span>
+                <select
+                  value={reminderTaskFilter}
+                  onChange={(e) => setReminderTaskFilter(e.target.value as "all" | "adhoc" | string)}
+                  className="max-w-[min(100%,14rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                >
+                  <option value="all">All in this tab</option>
+                  <option value="adhoc">ADHOC only</option>
+                  {tasks.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      Task: {t.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               <div className="grid gap-3">
-                {grouped[reminderListTab].length === 0 ? (
+                {reminderListRows.length === 0 ? (
                   <p className="text-sm text-slate-500">Nothing in this tab.</p>
                 ) : (
-                  grouped[reminderListTab].map((reminder) => (
+                  reminderListRows.map((reminder) => (
                     <article
                       key={reminder.id}
                       className="rounded-xl border border-slate-200 p-3 dark:border-slate-700 sm:p-4"
@@ -2594,6 +2754,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         {reminder.access === "shared" ? (
                           <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
                             Shared
+                          </span>
+                        ) : null}
+                        {isAdhocReminder(reminder) ? (
+                          <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium uppercase text-slate-800 dark:bg-slate-700 dark:text-slate-100">
+                            ADHOC
+                          </span>
+                        ) : (
+                          <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-900 dark:bg-indigo-950/80 dark:text-indigo-100">
+                            Task: {taskTitleById[reminder.linkedTaskId!] ?? "linked"}
+                          </span>
+                        )}
+                        {reminder.domain ? (
+                          <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100">
+                            {reminder.domain}
                           </span>
                         ) : null}
                       </p>
@@ -2710,6 +2884,21 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 rows={2}
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
               />
+              <label className="grid gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
+                Domain (optional)
+                <select
+                  value={taskFormDomain}
+                  onChange={(e) => setTaskFormDomain(e.target.value as "" | LifeDomain)}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+                >
+                  <option value="">No domain</option>
+                  {(["health", "finance", "career", "hobby", "fun"] as const).map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <StarRating value={taskStars} onChange={setTaskStars} label="Priority (required)" />
               {taskFormError ? (
                 <p className="text-xs text-rose-600 dark:text-rose-400">{taskFormError}</p>
@@ -2775,6 +2964,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       <p className="font-semibold">
                         {task.title}
                         <span className="text-amber-500">{priorityStarsLabel(task.priority)}</span>
+                        {task.domain ? (
+                          <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100">
+                            {task.domain}
+                          </span>
+                        ) : null}
                       </p>
                       {task.dueAt ? (
                         <p className="text-sm text-slate-500">
@@ -2787,6 +2981,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       {task.notes ? (
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{task.notes}</p>
                       ) : null}
+                      {(() => {
+                        const linked = reminders.filter(
+                          (r) => r.linkedTaskId === task.id && r.status !== "done"
+                        );
+                        if (linked.length === 0) return null;
+                        return (
+                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            <span className="font-semibold text-slate-600 dark:text-slate-300">
+                              Reminders:
+                            </span>{" "}
+                            {linked.map((r) => r.title).join(" · ")}
+                          </p>
+                        );
+                      })()}
                       <div className="mt-2 flex flex-wrap gap-2">
                         <button
                           type="button"

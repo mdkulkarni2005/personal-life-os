@@ -2,6 +2,14 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
+const lifeDomain = v.union(
+  v.literal("health"),
+  v.literal("finance"),
+  v.literal("career"),
+  v.literal("hobby"),
+  v.literal("fun")
+);
+
 export const listForUser = query({
   args: { userId: v.string() },
   handler: async (ctx: QueryCtx, args: { userId: string }) => {
@@ -25,6 +33,7 @@ export const create = mutation({
     dueAt: v.optional(v.number()),
     status: v.optional(v.union(v.literal("pending"), v.literal("done"))),
     priority: v.optional(v.number()),
+    domain: v.optional(lifeDomain),
   },
   handler: async (ctx: MutationCtx, args) => {
     const now = Date.now();
@@ -35,6 +44,7 @@ export const create = mutation({
       dueAt: args.dueAt,
       status: args.status ?? "pending",
       priority: args.priority,
+      domain: args.domain,
       createdAt: now,
       updatedAt: now,
     });
@@ -51,6 +61,7 @@ export const update = mutation({
     dueAt: v.optional(v.number()),
     status: v.optional(v.union(v.literal("pending"), v.literal("done"))),
     priority: v.optional(v.number()),
+    domain: v.optional(v.union(lifeDomain, v.null())),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.taskId);
@@ -61,6 +72,9 @@ export const update = mutation({
     if (args.dueAt !== undefined) patch.dueAt = args.dueAt;
     if (args.status !== undefined) patch.status = args.status;
     if (args.priority !== undefined) patch.priority = args.priority;
+    if (args.domain !== undefined) {
+      patch.domain = args.domain === null ? undefined : args.domain;
+    }
     await ctx.db.patch(args.taskId, patch);
     return await ctx.db.get(args.taskId);
   },

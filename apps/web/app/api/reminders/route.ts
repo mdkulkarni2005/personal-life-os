@@ -41,6 +41,8 @@ export async function POST(request: Request) {
     urgency?: number;
     tags?: string[];
     status?: "pending" | "done" | "archived";
+    linkedTaskId?: string;
+    domain?: "health" | "finance" | "career" | "hobby" | "fun";
   };
   if (!body.title?.trim() || body.dueAt == null) {
     return NextResponse.json({ error: "title and dueAt required" }, { status: 400 });
@@ -72,6 +74,10 @@ export async function POST(request: Request) {
       urgency: body.urgency,
       tags: body.tags,
       status: body.status ?? "pending",
+      ...(typeof body.linkedTaskId === "string" && body.linkedTaskId.trim()
+        ? { linkedTaskId: body.linkedTaskId.trim() as any }
+        : {}),
+      ...(body.domain ? { domain: body.domain } : {}),
     });
     return NextResponse.json(result);
   } catch (err) {

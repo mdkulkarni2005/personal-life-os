@@ -3,6 +3,14 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
+const lifeDomain = v.union(
+  v.literal("health"),
+  v.literal("finance"),
+  v.literal("career"),
+  v.literal("hobby"),
+  v.literal("fun")
+);
+
 function normalizeTitle(value: string) {
   return value.trim().toLowerCase();
 }
@@ -73,6 +81,19 @@ export const listForUser = query({
   },
 });
 
+export const listForTask = query({
+  args: { userId: v.string(), taskId: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.userId !== args.userId) return [];
+    const rows = await ctx.db
+      .query("reminders")
+      .withIndex("by_linked_task", (q) => q.eq("linkedTaskId", args.taskId))
+      .collect();
+    return rows.filter((r) => r.userId === args.userId);
+  },
+});
+
 export const create = mutation({
   args: {
     userId: v.string(),
@@ -86,10 +107,20 @@ export const create = mutation({
     urgency: v.optional(v.number()),
     tags: v.optional(v.array(v.string())),
     status: v.optional(v.union(v.literal("pending"), v.literal("done"), v.literal("archived"))),
+    linkedTaskId: v.optional(v.id("tasks")),
+    domain: v.optional(lifeDomain),
   },
   handler: async (ctx, args) => {
     const title = args.title.trim();
     const now = Date.now();
+
+    let linkedTaskId: Id<"tasks"> | undefined;
+    if (args.linkedTaskId) {
+      const t = await ctx.db.get(args.linkedTaskId);
+      if (t && t.userId === args.userId) {
+        linkedTaskId = args.linkedTaskId;
+      }
+    }
 
     const sameTime = await ctx.db
       .query("reminders")
@@ -114,6 +145,8 @@ export const create = mutation({
       priority: args.priority,
       urgency: args.urgency,
       tags: args.tags?.filter((tag) => tag.trim().length > 0),
+      linkedTaskId,
+      domain: args.domain,
       createdAt: now,
       updatedAt: now,
     });
@@ -137,11 +170,34 @@ export const update = mutation({
     priority: v.optional(v.number()),
     urgency: v.optional(v.number()),
     tags: v.optional(v.array(v.string())),
+    linkedTaskId: v.optional(v.union(v.id("tasks"), v.null())),
+    domain: v.optional(v.union(lifeDomain, v.null())),
   },
   handler: async (ctx, args) => {
     const access = await getReminderAccess(ctx, args.reminderId, args.userId);
     if (!access) return null;
     const current = access.reminder;
+    if (access.role !== "owner") {
+      // Participants cannot change task link / domain on shared copies
+      if (args.linkedTaskId !== undefined || args.domain !== undefined) return null;
+    }
+
+    let nextLinked: Id<"tasks"> | undefined = current.linkedTaskId;
+    if (args.linkedTaskId !== undefined) {
+      if (args.linkedTaskId === null) {
+        nextLinked = undefined;
+      } else {
+        const t = await ctx.db.get(args.linkedTaskId);
+        if (t && t.userId === args.userId) {
+          nextLinked = args.linkedTaskId;
+        }
+      }
+    }
+
+    let nextDomain: typeof current.domain = current.domain;
+    if (args.domain !== undefined) {
+      nextDomain = args.domain === null ? undefined : args.domain;
+    }
 
     await ctx.db.patch(args.reminderId, {
       title: args.title?.trim() ?? current.title,
@@ -152,6 +208,8 @@ export const update = mutation({
       priority: args.priority ?? current.priority,
       urgency: args.urgency ?? current.urgency,
       tags: args.tags ?? current.tags,
+      linkedTaskId: nextLinked,
+      domain: nextDomain,
       updatedAt: Date.now(),
     });
 

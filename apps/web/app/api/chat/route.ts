@@ -1,8 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import {
   analyzeSchedule,
+  buildLifeOsContextBlock,
   buildListRemindersReply,
-  buildRemindersContextBlock,
   classifyReminderIntent,
   filterToday,
   inferListScopeFromMessage,
@@ -11,7 +11,9 @@ import {
   rankTasks,
   tryGroundedReminderAnswer,
   type ReminderListScope,
+  type LifeDomain,
   type ReminderItem,
+  type TaskItem,
 } from "@repo/reminder";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
@@ -47,16 +49,18 @@ interface ReminderAgentResponse {
 
 const NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_MODEL = "meta/llama-3.1-70b-instruct";
-const systemPrompt = `You are the RemindOS assistant for Personal Life OS. You ONLY help with the user's reminders.
+const systemPrompt = `You are the RemindOS assistant for Personal Life OS. You help with the user's reminders and tasks (orchestration layer).
 
 DATA RULES (critical):
-- The REMINDER DIGEST and JSON below are the ONLY source of truth. Do not invent, rename, or assume reminders.
-- If the answer is not in the data, say you do not see that in their reminders and suggest what they could ask instead.
+- The LIFE OS DIGEST (tasks + reminders) and JSON below are the ONLY source of truth. Do not invent, rename, or assume items.
+- Reminders may link to a task (see task id / task title in digest). If a reminder has no linked task, it is labeled ADHOC (standalone).
+- Optional domain tags (health, finance, career, hobby, fun) may appear on reminders and tasks.
+- If the answer is not in the data, say you do not see that in their data and suggest what they could ask instead.
 - Never paste raw ISO-8601 timestamps in "reply". Use natural language dates/times. The digest lists due times in the user's time zone—quote them exactly as shown.
 
 WHAT YOU CAN DO:
-- Answer ANY question about their reminders: schedules, conflicts, "what's next", comparisons, counts by day, overdue, notes, recurrence, typos in titles (match loosely to digest titles).
-- Small talk or unrelated topics: politely redirect to reminders only.
+- Answer questions about reminders and tasks: schedules, conflicts, "what's next", which reminders belong to which task, ADHOC vs task-linked, domains, comparisons, counts, overdue, notes, recurrence.
+- Small talk or unrelated topics: politely redirect to reminders and tasks.
 
 ACTIONS (JSON action.type):
 - list_reminders: user wants a simple list or roll-up by period (server may replace reply with a grounded list).
@@ -288,10 +292,17 @@ function safeAgentResponse(text: string): ReminderAgentResponse {
   }
 }
 
+const LIFE_DOMAINS = new Set(["health", "finance", "career", "hobby", "fun"]);
+
+function parseLifeDomain(value: unknown): LifeDomain | undefined {
+  return typeof value === "string" && LIFE_DOMAINS.has(value) ? (value as LifeDomain) : undefined;
+}
+
 function fromDbReminder(item: Record<string, unknown>): ReminderItem {
   const dueAtMs = Number(item.dueAt ?? Date.now());
   const createdAtMs = Number(item.createdAt ?? Date.now());
   const updatedAtMs = Number(item.updatedAt ?? Date.now());
+  const linkedRaw = item.linkedTaskId;
   return {
     id: String(item._id ?? item.id ?? crypto.randomUUID()),
     title: String(item.title ?? ""),
@@ -307,6 +318,27 @@ function fromDbReminder(item: Record<string, unknown>): ReminderItem {
     status: item.status === "done" || item.status === "archived" ? item.status : "pending",
     createdAt: new Date(createdAtMs).toISOString(),
     updatedAt: new Date(updatedAtMs).toISOString(),
+    linkedTaskId: typeof linkedRaw === "string" ? linkedRaw : undefined,
+    domain: parseLifeDomain(item.domain),
+  };
+}
+
+function fromDbTask(item: Record<string, unknown>): TaskItem {
+  const createdAtMs = Number(item.createdAt ?? Date.now());
+  const updatedAtMs = Number(item.updatedAt ?? Date.now());
+  const dueRaw = item.dueAt;
+  return {
+    id: String(item._id ?? item.id ?? crypto.randomUUID()),
+    title: String(item.title ?? ""),
+    notes: typeof item.notes === "string" ? item.notes : undefined,
+    dueAt: dueRaw != null && Number.isFinite(Number(dueRaw))
+      ? new Date(Number(dueRaw)).toISOString()
+      : undefined,
+    status: item.status === "done" ? "done" : "pending",
+    priority: typeof item.priority === "number" ? item.priority : undefined,
+    domain: parseLifeDomain(item.domain),
+    createdAt: new Date(createdAtMs).toISOString(),
+    updatedAt: new Date(updatedAtMs).toISOString(),
   };
 }
 
@@ -320,6 +352,16 @@ async function loadRemindersForChat(userId: string, fallback: ReminderItem[]): P
     return dbReminders.map((item) => fromDbReminder(item));
   } catch {
     // Keep the chat functional if DB fetch temporarily fails.
+    return fallback;
+  }
+}
+
+async function loadTasksForChat(userId: string, fallback: TaskItem[]): Promise<TaskItem[]> {
+  try {
+    const client = getConvexClient();
+    const rows = await client.query(api.tasks.listForUser, { userId });
+    return rows.map((item) => fromDbTask(item as Record<string, unknown>));
+  } catch {
     return fallback;
   }
 }
@@ -340,12 +382,16 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     message?: string;
     reminders?: ReminderItem[];
+    tasks?: TaskItem[];
     timeZone?: string;
     replyContext?: ReplyContextPayload;
   };
   const timeZone = normalizeClientTimeZone(body.timeZone);
   const message = body.message?.trim();
   const reminders = await loadRemindersForChat(userId, body.reminders ?? []);
+  const tasks = await loadTasksForChat(userId, body.tasks ?? []);
+  const taskTitleById = Object.fromEntries(tasks.map((t) => [t.id, t.title]));
+  const displayOptions = { timeZone, taskTitleById };
   if (!message) {
     return NextResponse.json({ error: "Message is required" }, { status: 400 });
   }
@@ -436,7 +482,7 @@ export async function POST(request: Request) {
 
   try {
     const model = process.env.NVIDIA_NIM_MODEL ?? DEFAULT_MODEL;
-    const digest = buildRemindersContextBlock(reminders, new Date(), { timeZone });
+    const digest = buildLifeOsContextBlock(reminders, tasks, new Date(), displayOptions);
     const nimResponse = await fetch(`${NIM_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -449,7 +495,7 @@ export async function POST(request: Request) {
           { role: "system", content: systemPrompt },
           {
             role: "user",
-            content: `User message:\n${effectiveMessage}\n\n--- REMINDER DIGEST (authoritative) ---\n${digest}\n\n--- REMINDERS JSON (same data, machine-readable) ---\n${JSON.stringify(reminders)}`,
+            content: `User message:\n${effectiveMessage}\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}\n\n--- LIFE OS JSON (same data, machine-readable) ---\n${JSON.stringify({ reminders, tasks })}`,
           },
         ],
         temperature: 0.2,

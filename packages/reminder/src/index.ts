@@ -21,6 +21,21 @@ export interface ReminderChatProvider {
 export type ReminderStatus = "pending" | "done" | "archived";
 export type ReminderRecurrence = "none" | "daily" | "weekly" | "monthly";
 
+/** Shared by reminders and tasks for life-area tagging (optional in forms). */
+export type LifeDomain = "health" | "finance" | "career" | "hobby" | "fun";
+
+export interface TaskItem {
+  id: string;
+  title: string;
+  notes?: string;
+  dueAt?: string;
+  status: "pending" | "done";
+  priority?: number;
+  domain?: LifeDomain;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface ReminderItem {
   id: string;
   title: string;
@@ -35,6 +50,9 @@ export interface ReminderItem {
   updatedAt: string;
   /** Present when loaded from dashboard API (owned vs shared invite). */
   access?: "owner" | "shared";
+  /** Convex task id when this reminder is tied to a task; if absent, treat as ADHOC. */
+  linkedTaskId?: string;
+  domain?: LifeDomain;
 }
 
 export type ReminderIntent =
@@ -270,7 +288,14 @@ export function classifyReminderIntent(message: string): ReminderIntent {
 /** When set (e.g. IANA `Asia/Kolkata`), due times format in the user's zone — required on servers whose default is UTC. */
 export type ReminderDisplayOptions = {
   timeZone?: string;
+  /** Convex task id → title for linked reminders (digest copy). */
+  taskTitleById?: Record<string, string>;
 };
+
+/** True when the reminder is not attached to any task (system label: ADHOC). */
+export function isAdhocReminder(reminder: ReminderItem): boolean {
+  return !reminder.linkedTaskId;
+}
 
 function dueTimeLocaleOptions(options?: ReminderDisplayOptions): Intl.DateTimeFormatOptions {
   return {
@@ -305,6 +330,16 @@ export function describeReminderForChat(
 
   let line = `${reminder.title} — ${when}`;
   if (bucketLabel) line += ` (${bucketLabel})`;
+  if (reminder.domain) {
+    line += ` · ${reminder.domain}`;
+  }
+  if (isAdhocReminder(reminder)) {
+    line += " · ADHOC";
+  } else {
+    const tid = reminder.linkedTaskId!;
+    const tname = options?.taskTitleById?.[tid];
+    line += tname ? ` · task: ${tname}` : ` · taskId=${tid}`;
+  }
   if (reminder.recurrence && reminder.recurrence !== "none") {
     line += `. Repeats ${reminder.recurrence}`;
   }
@@ -443,6 +478,9 @@ export function buildRemindersContextBlock(
     lines.push(`User time zone (IANA): ${options.timeZone}`);
   }
   lines.push(`Summary: ${pending.length} pending, ${done.length} completed.`);
+  lines.push(
+    `ADHOC reminders (no linked task): ${pending.filter((r) => isAdhocReminder(r)).length} pending.`
+  );
 
   const byBucket = (label: string, bucket: ReminderBucket) => {
     const items = pending
@@ -471,6 +509,71 @@ export function buildRemindersContextBlock(
   }
 
   return lines.join("\n");
+}
+
+/** Tasks digest for orchestration / LLM context (paired with reminders). */
+export function buildTasksContextBlock(
+  tasks: TaskItem[],
+  now = new Date(),
+  options?: ReminderDisplayOptions
+): string {
+  const lines: string[] = [];
+  const nowOpts = options?.timeZone ? { timeZone: options.timeZone } : undefined;
+  lines.push(`Tasks snapshot (${tasks.length} total) at ${now.toLocaleString(undefined, nowOpts)}.`);
+  if (options?.timeZone) {
+    lines.push(`User time zone (IANA): ${options.timeZone}`);
+  }
+  const pending = tasks.filter((t) => t.status !== "done");
+  const done = tasks.filter((t) => t.status === "done");
+  lines.push(`Pending: ${pending.length}, done: ${done.length}.`);
+  if (pending.length === 0 && done.length === 0) {
+    lines.push("No tasks.");
+    return lines.join("\n");
+  }
+  const fmt = (t: TaskItem) => {
+    const parts = [t.title, `id=${t.id}`];
+    if (t.domain) parts.push(`domain=${t.domain}`);
+    if (t.dueAt) {
+      parts.push(
+        `due=${new Date(t.dueAt).toLocaleString(undefined, dueTimeLocaleOptions(options))}`
+      );
+    } else parts.push("no due date");
+    parts.push(t.status);
+    return parts.join(" | ");
+  };
+  if (pending.length > 0) {
+    lines.push("Pending tasks:");
+    for (const t of pending.slice().sort((a, b) => {
+      const da = a.dueAt ? new Date(a.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
+      const db = b.dueAt ? new Date(b.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
+      return da - db;
+    })) {
+      lines.push(`  - ${fmt(t)}`);
+    }
+  }
+  if (done.length > 0) {
+    lines.push("Recently completed tasks (sample, up to 5):");
+    for (const t of done.slice(0, 5)) {
+      lines.push(`  - ${fmt(t)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/** Single block: tasks + reminders for Personal Life OS assistant. */
+export function buildLifeOsContextBlock(
+  reminders: ReminderItem[],
+  tasks: TaskItem[],
+  now = new Date(),
+  options?: ReminderDisplayOptions
+): string {
+  return [
+    "--- TASKS ---",
+    buildTasksContextBlock(tasks, now, options),
+    "",
+    "--- REMINDERS ---",
+    buildRemindersContextBlock(reminders, now, options),
+  ].join("\n");
 }
 
 function answerReminderDetailHeuristic(

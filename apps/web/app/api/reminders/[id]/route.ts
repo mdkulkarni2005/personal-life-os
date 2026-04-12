@@ -31,6 +31,8 @@ export async function PATCH(
     priority?: number;
     urgency?: number;
     tags?: string[];
+    linkedTaskId?: string | null;
+    domain?: "health" | "finance" | "career" | "hobby" | "fun" | null;
   };
 
   const needsStarPriority =
@@ -53,10 +55,14 @@ export async function PATCH(
   let reminder: unknown;
   try {
     const client = getConvexClient();
+    const patch: Record<string, unknown> = { ...body };
+    if (body.linkedTaskId === "") {
+      patch.linkedTaskId = null;
+    }
     reminder = await client.mutation(api.reminders.update, {
       userId,
       reminderId: parseReminderId(id),
-      ...body,
+      ...patch,
     });
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });

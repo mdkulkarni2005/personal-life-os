@@ -30,6 +30,7 @@ export async function POST(request: Request) {
     dueAt?: number | null;
     status?: "pending" | "done";
     priority?: number;
+    domain?: "health" | "finance" | "career" | "hobby" | "fun";
   };
   if (!body.title?.trim()) {
     return NextResponse.json({ error: "title required" }, { status: 400 });
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
       dueAt,
       status: body.status ?? "pending",
       priority,
+      ...(body.domain ? { domain: body.domain } : {}),
     });
     return NextResponse.json({ task });
   } catch (err) {
