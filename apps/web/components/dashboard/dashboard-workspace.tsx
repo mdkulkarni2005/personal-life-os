@@ -719,6 +719,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   userIdRef.current = userId;
   isHistoryLoadedRef.current = isHistoryLoaded;
 
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("dashboard:reminders-changed", {
+        detail: {
+          reminders: reminders.map((reminder) => ({
+            id: reminder.id,
+            dueAt: reminder.dueAt,
+            status: reminder.status,
+          })),
+        },
+      })
+    );
+  }, [reminders]);
+
   /** Persists latest messages; uses sendBeacon/keepalive so a refresh does not drop unsaved debounced writes. */
   const flushChatHistoryToServer = useCallback(() => {
     if (!isHistoryLoadedRef.current) return;
@@ -1973,7 +1987,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
   };
 
-  const resetReminderForm = () => {
+  const resetReminderForm = useCallback(() => {
     setNewTitle("");
     setNewDate("");
     setNewTime("");
@@ -1983,9 +1997,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setReminderStars(0);
     setReminderLinkedTaskId("");
     setReminderDomain("");
-  };
+  }, []);
 
-  const resetTaskForm = () => {
+  const resetTaskForm = useCallback(() => {
     setTaskFormTitle("");
     setTaskFormDue(currentDateTimeLocalValue());
     setTaskFormNotes("");
@@ -1994,7 +2008,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setTaskFormError(null);
     setTaskFormDomain("");
     setTaskDueUserEdited(false);
-  };
+  }, []);
   resetTaskFormRef.current = resetTaskForm;
 
   const handleJsonImport = async (event: FormEvent<HTMLFormElement>) => {
@@ -2260,28 +2274,61 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
   };
 
-  const openCreateModal = (opts?: { linkedTaskId?: string }) => {
-    resetReminderForm();
-    setCreateFormError(null);
-    setShowReminderInlineTask(false);
-    setReminderInlineTaskTitle("");
-    setReminderInlineTaskDue("");
-    setIsCreateOpen(true);
-    if (opts?.linkedTaskId) {
-      setReminderLinkedTaskId(opts.linkedTaskId);
-    }
-  };
+  const openCreateModal = useCallback(
+    (opts?: { linkedTaskId?: string }) => {
+      resetReminderForm();
+      setCreateFormError(null);
+      setShowReminderInlineTask(false);
+      setReminderInlineTaskTitle("");
+      setReminderInlineTaskDue("");
+      setIsCreateOpen(true);
+      if (opts?.linkedTaskId) {
+        setReminderLinkedTaskId(opts.linkedTaskId);
+      }
+    },
+    [resetReminderForm]
+  );
 
   const openCreateReminderFromRemindersList = () => {
     setIsListOpen(false);
     openCreateModal();
   };
 
+  const openTasksPanel = (mode: "create" | "browse" = "browse") => {
+    resetTaskForm();
+    void refreshTasks();
+    if (mode === "create") {
+      setTaskTab("pending");
+    } else {
+      setTaskTab(
+        tasksGrouped.missed.length > 0
+          ? "missed"
+          : tasksGrouped.pending.length > 0
+            ? "pending"
+            : "done"
+      );
+    }
+    setIsTasksOpen(true);
+  };
+
   const openCreateTaskFromRemindersList = () => {
     setIsListOpen(false);
-    resetTaskForm();
-    setTaskTab("pending");
-    setIsTasksOpen(true);
+    openTasksPanel("create");
+  };
+
+  const openAllTasksFromSnapshot = () => {
+    setIsSnapshotOpen(false);
+    openTasksPanel("browse");
+  };
+
+  const openReminderListFromCreateModal = () => {
+    setIsCreateOpen(false);
+    setIsListOpen(true);
+  };
+
+  const openReminderListFromTasksPanel = () => {
+    setIsTasksOpen(false);
+    setIsListOpen(true);
   };
 
   const openEditModal = (reminder: ReminderItem) => {
@@ -3112,7 +3159,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               ) : null}
             </div>
 
-            <div className="mt-3 grid grid-cols-3 gap-1.5">
+            <div className="mt-3 grid grid-cols-2 gap-1.5">
               <button
                 type="button"
                 onClick={() => {
@@ -3143,11 +3190,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 type="button"
                 onClick={() => {
                   setIsSnapshotOpen(false);
-                  setTaskFormError(null);
-                  void refreshTasks();
-                  resetTaskForm();
-                  setTaskTab("pending");
-                  setIsTasksOpen(true);
+                  openTasksPanel("create");
                 }}
                 className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-violet-500 to-violet-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-violet-400/25 transition hover:brightness-110 active:scale-[0.98]"
               >
@@ -3155,6 +3198,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   ✓
                 </span>
                 <span className="mt-0.5 leading-tight">Create task</span>
+              </button>
+              <button
+                type="button"
+                onClick={openAllTasksFromSnapshot}
+                className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-teal-500 to-teal-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-teal-400/25 transition hover:brightness-110 active:scale-[0.98]"
+              >
+                <span aria-hidden className="text-sm leading-none opacity-90">
+                  ≣
+                </span>
+                <span className="mt-0.5 leading-tight">All tasks</span>
               </button>
             </div>
 
@@ -3214,13 +3267,22 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
-            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-              <h3 className="text-lg font-semibold">
-                {editingReminderId ? "Edit reminder" : "Create reminder"}
-              </h3>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                Add details, schedule, and recurrence.
-              </p>
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <div>
+                <h3 className="text-lg font-semibold">
+                  {editingReminderId ? "Edit reminder" : "Create reminder"}
+                </h3>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  Add details, schedule, and recurrence.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={openReminderListFromCreateModal}
+                className="shrink-0 rounded-full border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-900 transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
+              >
+                View reminders
+              </button>
             </div>
             <form className="grid gap-4 px-5 py-5" onSubmit={handleManualCreate}>
               <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -3893,13 +3955,22 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           <div className="flex max-h-[min(92vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:rounded-2xl">
             <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
               <h3 className="text-base font-semibold sm:text-lg">Tasks</h3>
-              <button
-                type="button"
-                onClick={() => setIsTasksOpen(false)}
-                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openReminderListFromTasksPanel}
+                  className="rounded-full border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-900 transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
+                >
+                  View reminders
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTasksOpen(false)}
+                  className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+                >
+                  Close
+                </button>
+              </div>
             </div>
             <form
               className="shrink-0 space-y-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800"
