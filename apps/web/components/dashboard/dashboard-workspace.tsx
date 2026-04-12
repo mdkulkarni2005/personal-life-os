@@ -1964,23 +1964,38 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
                     </>
                   )}
-                  <p
-                    className={`mt-1 flex flex-wrap items-center gap-2 text-[10px] ${
-                      message.role === "user" ? "text-emerald-100" : "text-slate-500 dark:text-slate-400"
+                  <div
+                    className={`mt-2 flex flex-wrap items-center gap-2 ${
+                      message.role === "user" ? "justify-between gap-3" : ""
                     }`}
                   >
-                    <span>
-                      {new Date(message.createdAt).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                    {message.meta?.editedAt && message.role === "user" ? (
-                      <span className="rounded bg-emerald-800/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-100/90">
-                        Edited
+                    <p
+                      className={`flex min-w-0 flex-wrap items-center gap-2 text-[10px] ${
+                        message.role === "user" ? "text-emerald-100" : "text-slate-500 dark:text-slate-400"
+                      }`}
+                    >
+                      <span>
+                        {new Date(message.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </span>
+                      {message.meta?.editedAt && message.role === "user" ? (
+                        <span className="rounded bg-emerald-800/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-100/90">
+                          Edited
+                        </span>
+                      ) : null}
+                    </p>
+                    {message.role === "user" && !dueMeta?.reminderId ? (
+                      <button
+                        type="button"
+                        onClick={startEditUser}
+                        className="shrink-0 rounded-lg border border-emerald-300/50 bg-emerald-800/55 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-800/85 active:scale-[0.98]"
+                      >
+                        Edit
+                      </button>
                     ) : null}
-                  </p>
+                  </div>
                 </div>
               );
 
@@ -1988,8 +2003,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <ChatBubbleShell
                   key={message.id}
                   onReply={startReplyTo}
-                  onEdit={message.role === "user" ? startEditUser : undefined}
-                  showEdit={message.role === "user"}
+                  onEdit={undefined}
+                  showEdit={false}
                   actionAlign={message.role === "user" ? "end" : "start"}
                   showActionsAlways={message.role === "user"}
                 >
