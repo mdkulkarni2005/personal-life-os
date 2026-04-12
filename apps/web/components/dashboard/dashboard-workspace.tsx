@@ -1874,13 +1874,30 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               }
               const dueMeta = message.meta?.kind === "due_reminder" ? message.meta : null;
               const replyQuote = message.meta?.replyTo;
+              const showUserEdit = message.role === "user" && !dueMeta?.reminderId;
               const bubbleClass =
                 message.role === "user"
-                  ? "ml-auto max-w-[92%] rounded-3xl rounded-br-lg bg-emerald-600 px-4 py-2 text-sm text-white shadow-sm"
+                  ? `relative ml-auto max-w-[92%] rounded-3xl rounded-br-lg bg-emerald-600 py-2 pl-4 text-sm text-white shadow-sm ${
+                      showUserEdit ? "pr-14" : "pr-4"
+                    }`
                   : "max-w-[92%] rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-800 shadow-sm dark:bg-slate-800 dark:text-slate-100";
 
               const inner = (
                 <div className={bubbleClass}>
+                  {showUserEdit ? (
+                    <button
+                      type="button"
+                      onClick={startEditUser}
+                      aria-label="Edit message"
+                      title="Edit message"
+                      className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full border border-white/35 bg-emerald-950/55 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-md backdrop-blur-[2px] hover:bg-emerald-950/85 active:scale-[0.97]"
+                    >
+                      <span className="text-xs leading-none" aria-hidden>
+                        ✎
+                      </span>
+                      Edit
+                    </button>
+                  ) : null}
                   {replyQuote ? (
                     <div
                       className={`mb-2 rounded-lg border-l-4 border-amber-400/95 pl-2.5 ${
@@ -1964,11 +1981,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
                     </>
                   )}
-                  <div
-                    className={`mt-2 flex flex-wrap items-center gap-2 ${
-                      message.role === "user" ? "justify-between gap-3" : ""
-                    }`}
-                  >
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
                     <p
                       className={`flex min-w-0 flex-wrap items-center gap-2 text-[10px] ${
                         message.role === "user" ? "text-emerald-100" : "text-slate-500 dark:text-slate-400"
@@ -1986,15 +1999,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         </span>
                       ) : null}
                     </p>
-                    {message.role === "user" && !dueMeta?.reminderId ? (
-                      <button
-                        type="button"
-                        onClick={startEditUser}
-                        className="shrink-0 rounded-lg border border-emerald-300/50 bg-emerald-800/55 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-emerald-800/85 active:scale-[0.98]"
-                      >
-                        Edit
-                      </button>
-                    ) : null}
                   </div>
                 </div>
               );
