@@ -54,6 +54,12 @@ export async function POST(request: Request) {
   const notes =
     typeof body.notes === "string" && body.notes.trim().length > 0 ? body.notes.trim() : undefined;
 
+  const rawPri = body.priority;
+  const priority =
+    rawPri != null && Number.isFinite(Number(rawPri)) && Number(rawPri) >= 1 && Number(rawPri) <= 5
+      ? Math.round(Number(rawPri))
+      : 3;
+
   try {
     const client = getConvexClient();
     const result = await client.mutation(api.reminders.create, {
@@ -62,7 +68,7 @@ export async function POST(request: Request) {
       notes,
       dueAt,
       recurrence: body.recurrence ?? "none",
-      priority: body.priority,
+      priority,
       urgency: body.urgency,
       tags: body.tags,
       status: body.status ?? "pending",

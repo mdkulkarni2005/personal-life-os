@@ -44,6 +44,8 @@ const tasks = defineTable({
   notes: v.optional(v.string()),
   dueAt: v.optional(v.number()),
   status: v.union(v.literal("pending"), v.literal("done")),
+  /** 1–5, higher = more important (same as reminders). */
+  priority: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
 }).index("by_user_status", ["userId", "status"]);

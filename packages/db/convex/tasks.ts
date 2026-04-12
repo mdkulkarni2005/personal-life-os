@@ -24,6 +24,7 @@ export const create = mutation({
     notes: v.optional(v.string()),
     dueAt: v.optional(v.number()),
     status: v.optional(v.union(v.literal("pending"), v.literal("done"))),
+    priority: v.optional(v.number()),
   },
   handler: async (ctx: MutationCtx, args) => {
     const now = Date.now();
@@ -33,6 +34,7 @@ export const create = mutation({
       notes: args.notes?.trim() || undefined,
       dueAt: args.dueAt,
       status: args.status ?? "pending",
+      priority: args.priority,
       createdAt: now,
       updatedAt: now,
     });
@@ -48,6 +50,7 @@ export const update = mutation({
     notes: v.optional(v.string()),
     dueAt: v.optional(v.number()),
     status: v.optional(v.union(v.literal("pending"), v.literal("done"))),
+    priority: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.taskId);
@@ -57,6 +60,7 @@ export const update = mutation({
     if (args.notes !== undefined) patch.notes = args.notes.trim() || undefined;
     if (args.dueAt !== undefined) patch.dueAt = args.dueAt;
     if (args.status !== undefined) patch.status = args.status;
+    if (args.priority !== undefined) patch.priority = args.priority;
     await ctx.db.patch(args.taskId, patch);
     return await ctx.db.get(args.taskId);
   },

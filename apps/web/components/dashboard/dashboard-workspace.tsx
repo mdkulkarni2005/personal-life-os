@@ -18,8 +18,7 @@ import {
 import { useUser } from "@clerk/nextjs";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { getChatPlaceholderCycle } from "../../lib/chat-placeholder";
-import { TypingPlaceholderOverlay } from "./typing-placeholder-overlay";
+import { StarRating, priorityStarsLabel } from "./star-rating";
 import { showDueReminderSystemNotification } from "../../lib/due-notifications-client";
 import {
   showCollaborationNotification,
@@ -253,15 +252,18 @@ interface TaskRow {
   notes?: string;
   dueAt?: string;
   status: "pending" | "done";
+  priority?: number;
 }
 
 function fromApiTask(row: Record<string, unknown>): TaskRow {
+  const pr = row.priority;
   return {
     id: String(row._id ?? row.id ?? crypto.randomUUID()),
     title: String(row.title ?? ""),
     notes: typeof row.notes === "string" ? row.notes : undefined,
     dueAt: row.dueAt != null ? new Date(Number(row.dueAt)).toISOString() : undefined,
     status: row.status === "done" ? "done" : "pending",
+    priority: typeof pr === "number" && Number.isFinite(pr) ? pr : undefined,
   };
 }
 
@@ -273,6 +275,7 @@ function taskBucket(task: TaskRow, now: Date): "missed" | "later" | "done" {
 
 function fromApiReminder(item: Record<string, unknown>): ReminderItem {
   const access = item._access === "shared" ? "shared" : "owner";
+  const p = item.priority;
   return {
     id: String(item._id ?? item.id ?? crypto.randomUUID()),
     title: String(item.title ?? ""),
@@ -283,6 +286,7 @@ function fromApiReminder(item: Record<string, unknown>): ReminderItem {
         ? item.recurrence
         : "none",
     status: item.status === "done" ? "done" : "pending",
+    priority: typeof p === "number" && Number.isFinite(p) ? p : undefined,
     createdAt: new Date(Number(item.createdAt ?? Date.now())).toISOString(),
     updatedAt: new Date(Number(item.updatedAt ?? Date.now())).toISOString(),
     access,
@@ -406,6 +410,14 @@ function ChatBubbleShell({
   );
 }
 
+function toDateTimeLocalValue(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function extractInviteToken(text: string): string | null {
   const trimmed = text.trim();
   const fromUrl = trimmed.match(/[?&]invite=([^&\s#]+)/i);
@@ -464,6 +476,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [taskFormDue, setTaskFormDue] = useState("");
   const [taskFormNotes, setTaskFormNotes] = useState("");
   const [taskFormError, setTaskFormError] = useState<string | null>(null);
+  const [reminderStars, setReminderStars] = useState(0);
+  const [taskStars, setTaskStars] = useState(0);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [inviteLinkToast, setInviteLinkToast] = useState<string | null>(null);
   const inviteLinkToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
@@ -743,6 +758,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       title: t.title,
       dueAt: t.dueAt,
       status: t.status,
+      priority: t.priority,
     }));
     setFollowUpQuestions(
       buildFollowUpQuestions({
@@ -1022,16 +1038,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const snapshot = useMemo(() => buildReminderSnapshot(reminders), [reminders]);
 
-  const placeholderCycleLines = useMemo(
-    () =>
-      getChatPlaceholderCycle({
-        reminders,
-        messages,
-        firstName: user?.firstName,
-      }),
-    [reminders, messages, user?.firstName]
-  );
-
   const grouped = useMemo(() => {
     return {
       missed: reminders.filter((r) => getReminderBucket(r) === "missed"),
@@ -1053,10 +1059,21 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const tasksGrouped = useMemo(() => {
     const now = new Date();
+    const byPriDue = (a: TaskRow, b: TaskRow) => {
+      const pa = typeof a.priority === "number" ? a.priority : 0;
+      const pb = typeof b.priority === "number" ? b.priority : 0;
+      if (pa !== pb) return pb - pa;
+      const da = a.dueAt ? new Date(a.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
+      const db = b.dueAt ? new Date(b.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
+      return da - db;
+    };
     return {
-      missed: tasks.filter((t) => taskBucket(t, now) === "missed"),
-      pending: tasks.filter((t) => t.status === "pending" && taskBucket(t, now) !== "missed"),
-      done: tasks.filter((t) => t.status === "done"),
+      missed: tasks.filter((t) => taskBucket(t, now) === "missed").slice().sort(byPriDue),
+      pending: tasks
+        .filter((t) => t.status === "pending" && taskBucket(t, now) !== "missed")
+        .slice()
+        .sort(byPriDue),
+      done: tasks.filter((t) => t.status === "done").slice().sort(byPriDue),
     };
   }, [tasks]);
 
@@ -1083,6 +1100,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             dueAt: new Date(dueAt).getTime(),
             notes: action.notes?.trim() ? action.notes : undefined,
             recurrence: "none",
+            priority: 3,
           }),
         });
         if (res.ok) await refreshReminders();
@@ -1382,6 +1400,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setNewRecurrence("none");
     setNewNotes("");
     setEditingReminderId(null);
+    setReminderStars(0);
+  };
+
+  const resetTaskForm = () => {
+    setTaskFormTitle("");
+    setTaskFormDue("");
+    setTaskFormNotes("");
+    setTaskStars(0);
+    setEditingTaskId(null);
+    setTaskFormError(null);
   };
 
   const handleJsonImport = async (event: FormEvent<HTMLFormElement>) => {
@@ -1679,6 +1707,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setNewTime(timePart);
     setNewRecurrence(reminder.recurrence ?? "none");
     setNewNotes(reminder.notes ?? "");
+    setReminderStars(
+      typeof reminder.priority === "number" && reminder.priority >= 1 && reminder.priority <= 5
+        ? reminder.priority
+        : 0
+    );
     setIsListOpen(false);
     setIsCreateOpen(true);
   };
@@ -1686,6 +1719,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const handleManualCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!newTitle.trim() || !newDate || !newTime) return;
+    if (reminderStars < 1 || reminderStars > 5) {
+      setCreateFormError("Choose a priority: tap 1–5 stars.");
+      return;
+    }
     setCreateFormError(null);
     const dueAt = new Date(`${newDate}T${newTime}`).toISOString();
     const dueAtMs = new Date(dueAt).getTime();
@@ -1704,6 +1741,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             dueAt: dueAtMs,
             recurrence: newRecurrence,
             notes: newNotes.trim() ? newNotes.trim() : undefined,
+            priority: reminderStars,
           }),
         });
         const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -1738,6 +1776,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             dueAt: dueAtMs,
             recurrence: newRecurrence,
             notes: newNotes.trim() ? newNotes.trim() : undefined,
+            priority: reminderStars,
           }),
         });
         const data = (await res.json().catch(() => ({}))) as { error?: string; created?: boolean };
@@ -1785,9 +1824,24 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setDueNotifBannerDismissed(true);
   }, []);
 
-  const handleTaskCreate = async (event: FormEvent<HTMLFormElement>) => {
+  const openTaskEdit = (task: TaskRow) => {
+    setEditingTaskId(task.id);
+    setTaskFormTitle(task.title);
+    setTaskFormNotes(task.notes ?? "");
+    setTaskFormDue(toDateTimeLocalValue(task.dueAt));
+    setTaskStars(
+      typeof task.priority === "number" && task.priority >= 1 && task.priority <= 5 ? task.priority : 0
+    );
+    setTaskFormError(null);
+  };
+
+  const handleTaskSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!taskFormTitle.trim()) return;
+    if (taskStars < 1 || taskStars > 5) {
+      setTaskFormError("Choose a priority: tap 1–5 stars.");
+      return;
+    }
     setTaskFormError(null);
     let dueAt: number | undefined;
     if (taskFormDue.trim()) {
@@ -1799,23 +1853,29 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       dueAt = ms;
     }
     try {
-      const res = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: taskFormTitle.trim(),
-          notes: taskFormNotes.trim() ? taskFormNotes.trim() : undefined,
-          dueAt,
-        }),
-      });
+      const payload = {
+        title: taskFormTitle.trim(),
+        notes: taskFormNotes.trim() ? taskFormNotes.trim() : undefined,
+        dueAt,
+        priority: taskStars,
+      };
+      const res = editingTaskId
+        ? await fetch(`/api/tasks/${editingTaskId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+        : await fetch("/api/tasks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
         setTaskFormError(data.error ?? "Could not save task.");
         return;
       }
-      setTaskFormTitle("");
-      setTaskFormDue("");
-      setTaskFormNotes("");
+      resetTaskForm();
       await refreshTasks();
     } catch {
       setTaskFormError("Network error. Try again.");
@@ -2075,6 +2135,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       title: t.title,
                       dueAt: t.dueAt,
                       status: t.status,
+                      priority: t.priority,
                     }));
                     setInput(q.text);
                     setFollowUpQuestions((prev) =>
@@ -2140,22 +2201,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           ) : null}
           <div className="flex w-full min-w-0 items-end gap-2">
             <div className="relative min-h-[2.75rem] min-w-0 flex-1 rounded-xl border border-slate-600/80 bg-slate-900/60 px-2 py-1.5 dark:border-slate-600">
-              {!input.trim() ? (
-                <div
-                  className="pointer-events-none absolute left-2 top-1.5 z-0 min-h-[2.5rem] max-w-[calc(100%-0.5rem)] pr-2 text-sm leading-relaxed text-slate-500"
-                  aria-hidden={!briefingStreaming}
-                >
-                  {briefingStreaming ? (
-                    <span className="block text-slate-400">Briefing in progress…</span>
-                  ) : (
-                    <TypingPlaceholderOverlay
-                      show={!input.trim() && !isLoading}
-                      lines={placeholderCycleLines}
-                      className="block whitespace-pre-wrap break-words"
-                    />
-                  )}
-                </div>
-              ) : null}
               <textarea
                 rows={1}
                 value={input}
@@ -2166,7 +2211,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder=""
+                placeholder={
+                  briefingComposerLocked && !editingMessageId
+                    ? "Briefing in progress…"
+                    : "Type here to start"
+                }
                 readOnly={briefingComposerLocked && !editingMessageId}
                 aria-busy={briefingStreaming}
                 aria-label={briefingStreaming ? "Message (wait for briefing to finish)" : "Message"}
@@ -2461,6 +2510,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
                 />
               </label>
+              <StarRating value={reminderStars} onChange={setReminderStars} label="Priority (required)" />
               {createFormError ? (
                 <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
                   {createFormError}
@@ -2540,6 +2590,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     >
                       <p className="font-semibold">
                         {reminder.title}
+                        <span className="text-amber-500">{priorityStarsLabel(reminder.priority)}</span>
                         {reminder.access === "shared" ? (
                           <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
                             Shared
@@ -2624,9 +2675,22 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             </div>
             <form
               className="shrink-0 space-y-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800"
-              onSubmit={handleTaskCreate}
+              onSubmit={handleTaskSave}
             >
-              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">New task</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                  {editingTaskId ? "Edit task" : "New task"}
+                </p>
+                {editingTaskId ? (
+                  <button
+                    type="button"
+                    className="text-xs font-semibold text-slate-500 underline hover:text-slate-700 dark:hover:text-slate-300"
+                    onClick={() => resetTaskForm()}
+                  >
+                    Cancel edit
+                  </button>
+                ) : null}
+              </div>
               <input
                 value={taskFormTitle}
                 onChange={(e) => setTaskFormTitle(e.target.value)}
@@ -2646,6 +2710,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 rows={2}
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
               />
+              <StarRating value={taskStars} onChange={setTaskStars} label="Priority (required)" />
               {taskFormError ? (
                 <p className="text-xs text-rose-600 dark:text-rose-400">{taskFormError}</p>
               ) : null}
@@ -2653,7 +2718,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 type="submit"
                 className="w-full rounded-full bg-teal-600 py-2 text-sm font-semibold text-white hover:bg-teal-500"
               >
-                Add task
+                {editingTaskId ? "Save changes" : "Add task"}
               </button>
             </form>
             <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 px-2 py-2 dark:border-slate-800">
@@ -2707,7 +2772,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       key={task.id}
                       className="rounded-xl border border-slate-200 p-3 dark:border-slate-700"
                     >
-                      <p className="font-semibold">{task.title}</p>
+                      <p className="font-semibold">
+                        {task.title}
+                        <span className="text-amber-500">{priorityStarsLabel(task.priority)}</span>
+                      </p>
                       {task.dueAt ? (
                         <p className="text-sm text-slate-500">
                           {taskTab === "missed" ? "Was due: " : "Due: "}
@@ -2720,6 +2788,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{task.notes}</p>
                       ) : null}
                       <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openTaskEdit(task)}
+                          className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
+                        >
+                          Edit
+                        </button>
                         {task.status === "pending" ? (
                           <button
                             type="button"

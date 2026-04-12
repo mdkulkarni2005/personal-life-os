@@ -29,6 +29,7 @@ export async function POST(request: Request) {
     notes?: string;
     dueAt?: number | null;
     status?: "pending" | "done";
+    priority?: number;
   };
   if (!body.title?.trim()) {
     return NextResponse.json({ error: "title required" }, { status: 400 });
@@ -36,6 +37,12 @@ export async function POST(request: Request) {
 
   const dueAt =
     body.dueAt != null && Number.isFinite(Number(body.dueAt)) ? Number(body.dueAt) : undefined;
+
+  const rawPri = (body as { priority?: number }).priority;
+  const priority =
+    rawPri != null && Number.isFinite(Number(rawPri)) && Number(rawPri) >= 1 && Number(rawPri) <= 5
+      ? Math.round(Number(rawPri))
+      : 3;
 
   try {
     const client = getConvexClient();
@@ -45,6 +52,7 @@ export async function POST(request: Request) {
       notes: typeof body.notes === "string" && body.notes.trim() ? body.notes.trim() : undefined,
       dueAt,
       status: body.status ?? "pending",
+      priority,
     });
     return NextResponse.json({ task });
   } catch (err) {

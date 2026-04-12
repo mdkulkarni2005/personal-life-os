@@ -33,6 +33,23 @@ export async function PATCH(
     tags?: string[];
   };
 
+  const needsStarPriority =
+    body.title !== undefined
+    || body.notes !== undefined
+    || body.recurrence !== undefined;
+  if (
+    needsStarPriority
+    && (body.priority == null
+      || !Number.isFinite(Number(body.priority))
+      || Number(body.priority) < 1
+      || Number(body.priority) > 5)
+  ) {
+    return NextResponse.json(
+      { error: "priority (1–5 stars) is required when updating title, notes, or recurrence" },
+      { status: 400 }
+    );
+  }
+
   let reminder: unknown;
   try {
     const client = getConvexClient();

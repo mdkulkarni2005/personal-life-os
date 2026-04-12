@@ -24,7 +24,22 @@ export async function PATCH(
     notes?: string;
     dueAt?: number | null;
     status?: "pending" | "done";
+    priority?: number;
   };
+
+  const needsStarPriority = body.title !== undefined || body.notes !== undefined;
+  if (
+    needsStarPriority
+    && (body.priority == null
+      || !Number.isFinite(Number(body.priority))
+      || Number(body.priority) < 1
+      || Number(body.priority) > 5)
+  ) {
+    return NextResponse.json(
+      { error: "priority (1–5 stars) is required when updating title or notes" },
+      { status: 400 }
+    );
+  }
 
   const patch: {
     userId: string;
@@ -33,10 +48,12 @@ export async function PATCH(
     notes?: string;
     dueAt?: number;
     status?: "pending" | "done";
+    priority?: number;
   } = { userId, taskId: parseTaskId(id) };
   if (body.title !== undefined) patch.title = body.title;
   if (body.notes !== undefined) patch.notes = body.notes;
   if (body.status !== undefined) patch.status = body.status;
+  if (body.priority !== undefined) patch.priority = body.priority;
   if (body.dueAt === null) {
     /* keep dueAt unset — Convex optional clear not implemented */
   } else if (body.dueAt != null && Number.isFinite(Number(body.dueAt))) {

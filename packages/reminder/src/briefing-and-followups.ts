@@ -22,6 +22,8 @@ export interface TaskItemBrief {
   title: string;
   dueAt?: string;
   status: "pending" | "done";
+  /** 1–5 stars / priority when set */
+  priority?: number;
 }
 
 function fmtTime(iso: string) {
@@ -50,6 +52,22 @@ function fmtUpdated(iso: string) {
   }
 }
 
+function pri(r: ReminderItem): number {
+  return typeof r.priority === "number" && Number.isFinite(r.priority) ? r.priority : 0;
+}
+
+function sortByPriorityThenDue(a: ReminderItem, b: ReminderItem): number {
+  const dp = pri(b) - pri(a);
+  if (dp !== 0) return dp;
+  return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
+}
+
+function starSuffix(p?: number): string {
+  if (typeof p !== "number" || !Number.isFinite(p) || p < 1) return "";
+  const n = Math.min(5, Math.max(1, Math.round(p)));
+  return ` ${"★".repeat(n)}`;
+}
+
 /**
  * Full session briefing: greeting + completed + overdue + today + tomorrow + later upcoming (all items per section).
  */
@@ -70,16 +88,16 @@ export function buildBriefingNarrative(
 
   const missed = active
     .filter((r) => bucketOf(r, now) === "missed")
-    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+    .sort(sortByPriorityThenDue);
   const today = active
     .filter((r) => bucketOf(r, now) === "today")
-    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+    .sort(sortByPriorityThenDue);
   const tomorrow = active
     .filter((r) => bucketOf(r, now) === "tomorrow")
-    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+    .sort(sortByPriorityThenDue);
   const later = active
     .filter((r) => bucketOf(r, now) === "upcoming")
-    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+    .sort(sortByPriorityThenDue);
 
   const lines: string[] = [greet, ""];
 
@@ -88,7 +106,7 @@ export function buildBriefingNarrative(
     lines.push("• None yet.");
   } else {
     for (const r of completed) {
-      lines.push(`• ${r.title} — completed ${fmtUpdated(r.updatedAt)}`);
+      lines.push(`• ${r.title}${starSuffix(r.priority)} — completed ${fmtUpdated(r.updatedAt)}`);
     }
   }
   lines.push("");
@@ -98,7 +116,7 @@ export function buildBriefingNarrative(
     lines.push("• None — you're caught up on overdue items.");
   } else {
     for (const m of missed) {
-      lines.push(`• ${m.title} — was due ${fmtTime(m.dueAt)}`);
+      lines.push(`• ${m.title}${starSuffix(m.priority)} — was due ${fmtTime(m.dueAt)}`);
     }
   }
   lines.push("");
@@ -108,7 +126,7 @@ export function buildBriefingNarrative(
     lines.push("• Nothing else scheduled for today.");
   } else {
     for (const r of today) {
-      lines.push(`• ${r.title} — ${fmtTime(r.dueAt)}`);
+      lines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
     }
   }
   lines.push("");
@@ -118,7 +136,7 @@ export function buildBriefingNarrative(
     lines.push("• Nothing scheduled for tomorrow yet.");
   } else {
     for (const r of tomorrow) {
-      lines.push(`• ${r.title} — ${fmtTime(r.dueAt)}`);
+      lines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
     }
   }
   lines.push("");
@@ -128,7 +146,7 @@ export function buildBriefingNarrative(
     lines.push("• Nothing further out on the calendar.");
   } else {
     for (const r of later) {
-      lines.push(`• ${r.title} — ${fmtTime(r.dueAt)}`);
+      lines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
     }
   }
 
@@ -156,17 +174,26 @@ export function buildFollowUpQuestions(input: {
   const now = input.now ?? new Date();
   const name = input.firstName?.trim();
   const pending = input.reminders.filter((r) => r.status !== "done" && r.status !== "archived");
-  const missed = pending.filter((r) => bucketOf(r, now) === "missed");
-  const today = pending.filter((r) => bucketOf(r, now) === "today");
+  const missed = pending
+    .filter((r) => bucketOf(r, now) === "missed")
+    .sort(sortByPriorityThenDue);
+  const today = pending
+    .filter((r) => bucketOf(r, now) === "today")
+    .sort(sortByPriorityThenDue);
   const upcoming = pending
     .filter((r) => {
       const b = bucketOf(r, now);
       return b === "tomorrow" || b === "upcoming";
     })
-    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+    .sort(sortByPriorityThenDue);
 
   const tasks = input.tasks?.filter((t) => t.status === "pending") ?? [];
-  const taskMissed = tasks.filter((t) => t.dueAt && new Date(t.dueAt).getTime() < now.getTime());
+  const taskPri = (t: TaskItemBrief) =>
+    typeof t.priority === "number" && Number.isFinite(t.priority) ? t.priority : 0;
+  const taskMissed = tasks
+    .filter((t) => t.dueAt && new Date(t.dueAt).getTime() < now.getTime())
+    .slice()
+    .sort((a, b) => taskPri(b) - taskPri(a));
   const taskNoDate = tasks.filter((t) => !t.dueAt);
 
   const info: FollowUpQuestion[] = [];
