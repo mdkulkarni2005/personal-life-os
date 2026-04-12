@@ -106,6 +106,34 @@ interface WorkspaceProps {
   userId: string;
 }
 
+interface DirectoryUser {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  username: string;
+  imageUrl: string;
+}
+
+interface ShareInboxRow {
+  _id: string;
+  reminderId: string;
+  token: string;
+  fromUserId: string;
+  fromDisplayName: string;
+  toUserId: string;
+  title: string;
+  dueAt: number;
+  createdAt: number;
+}
+
+function directoryDisplayName(u: DirectoryUser): string {
+  const n = [u.firstName, u.lastName].filter(Boolean).join(" ").trim();
+  if (n) return n;
+  if (u.username) return `@${u.username}`;
+  return u.email || "User";
+}
+
 const loadingTexts = [
   "Processing your message...",
   "Understanding your reminder intent...",
@@ -622,8 +650,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [reminderDomain, setReminderDomain] = useState<"" | LifeDomain>("");
   const [reminderTaskFilter, setReminderTaskFilter] = useState<"all" | "adhoc" | string>("all");
   const [taskFormDomain, setTaskFormDomain] = useState<"" | LifeDomain>("");
-  const [inviteLinkToast, setInviteLinkToast] = useState<string | null>(null);
-  const inviteLinkToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [shareToast, setShareToast] = useState<string | null>(null);
+  const shareToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isShareOpen, setIsShareOpen] = useState(false);
+  const [shareReminderIds, setShareReminderIds] = useState<string[]>([]);
+  const [directoryUsers, setDirectoryUsers] = useState<DirectoryUser[]>([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState<string | null>(null);
+  const [selectedShareUserIds, setSelectedShareUserIds] = useState<Set<string>>(() => new Set());
+  const [shareSending, setShareSending] = useState(false);
+  const [reminderSelectionMode, setReminderSelectionMode] = useState(false);
+  const [selectedReminderIds, setSelectedReminderIds] = useState<Set<string>>(() => new Set());
+  const [shareInbox, setShareInbox] = useState<ShareInboxRow[]>([]);
+  /** DOM timer id; avoid NodeJS.Timeout vs number mismatch in mixed typings. */
+  const reminderLongPressTimerRef = useRef<number | null>(null);
   const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const briefingRanRef = useRef(false);
@@ -736,6 +776,148 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     const data = (await response.json()) as { reminders?: Array<Record<string, unknown>> };
     setReminders(() => (data.reminders ?? []).map((item) => fromApiReminder(item)));
   }, [setReminders]);
+
+  const showShareToast = useCallback((message: string) => {
+    setShareToast(message);
+    if (shareToastTimerRef.current) clearTimeout(shareToastTimerRef.current);
+    shareToastTimerRef.current = setTimeout(() => {
+      setShareToast(null);
+      shareToastTimerRef.current = null;
+    }, 3400);
+  }, []);
+
+  const loadShareInbox = useCallback(async () => {
+    try {
+      const res = await fetch("/api/reminders/inbox");
+      if (!res.ok) return;
+      const data = (await res.json()) as { inbox?: ShareInboxRow[] };
+      setShareInbox(data.inbox ?? []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const loadDirectory = useCallback(async () => {
+    setDirectoryLoading(true);
+    setDirectoryError(null);
+    try {
+      const res = await fetch("/api/users/directory");
+      const data = (await res.json()) as { users?: DirectoryUser[]; error?: string };
+      if (!res.ok) {
+        setDirectoryError(data.error ?? "Could not load users");
+        setDirectoryUsers([]);
+        return;
+      }
+      setDirectoryUsers(data.users ?? []);
+    } catch {
+      setDirectoryError("Could not load users");
+      setDirectoryUsers([]);
+    } finally {
+      setDirectoryLoading(false);
+    }
+  }, []);
+
+  const openShareModal = useCallback(
+    (ids: string[]) => {
+      const unique = [...new Set(ids)].filter(Boolean);
+      if (unique.length === 0) return;
+      setShareReminderIds(unique);
+      setSelectedShareUserIds(new Set());
+      setIsShareOpen(true);
+      void loadDirectory();
+    },
+    [loadDirectory]
+  );
+
+  const sendShares = useCallback(async () => {
+    if (shareReminderIds.length === 0 || selectedShareUserIds.size === 0) return;
+    setShareSending(true);
+    try {
+      const res = await fetch("/api/reminders/share/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reminderIds: shareReminderIds,
+          targetUserIds: [...selectedShareUserIds],
+        }),
+      });
+      const data = (await res.json()) as { delivered?: number; error?: string };
+      if (!res.ok) {
+        showShareToast(data.error ?? "Could not share");
+        return;
+      }
+      showShareToast(
+        data.delivered != null ? `Sent · ${data.delivered} notification(s)` : "Shared successfully"
+      );
+      setIsShareOpen(false);
+      setReminderSelectionMode(false);
+      setSelectedReminderIds(new Set());
+      void loadShareInbox();
+    } catch {
+      showShareToast("Could not share. Try again.");
+    } finally {
+      setShareSending(false);
+    }
+  }, [shareReminderIds, selectedShareUserIds, showShareToast, loadShareInbox]);
+
+  const toggleShareUser = useCallback((id: string) => {
+    setSelectedShareUserIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }, []);
+
+  const toggleReminderSelect = useCallback((id: string) => {
+    setSelectedReminderIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }, []);
+
+  const joinSharedReminder = useCallback(
+    async (token: string) => {
+      try {
+        const res = await fetch(`/api/reminders/share/${encodeURIComponent(token)}`, {
+          method: "POST",
+        });
+        const data = (await res.json()) as { error?: string };
+        if (!res.ok) {
+          showShareToast(data.error ?? "Could not join");
+          return;
+        }
+        showShareToast("You're in on that reminder.");
+        await refreshReminders();
+        void loadShareInbox();
+      } catch {
+        showShareToast("Could not join");
+      }
+    },
+    [refreshReminders, loadShareInbox, showShareToast]
+  );
+
+  const dismissInboxRow = useCallback(
+    async (inboxId: string) => {
+      try {
+        await fetch("/api/reminders/inbox/dismiss", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ inboxId }),
+        });
+        void loadShareInbox();
+      } catch {
+        /* ignore */
+      }
+    },
+    [loadShareInbox]
+  );
+
+  useEffect(() => {
+    if (isListOpen) void loadShareInbox();
+  }, [isListOpen, loadShareInbox]);
 
   const refreshRemindersRef = useRef(refreshReminders);
   refreshRemindersRef.current = refreshReminders;
@@ -931,7 +1113,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   useEffect(() => {
     return () => {
-      if (inviteLinkToastTimerRef.current) clearTimeout(inviteLinkToastTimerRef.current);
+      if (shareToastTimerRef.current) clearTimeout(shareToastTimerRef.current);
     };
   }, []);
 
@@ -1274,7 +1456,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             priority: 3,
           }),
         });
-        if (res.ok) await refreshReminders();
+        const data = (await res.json().catch(() => ({}))) as {
+          created?: boolean;
+          reminder?: { _id?: string };
+        };
+        if (res.ok) {
+          await refreshReminders();
+          if (data.created !== false && data.reminder?._id) {
+            setIsListOpen(true);
+            openShareModal([String(data.reminder._id)]);
+          }
+        }
       })();
       return;
     }
@@ -1679,34 +1871,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
   };
 
-  const showInviteLinkToast = useCallback((message: string) => {
-    setInviteLinkToast(message);
-    if (inviteLinkToastTimerRef.current) clearTimeout(inviteLinkToastTimerRef.current);
-    inviteLinkToastTimerRef.current = setTimeout(() => {
-      setInviteLinkToast(null);
-      inviteLinkToastTimerRef.current = null;
-    }, 3200);
-  }, []);
-
-  const copyReminderInviteLink = async (reminderId: string) => {
-    try {
-      const response = await fetch(`/api/reminders/${reminderId}/invite`, { method: "POST" });
-      if (!response.ok) {
-        showInviteLinkToast("Could not get invite link. Try again.");
-        return;
-      }
-      const data = (await response.json()) as { url?: string };
-      if (data.url && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(data.url);
-        showInviteLinkToast("Link copied to clipboard");
-      } else {
-        showInviteLinkToast("Could not copy link.");
-      }
-    } catch {
-      showInviteLinkToast("Could not copy link.");
-    }
-  };
-
   const resolveDueLine = (messageId: string, line: string) => {
     setMessages((prev) =>
       prev.map((m) => (m.id === messageId ? { ...m, meta: undefined, content: line } : m))
@@ -2001,12 +2165,24 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(createBody),
         });
-        const data = (await res.json().catch(() => ({}))) as { error?: string; created?: boolean };
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          created?: boolean;
+          reminder?: { _id?: string };
+        };
         if (!res.ok) {
           setCreateFormError(data.error ?? "Could not save reminder.");
           return;
         }
         await refreshReminders();
+        resetReminderForm();
+        setCreateFormError(null);
+        setIsCreateOpen(false);
+        if (data.created !== false && data.reminder?._id) {
+          setIsListOpen(true);
+          openShareModal([String(data.reminder._id)]);
+        }
+        return;
       } catch {
         setCreateFormError("Network error. Try again.");
         return;
@@ -2873,6 +3049,77 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 </button>
               ))}
             </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
+              {!reminderSelectionMode ? (
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  onClick={() => {
+                    setReminderSelectionMode(true);
+                    setSelectedReminderIds(new Set());
+                  }}
+                >
+                  Select
+                </button>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+                    onClick={() => {
+                      setReminderSelectionMode(false);
+                      setSelectedReminderIds(new Set());
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedReminderIds.size === 0}
+                    className="rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => openShareModal([...selectedReminderIds])}
+                  >
+                    Share ({selectedReminderIds.size})
+                  </button>
+                </div>
+              )}
+              <p className="max-w-[14rem] text-[10px] leading-snug text-slate-500 dark:text-slate-400 sm:max-w-none">
+                Tip: long-press a reminder to select (mobile). Use checkboxes when Select is on.
+              </p>
+            </div>
+            {shareInbox.length > 0 ? (
+              <div className="max-h-36 shrink-0 space-y-2 overflow-y-auto border-b border-violet-200/50 bg-violet-50/60 px-4 py-2 dark:border-violet-900/50 dark:bg-violet-950/35">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
+                  Shared with you
+                </p>
+                {shareInbox.map((row) => (
+                  <div
+                    key={row._id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200/90 bg-white/95 px-2.5 py-1.5 text-xs dark:border-violet-800 dark:bg-slate-900"
+                  >
+                    <span className="min-w-0 text-slate-800 dark:text-slate-100">
+                      <span className="font-semibold">{row.fromDisplayName}</span> · {row.title}
+                    </span>
+                    <span className="flex shrink-0 gap-1">
+                      <button
+                        type="button"
+                        className="rounded-full bg-violet-600 px-2.5 py-0.5 text-[11px] font-semibold text-white"
+                        onClick={() => void joinSharedReminder(row.token)}
+                      >
+                        Join
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-300 px-2.5 py-0.5 text-[11px] font-semibold dark:border-slate-600"
+                        onClick={() => void dismissInboxRow(row._id)}
+                      >
+                        Dismiss
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
               <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
                 <span className="font-medium">Filter</span>
@@ -2899,8 +3146,49 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   reminderListRows.map((reminder) => (
                     <article
                       key={reminder.id}
-                      className="rounded-xl border border-slate-200 p-3 dark:border-slate-700 sm:p-4"
+                      className={`flex gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700 sm:p-4 ${
+                        reminderSelectionMode && selectedReminderIds.has(reminder.id)
+                          ? "ring-2 ring-violet-500/55"
+                          : ""
+                      }`}
+                      onTouchStart={() => {
+                        if (reminder.access === "shared" || reminderListTab === "done") return;
+                        reminderLongPressTimerRef.current = window.setTimeout(() => {
+                          reminderLongPressTimerRef.current = null;
+                          setReminderSelectionMode(true);
+                          toggleReminderSelect(reminder.id);
+                          if (typeof navigator !== "undefined" && navigator.vibrate) {
+                            navigator.vibrate(35);
+                          }
+                        }, 450);
+                      }}
+                      onTouchEnd={() => {
+                        const id = reminderLongPressTimerRef.current;
+                        if (id != null) {
+                          window.clearTimeout(id);
+                          reminderLongPressTimerRef.current = null;
+                        }
+                      }}
+                      onTouchMove={() => {
+                        const id = reminderLongPressTimerRef.current;
+                        if (id != null) {
+                          window.clearTimeout(id);
+                          reminderLongPressTimerRef.current = null;
+                        }
+                      }}
                     >
+                      {reminderSelectionMode && reminder.access !== "shared" && reminderListTab !== "done" ? (
+                        <div className="flex shrink-0 items-start pt-0.5">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 h-4 w-4 rounded border-slate-400 text-violet-600"
+                            checked={selectedReminderIds.has(reminder.id)}
+                            onChange={() => toggleReminderSelect(reminder.id)}
+                            aria-label={`Select ${reminder.title}`}
+                          />
+                        </div>
+                      ) : null}
+                      <div className="min-w-0 flex-1">
                       <p className="font-semibold">
                         {reminder.title}
                         <span className="text-amber-500">{priorityStarsLabel(reminder.priority)}</span>
@@ -2938,10 +3226,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           {reminder.access !== "shared" ? (
                             <button
                               type="button"
-                              onClick={() => void copyReminderInviteLink(reminder.id)}
-                              className="rounded-full border border-sky-400 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/50 dark:text-sky-100"
+                              onClick={() => openShareModal([reminder.id])}
+                              className="rounded-full border border-violet-400 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-900 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100"
                             >
-                              Copy invite link
+                              Share
                             </button>
                           ) : null}
                           <button
@@ -2978,10 +3266,117 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           </button>
                         </div>
                       )}
+                      </div>
                     </article>
                   ))
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isShareOpen && (
+        <div className="fixed inset-0 z-[55] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="share-dialog-title"
+            className="flex max-h-[min(88vh,560px)] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:rounded-2xl"
+          >
+            <div className="shrink-0 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+              <h3 id="share-dialog-title" className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                Share {shareReminderIds.length === 1 ? "reminder" : `${shareReminderIds.length} reminders`}
+              </h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Choose people in your app. They get an in-app invite to join this reminder.
+              </p>
+            </div>
+            <div className="min-h-0 shrink px-4 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Reminders
+              </p>
+              <ul className="mt-1 max-h-20 list-inside list-disc overflow-y-auto text-xs text-slate-700 dark:text-slate-200">
+                {shareReminderIds.map((id) => (
+                  <li key={id}>{reminders.find((r) => r.id === id)?.title ?? id}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden border-t border-slate-200 px-2 dark:border-slate-800">
+              <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                People
+              </p>
+              <div className="max-h-[min(40vh,280px)] space-y-1 overflow-y-auto px-2 pb-3">
+                {directoryLoading ? (
+                  <p className="px-2 text-sm text-slate-500">Loading users…</p>
+                ) : directoryError ? (
+                  <p className="px-2 text-sm text-rose-600">{directoryError}</p>
+                ) : directoryUsers.length === 0 ? (
+                  <p className="px-2 text-sm text-slate-500">No other users found.</p>
+                ) : (
+                  directoryUsers.map((u) => {
+                    const selected = selectedShareUserIds.has(u.id);
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => toggleShareUser(u.id)}
+                        className={`flex w-full items-center gap-3 rounded-xl border px-2 py-2 text-left text-sm transition ${
+                          selected
+                            ? "border-violet-500 bg-violet-50 dark:border-violet-600 dark:bg-violet-950/50"
+                            : "border-transparent hover:bg-slate-50 dark:hover:bg-slate-800"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          readOnly
+                          checked={selected}
+                          className="pointer-events-none h-4 w-4 rounded border-slate-400"
+                          tabIndex={-1}
+                          aria-hidden
+                        />
+                        {u.imageUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={u.imageUrl}
+                            alt=""
+                            className="h-10 w-10 shrink-0 rounded-full object-cover"
+                          />
+                        ) : (
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-200 text-sm font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-200">
+                            {directoryDisplayName(u).slice(0, 1).toUpperCase()}
+                          </span>
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium text-slate-900 dark:text-slate-100">
+                            {directoryDisplayName(u)}
+                          </span>
+                          <span className="block truncate text-xs text-slate-500 dark:text-slate-400">
+                            {u.email || "—"}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800">
+              <button
+                type="button"
+                className="flex-1 rounded-full border border-slate-300 py-2 text-sm font-semibold dark:border-slate-600"
+                onClick={() => setIsShareOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={shareSending || selectedShareUserIds.size === 0}
+                className="flex-1 rounded-full bg-violet-600 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
+                onClick={() => void sendShares()}
+              >
+                {shareSending ? "Sending…" : "Send"}
+              </button>
             </div>
           </div>
         </div>
@@ -3250,13 +3645,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         </div>
       )}
 
-      {inviteLinkToast ? (
+      {shareToast ? (
         <div
           className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 z-[60] -translate-x-1/2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-lg dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
           role="status"
           aria-live="polite"
         >
-          {inviteLinkToast}
+          {shareToast}
         </div>
       ) : null}
 

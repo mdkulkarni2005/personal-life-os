@@ -49,6 +49,21 @@ const reminderParticipants = defineTable({
   .index("by_reminder_user", ["reminderId", "userId"])
   .index("by_user", ["userId"]);
 
+/** In-app delivery: owner shared a reminder — recipient sees it until joined or dismissed. */
+const reminderShareInbox = defineTable({
+  reminderId: v.id("reminders"),
+  token: v.string(),
+  fromUserId: v.string(),
+  fromDisplayName: v.string(),
+  toUserId: v.string(),
+  title: v.string(),
+  dueAt: v.number(),
+  createdAt: v.number(),
+  dismissed: v.optional(v.boolean()),
+})
+  .index("by_to_user_created", ["toUserId", "createdAt"])
+  .index("by_to_reminder", ["toUserId", "reminderId"]);
+
 const tasks = defineTable({
   userId: v.string(),
   title: v.string(),
@@ -78,6 +93,7 @@ export default defineSchema({
   reminders,
   reminderInvites,
   reminderParticipants,
+  reminderShareInbox,
   tasks,
   chatMessages,
 });

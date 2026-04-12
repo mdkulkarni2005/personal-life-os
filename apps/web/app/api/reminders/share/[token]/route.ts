@@ -99,6 +99,18 @@ export async function POST(
     );
   }
 
+  try {
+    const client = getConvexClient();
+    if (result.reminderId) {
+      await client.mutation(api.reminderSharing.dismissShareInboxForReminder, {
+        userId,
+        reminderId: result.reminderId as any,
+      });
+    }
+  } catch {
+    /* inbox cleanup is best-effort */
+  }
+
   return NextResponse.json({
     ok: true,
     already: result.already,
