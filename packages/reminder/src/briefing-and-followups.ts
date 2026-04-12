@@ -68,6 +68,23 @@ function starSuffix(p?: number): string {
   return ` ${"★".repeat(n)}`;
 }
 
+/** Light, varied pat-on-the-back for the COMPLETED slice (deterministic-ish by day + count). */
+function completedRewardHumor(completedCount: number, now: Date): string {
+  if (completedCount <= 0) {
+    return "No completions logged yet—tiny wins still count when you grab them.";
+  }
+  const n = completedCount;
+  const pick = (lines: string[]) => lines[(n * 13 + now.getDate() * 5 + now.getHours()) % lines.length]!;
+  return pick([
+    `${n} reminder${n === 1 ? "" : "s"} done—quietly heroic. Your past self is nodding.`,
+    `That’s ${n} off the board. If productivity had a loyalty program, you’d be platinum.`,
+    `${n} cleared—like closing browser tabs, but emotionally rewarding.`,
+    `Nice streak: ${n} wrapped. The to-do list just lost a round.`,
+    `${n} down—somewhere a calendar smiled.`,
+    `You knocked out ${n}. Even small victories deserve a tiny victory lap.`,
+  ]);
+}
+
 /** One chat bubble per part when streaming a session briefing. */
 export type BriefingSection =
   | "greeting"
@@ -123,6 +140,7 @@ export function buildBriefingParts(
       completedLines.push(`• ${r.title}${starSuffix(r.priority)} — completed ${fmtUpdated(r.updatedAt)}`);
     }
   }
+  completedLines.push("", completedRewardHumor(completed.length, now));
 
   const missedLines: string[] = [`OVERDUE / MISSED (${missed.length})`];
   if (missed.length === 0) {

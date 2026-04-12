@@ -606,6 +606,10 @@ function toDateTimeLocalValue(iso?: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function currentDateTimeLocalValue(): string {
+  return toDateTimeLocalValue(new Date().toISOString());
+}
+
 function extractInviteToken(text: string): string | null {
   const trimmed = text.trim();
   const fromUrl = trimmed.match(/[?&]invite=([^&\s#]+)/i);
@@ -664,7 +668,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [isTasksOpen, setIsTasksOpen] = useState(false);
   const [taskTab, setTaskTab] = useState<"missed" | "pending" | "done">("pending");
   const [taskFormTitle, setTaskFormTitle] = useState("");
-  const [taskFormDue, setTaskFormDue] = useState("");
+  const [taskFormDue, setTaskFormDue] = useState(() => currentDateTimeLocalValue());
   const [taskFormNotes, setTaskFormNotes] = useState("");
   const [taskFormError, setTaskFormError] = useState<string | null>(null);
   const [reminderStars, setReminderStars] = useState(0);
@@ -674,6 +678,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [reminderDomain, setReminderDomain] = useState<"" | LifeDomain>("");
   const [reminderTaskFilter, setReminderTaskFilter] = useState<"all" | "adhoc" | string>("all");
   const [taskFormDomain, setTaskFormDomain] = useState<"" | LifeDomain>("");
+  /** False until user focuses/changes due — then live "now" updates stop for new tasks. */
+  const [taskDueUserEdited, setTaskDueUserEdited] = useState(false);
+  const [showReminderInlineTask, setShowReminderInlineTask] = useState(false);
+  const [reminderInlineTaskTitle, setReminderInlineTaskTitle] = useState("");
+  const [reminderInlineTaskDue, setReminderInlineTaskDue] = useState("");
+  const [reminderInlineTaskSaving, setReminderInlineTaskSaving] = useState(false);
   const [shareToast, setShareToast] = useState<string | null>(null);
   const shareToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -691,6 +701,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const briefingRanRef = useRef(false);
+  const resetTaskFormRef = useRef<() => void>(() => {});
   const briefingPlaybackActiveRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remindersRef = useRef(reminders);
@@ -739,7 +750,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     chatPinnedToBottomRef.current = gap <= 120;
   }, []);
 
-  const runBriefingStream = useCallback(() => {
+  const runBriefingStream = useCallback(
+    (recordAutoBriefing = false) => {
     if (!isHistoryLoaded || briefingPlaybackActiveRef.current) return;
     briefingPlaybackActiveRef.current = true;
     const parts = buildBriefingParts(remindersRef.current, user?.firstName ?? null);
@@ -754,6 +766,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       if (partIndex >= parts.length) {
         briefingPlaybackActiveRef.current = false;
         setBriefingStreaming(false);
+        if (recordAutoBriefing) {
+          try {
+            if (typeof localStorage !== "undefined") {
+              localStorage.setItem(`remindos:lastAutoBriefingAt:${userId}`, String(Date.now()));
+            }
+          } catch {
+            /* ignore */
+          }
+        }
         return;
       }
       const slice = parts[partIndex];
@@ -792,7 +813,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     };
 
     window.setTimeout(runPart, 160);
-  }, [isHistoryLoaded, user?.firstName]);
+  },
+  [isHistoryLoaded, user?.firstName, userId]
+  );
 
   const refreshReminders = useCallback(async () => {
     const response = await fetch("/api/reminders");
@@ -1149,25 +1172,29 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   useEffect(() => {
     if (!isHistoryLoaded || briefingRanRef.current) return;
-    const key = `remindos:briefingSession:${userId}`;
+
+    const storageKey = `remindos:lastAutoBriefingAt:${userId}`;
+    let eligible = true;
     try {
-      if (sessionStorage.getItem(key)) {
-        briefingRanRef.current = true;
-        return;
+      if (typeof localStorage !== "undefined") {
+        const raw = localStorage.getItem(storageKey);
+        const last = raw ? Number.parseInt(raw, 10) : 0;
+        const oneHourMs = 60 * 60 * 1000;
+        eligible = !Number.isFinite(last) || last <= 0 || Date.now() - last >= oneHourMs;
       }
     } catch {
-      /* ignore */
+      eligible = true;
+    }
+
+    if (!eligible) {
+      briefingRanRef.current = true;
+      return;
     }
 
     const timer = window.setTimeout(() => {
       if (briefingRanRef.current) return;
       briefingRanRef.current = true;
-      try {
-        sessionStorage.setItem(`remindos:briefingSession:${userId}`, "1");
-      } catch {
-        /* ignore */
-      }
-      runBriefingStream();
+      runBriefingStream(true);
     }, 650);
 
     return () => window.clearTimeout(timer);
@@ -1175,7 +1202,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   useEffect(() => {
     const openR = () => setIsListOpen(true);
-    const openT = () => setIsTasksOpen(true);
+    const openT = () => {
+      resetTaskFormRef.current();
+      setTaskTab("pending");
+      setIsTasksOpen(true);
+    };
     window.addEventListener("dashboard:open-reminders", openR);
     window.addEventListener("dashboard:open-tasks", openT);
     return () => {
@@ -1187,7 +1218,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   useEffect(() => {
     const o = searchParams.get("open");
     if (o === "reminders") setIsListOpen(true);
-    if (o === "tasks") setIsTasksOpen(true);
+    if (o === "tasks") {
+      resetTaskFormRef.current();
+      setTaskTab("pending");
+      setIsTasksOpen(true);
+    }
     if (o && typeof window !== "undefined") {
       window.history.replaceState({}, "", "/dashboard");
     }
@@ -1952,13 +1987,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const resetTaskForm = () => {
     setTaskFormTitle("");
-    setTaskFormDue("");
+    setTaskFormDue(currentDateTimeLocalValue());
     setTaskFormNotes("");
     setTaskStars(0);
     setEditingTaskId(null);
     setTaskFormError(null);
     setTaskFormDomain("");
+    setTaskDueUserEdited(false);
   };
+  resetTaskFormRef.current = resetTaskForm;
 
   const handleJsonImport = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -2223,14 +2260,35 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
   };
 
-  const openCreateModal = () => {
+  const openCreateModal = (opts?: { linkedTaskId?: string }) => {
     resetReminderForm();
     setCreateFormError(null);
+    setShowReminderInlineTask(false);
+    setReminderInlineTaskTitle("");
+    setReminderInlineTaskDue("");
     setIsCreateOpen(true);
+    if (opts?.linkedTaskId) {
+      setReminderLinkedTaskId(opts.linkedTaskId);
+    }
+  };
+
+  const openCreateReminderFromRemindersList = () => {
+    setIsListOpen(false);
+    openCreateModal();
+  };
+
+  const openCreateTaskFromRemindersList = () => {
+    setIsListOpen(false);
+    resetTaskForm();
+    setTaskTab("pending");
+    setIsTasksOpen(true);
   };
 
   const openEditModal = (reminder: ReminderItem) => {
     setCreateFormError(null);
+    setShowReminderInlineTask(false);
+    setReminderInlineTaskTitle("");
+    setReminderInlineTaskDue("");
     const dueDate = new Date(reminder.dueAt);
     const datePart = dueDate.toISOString().slice(0, 10);
     const timePart = dueDate.toTimeString().slice(0, 5);
@@ -2391,6 +2449,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setTaskFormTitle(task.title);
     setTaskFormNotes(task.notes ?? "");
     setTaskFormDue(toDateTimeLocalValue(task.dueAt));
+    setTaskDueUserEdited(true);
     setTaskStars(
       typeof task.priority === "number" && task.priority >= 1 && task.priority <= 5 ? task.priority : 0
     );
@@ -2449,6 +2508,128 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       setTaskFormError("Network error. Try again.");
     }
   };
+
+  useEffect(() => {
+    if (!isTasksOpen || editingTaskId || taskDueUserEdited) return;
+    const tick = () => setTaskFormDue(currentDateTimeLocalValue());
+    tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => window.clearInterval(id);
+  }, [isTasksOpen, editingTaskId, taskDueUserEdited]);
+
+  useEffect(() => {
+    if (showReminderInlineTask) {
+      setReminderInlineTaskDue(currentDateTimeLocalValue());
+    }
+  }, [showReminderInlineTask]);
+
+  const createReminderInlineTask = useCallback(async () => {
+    const title = reminderInlineTaskTitle.trim();
+    if (!title) {
+      setCreateFormError("Enter a name for the new task.");
+      return;
+    }
+    setReminderInlineTaskSaving(true);
+    setCreateFormError(null);
+    try {
+      let dueAt: number | undefined;
+      if (reminderInlineTaskDue.trim()) {
+        const ms = new Date(reminderInlineTaskDue).getTime();
+        if (Number.isFinite(ms)) dueAt = ms;
+      }
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          priority: 3,
+          dueAt,
+          status: "pending",
+        }),
+      });
+      const data = (await res.json()) as { task?: { _id?: string }; error?: string };
+      if (!res.ok) {
+        setCreateFormError(data.error ?? "Could not create task.");
+        return;
+      }
+      const tid = data.task?._id;
+      if (tid) {
+        setReminderLinkedTaskId(String(tid));
+        await refreshTasks();
+        setShowReminderInlineTask(false);
+        setReminderInlineTaskTitle("");
+        setReminderInlineTaskDue("");
+      }
+    } catch {
+      setCreateFormError("Network error creating task.");
+    } finally {
+      setReminderInlineTaskSaving(false);
+    }
+  }, [reminderInlineTaskTitle, reminderInlineTaskDue, refreshTasks]);
+
+  const startReminderForCurrentTask = useCallback(async () => {
+    if (!taskFormTitle.trim()) {
+      setTaskFormError("Add a task title first.");
+      return;
+    }
+    if (taskStars < 1 || taskStars > 5) {
+      setTaskFormError("Choose priority: tap 1–5 stars.");
+      return;
+    }
+    setTaskFormError(null);
+    let dueAt: number | undefined;
+    if (taskFormDue.trim()) {
+      const ms = new Date(taskFormDue).getTime();
+      if (!Number.isFinite(ms)) {
+        setTaskFormError("Invalid due date or time.");
+        return;
+      }
+      dueAt = ms;
+    }
+    try {
+      let taskId = editingTaskId;
+      if (!taskId) {
+        const res = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: taskFormTitle.trim(),
+            notes: taskFormNotes.trim() ? taskFormNotes.trim() : undefined,
+            dueAt,
+            priority: taskStars,
+            status: "pending",
+            ...(taskFormDomain ? { domain: taskFormDomain } : {}),
+          }),
+        });
+        const data = (await res.json()) as { task?: { _id?: string }; error?: string };
+        if (!res.ok) {
+          setTaskFormError(data.error ?? "Could not save task.");
+          return;
+        }
+        const tid = data.task?._id;
+        if (!tid) {
+          setTaskFormError("Task saved but missing id.");
+          return;
+        }
+        taskId = String(tid);
+        setEditingTaskId(taskId);
+        await refreshTasks();
+      }
+      setIsTasksOpen(false);
+      openCreateModal({ linkedTaskId: taskId });
+    } catch {
+      setTaskFormError("Network error. Try again.");
+    }
+  }, [
+    editingTaskId,
+    taskFormTitle,
+    taskFormDue,
+    taskFormNotes,
+    taskStars,
+    taskFormDomain,
+    refreshTasks,
+    openCreateModal,
+  ]);
 
   return (
     <>
@@ -2943,7 +3124,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <span aria-hidden className="text-sm leading-none opacity-90">
                   ＋
                 </span>
-                <span className="mt-0.5 leading-tight">Create</span>
+                <span className="mt-0.5 leading-tight">Create reminder</span>
               </button>
               <button
                 type="button"
@@ -2956,7 +3137,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <span aria-hidden className="text-sm leading-none opacity-90">
                   ☰
                 </span>
-                <span className="mt-0.5 leading-tight">Reminders</span>
+                <span className="mt-0.5 leading-tight">All reminders</span>
               </button>
               <button
                 type="button"
@@ -2964,6 +3145,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   setIsSnapshotOpen(false);
                   setTaskFormError(null);
                   void refreshTasks();
+                  resetTaskForm();
+                  setTaskTab("pending");
                   setIsTasksOpen(true);
                 }}
                 className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-violet-500 to-violet-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-violet-400/25 transition hover:brightness-110 active:scale-[0.98]"
@@ -2971,7 +3154,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <span aria-hidden className="text-sm leading-none opacity-90">
                   ✓
                 </span>
-                <span className="mt-0.5 leading-tight">Tasks</span>
+                <span className="mt-0.5 leading-tight">Create task</span>
               </button>
             </div>
 
@@ -3122,6 +3305,44 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         No task selected → reminder is ADHOC (standalone).
                       </span>
                     </label>
+                    {canEditLinks ? (
+                      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/90 px-3 py-2 dark:border-slate-600 dark:bg-slate-900/50">
+                        <button
+                          type="button"
+                          onClick={() => setShowReminderInlineTask((v) => !v)}
+                          className="text-xs font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                        >
+                          {showReminderInlineTask ? "Hide quick task creator" : "+ Create new task & link it"}
+                        </button>
+                        {showReminderInlineTask ? (
+                          <div className="mt-2 grid gap-2">
+                            <input
+                              value={reminderInlineTaskTitle}
+                              onChange={(e) => setReminderInlineTaskTitle(e.target.value)}
+                              placeholder="New task title"
+                              className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+                            />
+                            <label className="grid gap-1 text-[11px] font-medium text-slate-600 dark:text-slate-400">
+                              Due (optional)
+                              <input
+                                type="datetime-local"
+                                value={reminderInlineTaskDue}
+                                onChange={(e) => setReminderInlineTaskDue(e.target.value)}
+                                className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              disabled={reminderInlineTaskSaving}
+                              onClick={() => void createReminderInlineTask()}
+                              className="rounded-full bg-violet-600 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                            >
+                              {reminderInlineTaskSaving ? "Creating…" : "Create task & link"}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <label
                       className={`grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 ${
                         !canEditLinks ? "opacity-60" : ""
@@ -3331,57 +3552,87 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </div>
             ) : null}
             <div className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
-                  <span className="font-medium">Filter</span>
-                  <select
-                    value={reminderTaskFilter}
-                    onChange={(e) => setReminderTaskFilter(e.target.value as "all" | "adhoc" | string)}
-                    className="max-w-[min(100%,14rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
-                  >
-                    <option value="all">All in this tab</option>
-                    <option value="adhoc">ADHOC only</option>
-                    {tasks.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        Task: {t.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {reminderListTab === "shared" ? (
-                  <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
-                    <span className="font-medium">From</span>
-                    <select
-                      value={sharedFromFilter}
-                      onChange={(e) => setSharedFromFilter(e.target.value as "all" | string)}
-                      className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                    <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                      <span className="font-medium">Filter</span>
+                      <select
+                        value={reminderTaskFilter}
+                        onChange={(e) => setReminderTaskFilter(e.target.value as "all" | "adhoc" | string)}
+                        className="max-w-[min(100%,14rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                      >
+                        <option value="all">All in this tab</option>
+                        <option value="adhoc">ADHOC only</option>
+                        {tasks.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            Task: {t.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {reminderListTab === "shared" ? (
+                      <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                        <span className="font-medium">From</span>
+                        <select
+                          value={sharedFromFilter}
+                          onChange={(e) => setSharedFromFilter(e.target.value as "all" | string)}
+                          className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                        >
+                          <option value="all">Everyone</option>
+                          {sharedFromOptions.map((id) => (
+                            <option key={id} value={id}>
+                              …{id.slice(-8)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {reminderListTab === "sent" ? (
+                      <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                        <span className="font-medium">Sent to</span>
+                        <select
+                          value={sentToFilter}
+                          onChange={(e) => setSentToFilter(e.target.value as "all" | string)}
+                          className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                        >
+                          <option value="all">Everyone</option>
+                          {sentRecipientOptions.map(([id, name]) => (
+                            <option key={id} value={id}>
+                              {name || `…${id.slice(-8)}`}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={openCreateReminderFromRemindersList}
+                      className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1.5 text-xs font-semibold text-violet-900 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100"
+                      title="Create reminder"
+                      aria-label="Create reminder"
                     >
-                      <option value="all">Everyone</option>
-                      {sharedFromOptions.map((id) => (
-                        <option key={id} value={id}>
-                          …{id.slice(-8)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
-                {reminderListTab === "sent" ? (
-                  <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
-                    <span className="font-medium">Sent to</span>
-                    <select
-                      value={sentToFilter}
-                      onChange={(e) => setSentToFilter(e.target.value as "all" | string)}
-                      className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                      <span aria-hidden className="text-base leading-none">
+                        +
+                      </span>
+                      Reminder
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openCreateTaskFromRemindersList}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                      title="Create task"
+                      aria-label="Create task"
                     >
-                      <option value="all">Everyone</option>
-                      {sentRecipientOptions.map(([id, name]) => (
-                        <option key={id} value={id}>
-                          {name || `…${id.slice(-8)}`}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
+                      <span aria-hidden className="text-base leading-none">
+                        +
+                      </span>
+                      Task
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -3674,12 +3925,26 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 placeholder="Title"
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
               />
-              <input
-                type="datetime-local"
-                value={taskFormDue}
-                onChange={(e) => setTaskFormDue(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
-              />
+              <label className="grid gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
+                <span className="flex flex-wrap items-center justify-between gap-1">
+                  <span>Due date &amp; time (optional)</span>
+                  {!editingTaskId && !taskDueUserEdited ? (
+                    <span className="max-w-[14rem] text-right font-normal text-[10px] text-slate-400 dark:text-slate-500">
+                      Stays on “now”; updates every 30s until you adjust it
+                    </span>
+                  ) : null}
+                </span>
+                <input
+                  type="datetime-local"
+                  value={taskFormDue}
+                  onFocus={() => setTaskDueUserEdited(true)}
+                  onChange={(e) => {
+                    setTaskDueUserEdited(true);
+                    setTaskFormDue(e.target.value);
+                  }}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+                />
+              </label>
               <textarea
                 value={taskFormNotes}
                 onChange={(e) => setTaskFormNotes(e.target.value)}
@@ -3703,6 +3968,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 </select>
               </label>
               <StarRating value={taskStars} onChange={setTaskStars} label="Priority (required)" />
+              <button
+                type="button"
+                onClick={() => void startReminderForCurrentTask()}
+                className="w-full rounded-xl border border-violet-300 bg-violet-50/90 py-2 text-xs font-semibold text-violet-900 shadow-sm transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
+              >
+                + Add linked reminder
+              </button>
               {taskFormError ? (
                 <p className="text-xs text-rose-600 dark:text-rose-400">{taskFormError}</p>
               ) : null}
@@ -3785,17 +4057,50 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{task.notes}</p>
                       ) : null}
                       {(() => {
-                        const linked = reminders.filter(
-                          (r) => r.linkedTaskId === task.id && r.status !== "done"
+                        const linkedAll = reminders.filter((r) => r.linkedTaskId === task.id);
+                        if (linkedAll.length === 0) return null;
+                        const linkedPending = linkedAll.filter((r) => r.status === "pending");
+                        const linkedDone = linkedAll.filter(
+                          (r) => r.status === "done" || r.status === "archived"
                         );
-                        if (linked.length === 0) return null;
                         return (
-                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                            <span className="font-semibold text-slate-600 dark:text-slate-300">
-                              Reminders:
-                            </span>{" "}
-                            {linked.map((r) => r.title).join(" · ")}
-                          </p>
+                          <div className="mt-2 space-y-2">
+                            {linkedPending.length > 0 ? (
+                              <div className="rounded-xl border border-violet-200/90 bg-gradient-to-b from-violet-50/95 to-white px-2.5 py-2 dark:border-violet-800/80 dark:from-violet-950/50 dark:to-slate-900/90">
+                                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
+                                  Linked reminders
+                                </p>
+                                <ul className="space-y-1.5">
+                                  {linkedPending.map((r) => (
+                                    <li
+                                      key={r.id}
+                                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/90"
+                                    >
+                                      <span className="min-w-0 font-medium text-slate-900 dark:text-slate-100">
+                                        {r.title}
+                                      </span>
+                                      <span className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
+                                        {new Date(r.dueAt).toLocaleString(undefined, {
+                                          month: "short",
+                                          day: "numeric",
+                                          hour: "numeric",
+                                          minute: "2-digit",
+                                        })}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+                            {linkedDone.length > 0 ? (
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                <span className="font-medium text-slate-600 dark:text-slate-300">
+                                  Completed on this task:
+                                </span>{" "}
+                                {linkedDone.map((r) => r.title).join(" · ")}
+                              </p>
+                            ) : null}
+                          </div>
                         );
                       })()}
                       <div className="mt-2 flex flex-wrap gap-2">
