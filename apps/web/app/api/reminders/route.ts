@@ -17,8 +17,28 @@ export async function GET() {
       owned: Array<Record<string, unknown>>;
       shared: Array<Record<string, unknown>>;
     };
+    const shareMeta = (await client.query(api.reminderSharing.listShareRecipientsForOwned, {
+      userId,
+    })) as {
+      reminderId: string;
+      recipients: { userId: string; displayName: string }[];
+    }[];
+    const recipientsByReminder = new Map<string, { userId: string; displayName: string }[]>();
+    for (const row of shareMeta) {
+      recipientsByReminder.set(String(row.reminderId), row.recipients);
+    }
+
     const merged: Array<Record<string, unknown>> = [
-      ...data.owned.map((r: Record<string, unknown>) => ({ ...r, _access: "owner" })),
+      ...data.owned.map((r: Record<string, unknown>) => {
+        const rid = String(r._id ?? "");
+        const recipients = recipientsByReminder.get(rid) ?? [];
+        return {
+          ...r,
+          _access: "owner",
+          _shareRecipients: recipients,
+          _outgoingShared: recipients.length > 0,
+        };
+      }),
       ...data.shared.map((r: Record<string, unknown>) => ({ ...r, _access: "shared" })),
     ];
     merged.sort((a, b) => Number(a.dueAt) - Number(b.dueAt));

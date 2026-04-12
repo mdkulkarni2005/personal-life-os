@@ -45,6 +45,7 @@ import {
   shouldShowSystemDueNotification,
   type DueNotificationPrefs,
 } from "../../lib/reminder-notification-prefs";
+import { syncReminderPushSubscription } from "../../lib/push-subscription-client";
 
 type ChatRole = "user" | "assistant" | "system";
 
@@ -125,6 +126,17 @@ interface ShareInboxRow {
   title: string;
   dueAt: number;
   createdAt: number;
+  shareBatchId?: string;
+}
+
+function groupShareInboxRows(rows: ShareInboxRow[]): { batchKey: string; rows: ShareInboxRow[] }[] {
+  const map = new Map<string, ShareInboxRow[]>();
+  for (const row of rows) {
+    const key = row.shareBatchId ?? `legacy:${row._id}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(row);
+  }
+  return [...map.entries()].map(([batchKey, list]) => ({ batchKey, rows: list }));
 }
 
 function directoryDisplayName(u: DirectoryUser): string {
@@ -326,6 +338,12 @@ function fromApiReminder(item: Record<string, unknown>): ReminderItem {
   const access = item._access === "shared" ? "shared" : "owner";
   const p = item.priority;
   const linked = item.linkedTaskId;
+  const ownerUserId =
+    access === "shared" && typeof item.userId === "string" ? item.userId : undefined;
+  const shareRecipients = Array.isArray(item._shareRecipients)
+    ? (item._shareRecipients as { userId: string; displayName: string }[])
+    : undefined;
+  const outgoingShared = item._outgoingShared === true;
   return {
     id: String(item._id ?? item.id ?? crypto.randomUUID()),
     title: String(item.title ?? ""),
@@ -343,6 +361,9 @@ function fromApiReminder(item: Record<string, unknown>): ReminderItem {
     createdAt: new Date(Number(item.createdAt ?? Date.now())).toISOString(),
     updatedAt: new Date(Number(item.updatedAt ?? Date.now())).toISOString(),
     access,
+    ownerUserId,
+    shareRecipients: access === "owner" ? shareRecipients : undefined,
+    outgoingShared: access === "owner" ? outgoingShared : undefined,
     linkedTaskId: typeof linked === "string" ? linked : undefined,
     domain: parseLifeDomain(item.domain),
   };
@@ -600,6 +621,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const { user } = useUser();
   const searchParams = useSearchParams();
   const notifUrlHandledRef = useRef<string | null>(null);
+  const shareBatchUrlHandledRef = useRef<string | null>(null);
   const [reminders, setReminders] = usePersistentReminders(userId);
   const [dueNotifPrefs, setDueNotifPrefs] = useState<DueNotificationPrefs>(() => loadDueNotificationPrefs());
   const [notifUiTick, setNotifUiTick] = useState(0);
@@ -635,8 +657,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [followUpQuestions, setFollowUpQuestions] = useState<FollowUpQuestion[]>([]);
   const [showSuggestedQuestions, setShowSuggestedQuestions] = useState(true);
   const [reminderListTab, setReminderListTab] = useState<
-    "missed" | "today" | "tomorrow" | "upcoming" | "done"
+    "missed" | "today" | "tomorrow" | "upcoming" | "done" | "shared" | "sent"
   >("missed");
+  const [sharedFromFilter, setSharedFromFilter] = useState<"all" | string>("all");
+  const [sentToFilter, setSentToFilter] = useState<"all" | string>("all");
   const [isTasksOpen, setIsTasksOpen] = useState(false);
   const [taskTab, setTaskTab] = useState<"missed" | "pending" | "done">("pending");
   const [taskFormTitle, setTaskFormTitle] = useState("");
@@ -878,34 +902,36 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     });
   }, []);
 
-  const joinSharedReminder = useCallback(
-    async (token: string) => {
+  const joinShareBatch = useCallback(
+    async (batchKey: string) => {
       try {
-        const res = await fetch(`/api/reminders/share/${encodeURIComponent(token)}`, {
+        const res = await fetch("/api/reminders/share/batch/accept", {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ batchKey }),
         });
         const data = (await res.json()) as { error?: string };
         if (!res.ok) {
-          showShareToast(data.error ?? "Could not join");
+          showShareToast(data.error ?? "Could not accept");
           return;
         }
-        showShareToast("You're in on that reminder.");
+        showShareToast("You're in on those reminders.");
         await refreshReminders();
         void loadShareInbox();
       } catch {
-        showShareToast("Could not join");
+        showShareToast("Could not accept");
       }
     },
     [refreshReminders, loadShareInbox, showShareToast]
   );
 
-  const dismissInboxRow = useCallback(
-    async (inboxId: string) => {
+  const dismissShareBatch = useCallback(
+    async (batchKey: string) => {
       try {
-        await fetch("/api/reminders/inbox/dismiss", {
+        await fetch("/api/reminders/share/batch/dismiss", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ inboxId }),
+          body: JSON.stringify({ batchKey }),
         });
         void loadShareInbox();
       } catch {
@@ -1266,6 +1292,61 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     };
   }, [inviteQueryParam, isHistoryLoaded]);
 
+  const shareBatchAction = searchParams.get("shareBatchAction");
+  const batchKeyParam = searchParams.get("batchKey");
+
+  useEffect(() => {
+    const act = shareBatchAction?.trim();
+    const key = batchKeyParam?.trim();
+    if (!act || !key || !isHistoryLoaded) return;
+    const sig = `${act}:${key}`;
+    if (shareBatchUrlHandledRef.current === sig) return;
+    shareBatchUrlHandledRef.current = sig;
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (act === "accept") {
+          const res = await fetch("/api/reminders/share/batch/accept", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ batchKey: key }),
+          });
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          if (!res.ok && !cancelled) {
+            showShareToast(data.error ?? "Could not accept");
+            shareBatchUrlHandledRef.current = null;
+            return;
+          }
+          if (!cancelled) showShareToast("You're in on those reminders.");
+        } else if (act === "deny") {
+          await fetch("/api/reminders/share/batch/dismiss", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ batchKey: key }),
+          });
+        }
+        if (!cancelled) {
+          await refreshRemindersRef.current();
+          void loadShareInbox();
+        }
+      } catch {
+        shareBatchUrlHandledRef.current = null;
+      } finally {
+        if (typeof window !== "undefined") {
+          window.history.replaceState({}, "", "/dashboard");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shareBatchAction, batchKeyParam, isHistoryLoaded, loadShareInbox, showShareToast]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded) return;
+    void syncReminderPushSubscription();
+  }, [isHistoryLoaded]);
+
   useEffect(() => {
     if (!isHistoryLoaded) return;
     for (const m of messages) {
@@ -1299,7 +1380,18 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     if (!("serviceWorker" in navigator)) return;
     const nav = navigator.serviceWorker;
     const handler = (event: MessageEvent) => {
-      const d = event.data as { type?: string; action?: string; reminderId?: string };
+      const d = event.data as {
+        type?: string;
+        action?: string;
+        reminderId?: string;
+        batchKey?: string;
+      };
+      if (d?.type === "SHARE_INVITE_NOTIF" && d.batchKey) {
+        const a = d.action ?? "open";
+        if (a === "accept") void joinShareBatch(d.batchKey);
+        else if (a === "deny") void dismissShareBatch(d.batchKey);
+        return;
+      }
       if (d?.type !== "REMINDER_NOTIF" || !d.reminderId) return;
       const a = d.action ?? "open";
       if (a === "open") return;
@@ -1309,7 +1401,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     };
     nav.addEventListener("message", handler);
     return () => nav.removeEventListener("message", handler);
-  }, [runReminderQuickAction]);
+  }, [runReminderQuickAction, joinShareBatch, dismissShareBatch]);
 
   useEffect(() => {
     try {
@@ -1391,12 +1483,27 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   useEffect(() => {
     if (isListOpen && !listOpenRef.current) {
-      const order = ["missed", "today", "tomorrow", "upcoming", "done"] as const;
-      const hit = order.find((k) => grouped[k].length > 0) ?? "missed";
+      const order = [
+        "missed",
+        "today",
+        "tomorrow",
+        "upcoming",
+        "shared",
+        "sent",
+        "done",
+      ] as const;
+      const sharedCount = reminders.filter((r) => r.access === "shared").length;
+      const sentCount = reminders.filter((r) => r.access === "owner" && r.outgoingShared).length;
+      const hit =
+        order.find((k) => {
+          if (k === "shared") return sharedCount > 0;
+          if (k === "sent") return sentCount > 0;
+          return grouped[k].length > 0;
+        }) ?? "missed";
       setReminderListTab(hit);
     }
     listOpenRef.current = isListOpen;
-  }, [isListOpen, grouped]);
+  }, [isListOpen, grouped, reminders]);
 
   const tasksGrouped = useMemo(() => {
     const now = new Date();
@@ -1424,11 +1531,68 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
 
   const reminderListRows = useMemo(() => {
+    if (reminderListTab === "shared") {
+      let rows = reminders.filter((r) => r.access === "shared");
+      if (sharedFromFilter !== "all") {
+        rows = rows.filter((r) => r.ownerUserId === sharedFromFilter);
+      }
+      if (reminderTaskFilter === "adhoc") return rows.filter((r) => isAdhocReminder(r));
+      if (reminderTaskFilter !== "all") {
+        return rows.filter((r) => r.linkedTaskId === reminderTaskFilter);
+      }
+      return rows;
+    }
+    if (reminderListTab === "sent") {
+      let rows = reminders.filter((r) => r.access === "owner" && r.outgoingShared);
+      if (sentToFilter !== "all") {
+        rows = rows.filter((r) => r.shareRecipients?.some((p) => p.userId === sentToFilter));
+      }
+      if (reminderTaskFilter === "adhoc") return rows.filter((r) => isAdhocReminder(r));
+      if (reminderTaskFilter !== "all") {
+        return rows.filter((r) => r.linkedTaskId === reminderTaskFilter);
+      }
+      return rows;
+    }
     const base = grouped[reminderListTab];
     if (reminderTaskFilter === "all") return base;
     if (reminderTaskFilter === "adhoc") return base.filter((r) => isAdhocReminder(r));
     return base.filter((r) => r.linkedTaskId === reminderTaskFilter);
-  }, [grouped, reminderListTab, reminderTaskFilter]);
+  }, [
+    grouped,
+    reminderListTab,
+    reminderTaskFilter,
+    reminders,
+    sharedFromFilter,
+    sentToFilter,
+  ]);
+
+  const sharedTabCount = useMemo(
+    () => reminders.filter((r) => r.access === "shared").length,
+    [reminders]
+  );
+  const sentTabCount = useMemo(
+    () => reminders.filter((r) => r.access === "owner" && r.outgoingShared).length,
+    [reminders]
+  );
+
+  const sharedFromOptions = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of reminders) {
+      if (r.access === "shared" && r.ownerUserId) ids.add(r.ownerUserId);
+    }
+    return [...ids];
+  }, [reminders]);
+
+  const sentRecipientOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of reminders) {
+      if (r.access !== "owner" || !r.shareRecipients?.length) continue;
+      for (const p of r.shareRecipients) {
+        if (!map.has(p.userId)) map.set(p.userId, p.displayName);
+      }
+    }
+    return [...map.entries()];
+  }, [reminders]);
 
 
   const applyAction = (action: AgentAction) => {
@@ -3031,112 +3195,194 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   ["today", "Today"],
                   ["tomorrow", "Tomorrow"],
                   ["upcoming", "Later"],
+                  ["shared", "Shared"],
+                  ["sent", "Sent"],
                   ["done", "Done"],
                 ] as const
-              ).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setReminderListTab(key)}
-                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                    reminderListTab === key
-                      ? "bg-violet-600 text-white"
-                      : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                  }`}
-                >
-                  {label}{" "}
-                  <span className="opacity-80">({grouped[key].length})</span>
-                </button>
-              ))}
+              ).map(([key, label]) => {
+                const count =
+                  key === "shared"
+                    ? sharedTabCount
+                    : key === "sent"
+                      ? sentTabCount
+                      : grouped[key].length;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setReminderListTab(key)}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                      reminderListTab === key
+                        ? "bg-violet-600 text-white"
+                        : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    }`}
+                  >
+                    {label} <span className="opacity-80">({count})</span>
+                  </button>
+                );
+              })}
             </div>
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
-              {!reminderSelectionMode ? (
-                <button
-                  type="button"
-                  className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                  onClick={() => {
-                    setReminderSelectionMode(true);
-                    setSelectedReminderIds(new Set());
-                  }}
-                >
-                  Select
-                </button>
-              ) : (
-                <div className="flex flex-wrap items-center gap-2">
+              {reminderListTab !== "shared" ? (
+                !reminderSelectionMode ? (
                   <button
                     type="button"
-                    className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+                    className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
                     onClick={() => {
-                      setReminderSelectionMode(false);
+                      setReminderSelectionMode(true);
                       setSelectedReminderIds(new Set());
                     }}
                   >
-                    Cancel
+                    Select
                   </button>
-                  <button
-                    type="button"
-                    disabled={selectedReminderIds.size === 0}
-                    className="rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-                    onClick={() => openShareModal([...selectedReminderIds])}
-                  >
-                    Share ({selectedReminderIds.size})
-                  </button>
-                </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+                      onClick={() => {
+                        setReminderSelectionMode(false);
+                        setSelectedReminderIds(new Set());
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={selectedReminderIds.size === 0}
+                      className="rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                      onClick={() => openShareModal([...selectedReminderIds])}
+                    >
+                      Share ({selectedReminderIds.size})
+                    </button>
+                  </div>
+                )
+              ) : (
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Invites you joined appear here; pending invites stay above.
+                </span>
               )}
               <p className="max-w-[14rem] text-[10px] leading-snug text-slate-500 dark:text-slate-400 sm:max-w-none">
-                Tip: long-press a reminder to select (mobile). Use checkboxes when Select is on.
+                {reminderListTab === "shared"
+                  ? "Reminders others shared and you accepted."
+                  : "Tip: long-press a reminder to select (mobile). Use checkboxes when Select is on."}
               </p>
             </div>
             {shareInbox.length > 0 ? (
-              <div className="max-h-36 shrink-0 space-y-2 overflow-y-auto border-b border-violet-200/50 bg-violet-50/60 px-4 py-2 dark:border-violet-900/50 dark:bg-violet-950/35">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
-                  Shared with you
-                </p>
-                {shareInbox.map((row) => (
-                  <div
-                    key={row._id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-200/90 bg-white/95 px-2.5 py-1.5 text-xs dark:border-violet-800 dark:bg-slate-900"
+              <div className="max-h-48 shrink-0 space-y-2 overflow-y-auto border-b border-violet-200/50 bg-violet-50/60 px-4 py-2 dark:border-violet-900/50 dark:bg-violet-950/35">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
+                    Shared with you
+                  </p>
+                  <button
+                    type="button"
+                    className="rounded-full border border-violet-400 px-2.5 py-0.5 text-[10px] font-semibold text-violet-900 dark:border-violet-600 dark:text-violet-100"
+                    onClick={() => {
+                      void Notification.requestPermission().then((p) => {
+                        if (p === "granted") void syncReminderPushSubscription();
+                      });
+                    }}
                   >
-                    <span className="min-w-0 text-slate-800 dark:text-slate-100">
-                      <span className="font-semibold">{row.fromDisplayName}</span> · {row.title}
-                    </span>
-                    <span className="flex shrink-0 gap-1">
-                      <button
-                        type="button"
-                        className="rounded-full bg-violet-600 px-2.5 py-0.5 text-[11px] font-semibold text-white"
-                        onClick={() => void joinSharedReminder(row.token)}
-                      >
-                        Join
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-full border border-slate-300 px-2.5 py-0.5 text-[11px] font-semibold dark:border-slate-600"
-                        onClick={() => void dismissInboxRow(row._id)}
-                      >
-                        Dismiss
-                      </button>
-                    </span>
-                  </div>
-                ))}
+                    Enable invite alerts
+                  </button>
+                </div>
+                {groupShareInboxRows(shareInbox).map(({ batchKey, rows }) => {
+                  const first = rows[0]!;
+                  const n = rows.length;
+                  return (
+                    <div
+                      key={batchKey}
+                      className="rounded-lg border border-violet-200/90 bg-white/95 px-2.5 py-2 text-xs dark:border-violet-800 dark:bg-slate-900"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-900 dark:text-slate-100">
+                            {first.fromDisplayName}
+                            {n > 1 ? ` · ${n} reminders` : ` · ${first.title}`}
+                          </p>
+                          {n > 1 ? (
+                            <ul className="mt-1 max-h-20 list-inside list-disc overflow-y-auto text-[11px] text-slate-600 dark:text-slate-300">
+                              {rows.map((r) => (
+                                <li key={r._id}>{r.title}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                        <span className="flex shrink-0 flex-col gap-1 sm:flex-row">
+                          <button
+                            type="button"
+                            className="rounded-full bg-violet-600 px-2.5 py-0.5 text-[11px] font-semibold text-white"
+                            onClick={() => void joinShareBatch(batchKey)}
+                          >
+                            Accept all
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-full border border-slate-300 px-2.5 py-0.5 text-[11px] font-semibold dark:border-slate-600"
+                            onClick={() => void dismissShareBatch(batchKey)}
+                          >
+                            Deny all
+                          </button>
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
             <div className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
-              <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
-                <span className="font-medium">Filter</span>
-                <select
-                  value={reminderTaskFilter}
-                  onChange={(e) => setReminderTaskFilter(e.target.value as "all" | "adhoc" | string)}
-                  className="max-w-[min(100%,14rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
-                >
-                  <option value="all">All in this tab</option>
-                  <option value="adhoc">ADHOC only</option>
-                  {tasks.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      Task: {t.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                  <span className="font-medium">Filter</span>
+                  <select
+                    value={reminderTaskFilter}
+                    onChange={(e) => setReminderTaskFilter(e.target.value as "all" | "adhoc" | string)}
+                    className="max-w-[min(100%,14rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                  >
+                    <option value="all">All in this tab</option>
+                    <option value="adhoc">ADHOC only</option>
+                    {tasks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        Task: {t.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {reminderListTab === "shared" ? (
+                  <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">From</span>
+                    <select
+                      value={sharedFromFilter}
+                      onChange={(e) => setSharedFromFilter(e.target.value as "all" | string)}
+                      className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                    >
+                      <option value="all">Everyone</option>
+                      {sharedFromOptions.map((id) => (
+                        <option key={id} value={id}>
+                          …{id.slice(-8)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {reminderListTab === "sent" ? (
+                  <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">Sent to</span>
+                    <select
+                      value={sentToFilter}
+                      onChange={(e) => setSentToFilter(e.target.value as "all" | string)}
+                      className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                    >
+                      <option value="all">Everyone</option>
+                      {sentRecipientOptions.map(([id, name]) => (
+                        <option key={id} value={id}>
+                          {name || `…${id.slice(-8)}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               <div className="grid gap-3">
@@ -3152,7 +3398,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           : ""
                       }`}
                       onTouchStart={() => {
-                        if (reminder.access === "shared" || reminderListTab === "done") return;
+                        if (
+                          reminder.access === "shared"
+                          || reminderListTab === "done"
+                          || reminderListTab === "shared"
+                        ) {
+                          return;
+                        }
                         reminderLongPressTimerRef.current = window.setTimeout(() => {
                           reminderLongPressTimerRef.current = null;
                           setReminderSelectionMode(true);
@@ -3177,7 +3429,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         }
                       }}
                     >
-                      {reminderSelectionMode && reminder.access !== "shared" && reminderListTab !== "done" ? (
+                      {reminderSelectionMode
+                      && reminderListTab !== "shared"
+                      && reminder.access !== "shared"
+                      && reminderListTab !== "done" ? (
                         <div className="flex shrink-0 items-start pt-0.5">
                           <input
                             type="checkbox"

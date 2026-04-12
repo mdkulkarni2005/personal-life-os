@@ -50,6 +50,12 @@ export interface ReminderItem {
   updatedAt: string;
   /** Present when loaded from dashboard API (owned vs shared invite). */
   access?: "owner" | "shared";
+  /** Owner’s Clerk id (same as Convex `userId` on the row); set for shared reminders you joined. */
+  ownerUserId?: string;
+  /** When you own the reminder, people who joined via share (for Sent filters). */
+  shareRecipients?: { userId: string; displayName: string }[];
+  /** You shared this reminder with at least one person. */
+  outgoingShared?: boolean;
   /** Convex task id when this reminder is tied to a task; if absent, treat as ADHOC. */
   linkedTaskId?: string;
   domain?: LifeDomain;

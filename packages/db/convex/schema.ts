@@ -60,9 +60,23 @@ const reminderShareInbox = defineTable({
   dueAt: v.number(),
   createdAt: v.number(),
   dismissed: v.optional(v.boolean()),
+  /** Same id for all rows created in one share-send (per recipient batch). */
+  shareBatchId: v.optional(v.string()),
 })
   .index("by_to_user_created", ["toUserId", "createdAt"])
-  .index("by_to_reminder", ["toUserId", "reminderId"]);
+  .index("by_to_reminder", ["toUserId", "reminderId"])
+  .index("by_to_user_batch", ["toUserId", "shareBatchId"]);
+
+/** Web Push subscriptions for PWA (one row per endpoint / device). */
+const pushSubscriptions = defineTable({
+  userId: v.string(),
+  endpoint: v.string(),
+  p256dh: v.string(),
+  auth: v.string(),
+  createdAt: v.number(),
+})
+  .index("by_user", ["userId"])
+  .index("by_endpoint", ["endpoint"]);
 
 const tasks = defineTable({
   userId: v.string(),
@@ -94,6 +108,7 @@ export default defineSchema({
   reminderInvites,
   reminderParticipants,
   reminderShareInbox,
+  pushSubscriptions,
   tasks,
   chatMessages,
 });

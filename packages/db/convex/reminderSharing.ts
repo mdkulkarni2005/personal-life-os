@@ -1,5 +1,26 @@
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+
+async function resolveShareInboxBatch(
+  ctx: MutationCtx,
+  userId: string,
+  batchKey: string
+): Promise<Doc<"reminderShareInbox">[]> {
+  if (batchKey.startsWith("legacy:")) {
+    const raw = batchKey.slice("legacy:".length);
+    const row = await ctx.db.get(raw as Id<"reminderShareInbox">);
+    if (!row || row.toUserId !== userId) return [];
+    if (row.dismissed) return [];
+    return [row];
+  }
+  const rows = await ctx.db
+    .query("reminderShareInbox")
+    .withIndex("by_to_user_batch", (q) => q.eq("toUserId", userId).eq("shareBatchId", batchKey))
+    .collect();
+  return rows.filter((r) => !r.dismissed);
+}
 
 function randomToken() {
   const bytes = new Uint8Array(16);
@@ -143,10 +164,12 @@ export const shareRemindersToUsers = mutation({
   },
   handler: async (ctx, args) => {
     const uniqueTargets = [...new Set(args.targetUserIds)].filter((id) => id && id !== args.userId);
-    if (uniqueTargets.length === 0) return { ok: true as const, delivered: 0 };
+    if (uniqueTargets.length === 0) return { ok: true as const, delivered: 0, shareBatchId: "", perTarget: [] };
 
     let delivered = 0;
     const name = args.fromDisplayName.trim() || "Someone";
+    const shareBatchId = randomToken();
+    const perTarget = new Map<string, number>();
 
     for (const reminderId of args.reminderIds) {
       const reminder = await ctx.db.get(reminderId);
@@ -194,6 +217,7 @@ export const shareRemindersToUsers = mutation({
             dueAt: reminder.dueAt,
             createdAt: Date.now(),
             dismissed: false,
+            shareBatchId,
           });
         } else {
           await ctx.db.insert("reminderShareInbox", {
@@ -205,12 +229,19 @@ export const shareRemindersToUsers = mutation({
             title: reminder.title,
             dueAt: reminder.dueAt,
             createdAt: Date.now(),
+            shareBatchId,
           });
         }
         delivered += 1;
+        perTarget.set(toUserId, (perTarget.get(toUserId) ?? 0) + 1);
       }
     }
-    return { ok: true as const, delivered };
+    return {
+      ok: true as const,
+      delivered,
+      shareBatchId,
+      perTarget: [...perTarget.entries()].map(([userId, count]) => ({ userId, count })),
+    };
   },
 });
 
@@ -249,5 +280,103 @@ export const dismissShareInboxRow = mutation({
     if (!row || row.toUserId !== args.userId) return null;
     await ctx.db.patch(args.inboxId, { dismissed: true });
     return { ok: true as const };
+  },
+});
+
+/** Accept every pending inbox row in one batch (same shareBatchId or legacy key). */
+export const acceptShareBatch = mutation({
+  args: {
+    userId: v.string(),
+    displayName: v.string(),
+    batchKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const name = args.displayName.trim() || "Someone";
+    const rows = await resolveShareInboxBatch(ctx, args.userId, args.batchKey);
+    if (rows.length === 0) return { ok: false as const, reason: "not_found" as const };
+
+    let acceptedNew = 0;
+    const first = rows[0]!;
+
+    for (const row of rows) {
+      const trimmed = row.token.trim();
+      const invites = await ctx.db
+        .query("reminderInvites")
+        .withIndex("by_token", (q) => q.eq("token", trimmed))
+        .collect();
+      const invite = invites[0];
+      if (!invite) continue;
+
+      const reminder = await ctx.db.get(invite.reminderId);
+      if (!reminder) continue;
+      if (reminder.userId === args.userId) continue;
+
+      const existing = await ctx.db
+        .query("reminderParticipants")
+        .withIndex("by_reminder_user", (q) =>
+          q.eq("reminderId", invite.reminderId).eq("userId", args.userId)
+        )
+        .unique();
+      if (!existing) {
+        await ctx.db.insert("reminderParticipants", {
+          reminderId: invite.reminderId,
+          userId: args.userId,
+          displayName: name,
+          acceptedAt: Date.now(),
+        });
+        acceptedNew += 1;
+      }
+    }
+
+    for (const row of rows) {
+      await ctx.db.patch(row._id, { dismissed: true });
+    }
+
+    return {
+      ok: true as const,
+      acceptedNew,
+      totalRows: rows.length,
+      fromUserId: first.fromUserId,
+      fromDisplayName: first.fromDisplayName,
+      accepterDisplayName: name,
+    };
+  },
+});
+
+export const dismissShareBatch = mutation({
+  args: { userId: v.string(), batchKey: v.string() },
+  handler: async (ctx, args) => {
+    const rows = await resolveShareInboxBatch(ctx, args.userId, args.batchKey);
+    for (const row of rows) {
+      await ctx.db.patch(row._id, { dismissed: true });
+    }
+    return { ok: true as const, count: rows.length };
+  },
+});
+
+/** Recipients (collaborators) per owned reminder — for “Sent” filters in the UI. */
+export const listShareRecipientsForOwned = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const owned = await ctx.db
+      .query("reminders")
+      .withIndex("by_user_dueAt", (q) => q.eq("userId", args.userId))
+      .collect();
+    const out: {
+      reminderId: Id<"reminders">;
+      recipients: { userId: string; displayName: string }[];
+    }[] = [];
+    for (const r of owned) {
+      const parts = await ctx.db
+        .query("reminderParticipants")
+        .withIndex("by_reminder", (q) => q.eq("reminderId", r._id))
+        .collect();
+      if (parts.length === 0) continue;
+      out.push({
+        reminderId: r._id,
+        recipients: parts.map((p) => ({ userId: p.userId, displayName: p.displayName })),
+      });
+    }
+    return out;
   },
 });
