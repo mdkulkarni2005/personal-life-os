@@ -366,7 +366,7 @@ function ChatBubbleShell({
     actionAlign === "center" ? "justify-center" : actionAlign === "start" ? "justify-start" : "justify-end";
   return (
     <div
-      className="group relative"
+      className="group relative min-w-0 w-full max-w-full"
       onTouchStart={(e) => {
         const t = e.touches[0];
         if (t) touchStart.current = { x: t.clientX, y: t.clientY };
@@ -476,6 +476,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const listOpenRef = useRef(false);
   const [briefingStreaming, setBriefingStreaming] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  /** When false, do not auto-scroll on new/streaming content so the user can read history. */
+  const chatPinnedToBottomRef = useRef(true);
   /** After clear chat, ignore poll merges briefly so in-flight GETs cannot restore deleted history. */
   const skipRemotePollMergeUntilRef = useRef(0);
   const isHistoryLoadedRef = useRef(false);
@@ -508,11 +510,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     });
   }, []);
 
+  const onChatScroll = useCallback(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    chatPinnedToBottomRef.current = gap <= 120;
+  }, []);
+
   const runBriefingStream = useCallback(() => {
     if (!isHistoryLoaded || briefingPlaybackActiveRef.current) return;
     briefingPlaybackActiveRef.current = true;
     const full = buildBriefingNarrative(remindersRef.current, user?.firstName ?? null);
     const id = `briefing-${Date.now()}`;
+    chatPinnedToBottomRef.current = true;
     setBriefingStreaming(true);
 
     // Append briefing at the bottom so it stays in view (standard chat UX); no scroll-to-top wait.
@@ -803,8 +813,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   useEffect(() => {
     const container = chatScrollRef.current;
     if (!container) return;
+    if (!chatPinnedToBottomRef.current) return;
     const id = requestAnimationFrame(() => {
-      container.scrollTop = container.scrollHeight;
+      const el = chatScrollRef.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(id);
   }, [messages, isLoading, briefingStreaming]);
@@ -1151,6 +1164,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
 
     if (briefingStreaming) return;
+
+    chatPinnedToBottomRef.current = true;
 
     const replySnapshot = replyTarget;
 
@@ -1837,8 +1852,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </div>
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
-          <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 scrollbar-none sm:p-4">
-          <div className="grid gap-3">
+          <div
+            ref={chatScrollRef}
+            onScroll={onChatScroll}
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain p-3 scrollbar-none sm:p-4"
+          >
+          <div className="grid min-w-0 gap-3">
             {messages.map((message) => {
               const startReplyTo = () => {
                 setReplyTarget(message);
@@ -1860,8 +1879,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     actionAlign="center"
                     showActionsAlways
                   >
-                    <div className="mx-auto max-w-[92%] rounded-2xl border border-amber-400/35 bg-amber-950/40 px-3 py-2 text-center text-xs text-amber-50 shadow-sm">
-                      <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                    <div className="mx-auto min-w-0 max-w-[92%] rounded-2xl border border-amber-400/35 bg-amber-950/40 px-3 py-2 text-center text-xs text-amber-50 shadow-sm">
+                      <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
+                        {message.content}
+                      </p>
                       <p className="mt-1 text-[10px] text-amber-200/80">
                         {new Date(message.createdAt).toLocaleTimeString([], {
                           hour: "2-digit",
@@ -1877,10 +1898,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               const showUserEdit = message.role === "user" && !dueMeta?.reminderId;
               const bubbleClass =
                 message.role === "user"
-                  ? `relative ml-auto max-w-[92%] rounded-3xl rounded-br-lg bg-emerald-600 py-2 pl-4 text-sm text-white shadow-sm ${
+                  ? `relative ml-auto min-w-0 max-w-[92%] overflow-hidden rounded-3xl rounded-br-lg bg-emerald-600 py-2 pl-4 text-sm text-white shadow-sm ${
                       showUserEdit ? "pr-14" : "pr-4"
                     }`
-                  : "max-w-[92%] rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-800 shadow-sm dark:bg-slate-800 dark:text-slate-100";
+                  : "min-w-0 max-w-[92%] overflow-hidden rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-800 shadow-sm dark:bg-slate-800 dark:text-slate-100";
 
               const inner = (
                 <div className={bubbleClass}>
@@ -1923,7 +1944,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   {dueMeta?.reminderId ? (
                     <>
                       <p className="font-semibold text-slate-900 dark:text-white">Reminder due</p>
-                      <p className="mt-1 whitespace-pre-wrap leading-relaxed text-slate-800 dark:text-slate-100">
+                      <p className="mt-1 min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed text-slate-800 [overflow-wrap:anywhere] dark:text-slate-100">
                         {dueMeta.title}
                       </p>
                       <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
@@ -1978,7 +1999,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           Session briefing
                         </p>
                       ) : null}
-                      <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                      <p className="min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
+                        {message.content}
+                      </p>
                     </>
                   )}
                   <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -2017,8 +2040,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               );
             })}
             {isLoading ? (
-              <div className="max-w-[84%] rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-100">
-                {loadingTexts[loadingTextIndex]}
+              <div className="min-w-0 max-w-[84%] rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-100">
+                <p className="min-w-0 break-words [overflow-wrap:anywhere]">{loadingTexts[loadingTextIndex]}</p>
               </div>
             ) : null}
           </div>
