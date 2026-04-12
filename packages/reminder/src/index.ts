@@ -721,8 +721,11 @@ export function createNvidiaNimChatProvider(
 
 export {
   buildBriefingNarrative,
+  buildBriefingParts,
   buildFollowUpQuestions,
   replaceFollowUpSlot,
+  type BriefingMessagePart,
+  type BriefingSection,
   type FollowUpQuestion,
   type TaskItemBrief,
 } from "./briefing-and-followups";

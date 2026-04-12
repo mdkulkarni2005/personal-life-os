@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  buildBriefingNarrative,
+  buildBriefingParts,
   buildFollowUpQuestions,
   replaceFollowUpSlot,
   buildListRemindersReply,
@@ -11,6 +11,7 @@ import {
   isAdhocReminder,
   isCompoundReminderQuestion,
   tryGroundedReminderAnswer,
+  type BriefingSection,
   type FollowUpQuestion,
   type LifeDomain,
   type TaskItemBrief,
@@ -18,7 +19,15 @@ import {
   type ReminderItem,
 } from "@repo/reminder";
 import { useUser } from "@clerk/nextjs";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useSearchParams } from "next/navigation";
 import { StarRating, priorityStarsLabel } from "./star-rating";
 import { showDueReminderSystemNotification } from "../../lib/due-notifications-client";
@@ -47,6 +56,8 @@ interface ChatReplyToRef {
 
 interface ChatMessageMeta {
   kind?: "due_reminder" | "briefing";
+  /** Which slice of the session briefing this bubble is (split messages). */
+  briefingSection?: BriefingSection;
   reminderId?: string;
   dueAt?: number;
   title?: string;
@@ -366,6 +377,28 @@ function chatReplyLabel(role: ChatRole): string {
   return "Notice";
 }
 
+function briefingSectionLabel(section: BriefingSection | undefined): string {
+  switch (section) {
+    case "greeting":
+      return "Briefing";
+    case "completed":
+      return "Completed";
+    case "overdue":
+      return "Overdue";
+    case "today":
+      return "Today";
+    case "tomorrow":
+      return "Tomorrow";
+    case "later":
+      return "Coming up";
+    case "closing":
+      return "Next step";
+    default:
+      return "Session briefing";
+  }
+}
+
+/** Desktop (md+): chevron opens Reply / Edit. Mobile: swipe right → reply; long-press user bubble → edit. */
 function ChatBubbleShell({
   children,
   onReply,
@@ -373,6 +406,8 @@ function ChatBubbleShell({
   showEdit,
   actionAlign = "end",
   showActionsAlways = false,
+  desktopHoverMenu = false,
+  onLongPressEdit,
 }: {
   children: ReactNode;
   onReply: () => void;
@@ -380,29 +415,117 @@ function ChatBubbleShell({
   showEdit: boolean;
   actionAlign?: "start" | "center" | "end";
   showActionsAlways?: boolean;
+  desktopHoverMenu?: boolean;
+  onLongPressEdit?: () => void;
 }) {
   const touchStart = useRef({ x: 0, y: 0 });
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [desktopMenuOpen, setDesktopMenuOpen] = useState(false);
+
+  const clearLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
   const justify =
     actionAlign === "center" ? "justify-center" : actionAlign === "start" ? "justify-start" : "justify-end";
+
   return (
     <div
-      className="group relative min-w-0 w-full max-w-full"
+      className="group/msg relative min-w-0 w-full max-w-full"
       onTouchStart={(e) => {
         const t = e.touches[0];
         if (t) touchStart.current = { x: t.clientX, y: t.clientY };
+        if (onLongPressEdit) {
+          clearLongPress();
+          longPressTimer.current = setTimeout(() => {
+            longPressTimer.current = null;
+            onLongPressEdit();
+          }, 520);
+        }
       }}
       onTouchEnd={(e) => {
+        clearLongPress();
         const t = e.changedTouches[0];
         if (!t) return;
         const dx = t.clientX - touchStart.current.x;
         const dy = t.clientY - touchStart.current.y;
-        if (dx > 52 && Math.abs(dy) < 50) onReply();
+        if (dx > 48 && Math.abs(dy) < 56) onReply();
       }}
+      onTouchMove={clearLongPress}
     >
+      {desktopHoverMenu ? (
+        <div
+          className="pointer-events-none absolute -right-1 -top-1 z-30 hidden pb-10 pl-10 pt-1 md:block"
+          onMouseEnter={() => setDesktopMenuOpen(true)}
+          onMouseLeave={() => setDesktopMenuOpen(false)}
+        >
+          <div
+            className={`pointer-events-auto transition-opacity duration-150 ${
+              desktopMenuOpen ? "opacity-100" : "opacity-0 group-hover/msg:opacity-100"
+            }`}
+          >
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDesktopMenuOpen((o) => !o);
+                }}
+                className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-300/50 bg-white/95 text-slate-600 shadow-sm backdrop-blur-sm hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800/95 dark:text-slate-200 dark:hover:bg-slate-700"
+                aria-expanded={desktopMenuOpen}
+                aria-haspopup="menu"
+                aria-label="Message options"
+              >
+                <span className="text-base leading-none" aria-hidden>
+                  ⌄
+                </span>
+              </button>
+              {desktopMenuOpen ? (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-40 mt-1 min-w-[9rem] rounded-xl border border-slate-200 bg-white py-1 text-xs font-medium text-slate-800 shadow-lg dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-700"
+                    onClick={() => {
+                      setDesktopMenuOpen(false);
+                      onReply();
+                    }}
+                  >
+                    Reply
+                  </button>
+                  {showEdit && onEdit ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="block w-full px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-700"
+                      onClick={() => {
+                        setDesktopMenuOpen(false);
+                        onEdit();
+                      }}
+                    >
+                      Edit message
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {children}
       <div
         className={`mt-1 flex flex-wrap gap-2 ${justify} transition-opacity ${
-          showActionsAlways ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+          desktopHoverMenu
+            ? "opacity-100 md:hidden"
+            : showActionsAlways
+              ? "opacity-100"
+              : "opacity-100 sm:opacity-0 sm:group-hover/msg:opacity-100"
         }`}
       >
         <button
@@ -555,40 +678,56 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const runBriefingStream = useCallback(() => {
     if (!isHistoryLoaded || briefingPlaybackActiveRef.current) return;
     briefingPlaybackActiveRef.current = true;
-    const full = buildBriefingNarrative(remindersRef.current, user?.firstName ?? null);
-    const id = `briefing-${Date.now()}`;
+    const parts = buildBriefingParts(remindersRef.current, user?.firstName ?? null);
     chatPinnedToBottomRef.current = true;
     setBriefingStreaming(true);
 
-    // Append briefing at the bottom so it stays in view (standard chat UX); no scroll-to-top wait.
-    setMessages((prev) => {
-      const rest = prev.filter((m) => m.id !== "starter" && m.meta?.kind !== "briefing");
-      return [
-        ...rest,
+    setMessages((prev) => prev.filter((m) => m.id !== "starter" && m.meta?.kind !== "briefing"));
+
+    let partIndex = 0;
+
+    const runPart = () => {
+      if (partIndex >= parts.length) {
+        briefingPlaybackActiveRef.current = false;
+        setBriefingStreaming(false);
+        return;
+      }
+      const slice = parts[partIndex];
+      if (!slice) {
+        briefingPlaybackActiveRef.current = false;
+        setBriefingStreaming(false);
+        return;
+      }
+      const { section, text } = slice;
+      const id = `briefing-${Date.now()}-${partIndex}-${Math.random().toString(36).slice(2, 9)}`;
+      setMessages((prev) => [
+        ...prev,
         {
           id,
           role: "assistant",
           content: "",
           createdAt: new Date().toISOString(),
-          meta: { kind: "briefing", skipPersist: true },
+          meta: { kind: "briefing", briefingSection: section, skipPersist: true },
         },
-      ];
-    });
+      ]);
 
-    let i = 0;
-    const step = () => {
-      i = Math.min(full.length, i + 2);
-      setMessages((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, content: full.slice(0, i) } : m))
-      );
-      if (i < full.length) {
-        window.setTimeout(step, 72);
-      } else {
-        briefingPlaybackActiveRef.current = false;
-        setBriefingStreaming(false);
-      }
+      let i = 0;
+      const step = () => {
+        i = Math.min(text.length, i + 2);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, content: text.slice(0, i) } : m))
+        );
+        if (i < text.length) {
+          window.setTimeout(step, 72);
+        } else {
+          partIndex += 1;
+          window.setTimeout(runPart, partIndex >= parts.length ? 0 : 120);
+        }
+      };
+      window.setTimeout(step, partIndex === 0 ? 280 : 60);
     };
-    window.setTimeout(step, 380);
+
+    window.setTimeout(runPart, 160);
   }, [isHistoryLoaded, user?.firstName]);
 
   const refreshReminders = useCallback(async () => {
@@ -2037,6 +2176,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     showEdit={false}
                     actionAlign="center"
                     showActionsAlways
+                    desktopHoverMenu
                   >
                     <div className="mx-auto min-w-0 max-w-[92%] rounded-2xl border border-amber-400/35 bg-amber-950/40 px-3 py-2 text-center text-xs text-amber-50 shadow-sm">
                       <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
@@ -2069,8 +2209,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       type="button"
                       onClick={startEditUser}
                       aria-label="Edit message"
-                      title="Edit message"
-                      className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full border border-white/35 bg-emerald-950/55 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-md backdrop-blur-[2px] hover:bg-emerald-950/85 active:scale-[0.97]"
+                      title="Edit message (or long-press on phone)"
+                      className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full border border-white/35 bg-emerald-950/55 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-md backdrop-blur-[2px] hover:bg-emerald-950/85 active:scale-[0.97] md:hidden"
                     >
                       <span className="text-xs leading-none" aria-hidden>
                         ✎
@@ -2155,7 +2295,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <>
                       {message.meta?.kind === "briefing" ? (
                         <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                          Session briefing
+                          {briefingSectionLabel(message.meta.briefingSection)}
                         </p>
                       ) : null}
                       <p className="min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
@@ -2189,10 +2329,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <ChatBubbleShell
                   key={message.id}
                   onReply={startReplyTo}
-                  onEdit={undefined}
-                  showEdit={false}
+                  onEdit={message.role === "user" && showUserEdit ? startEditUser : undefined}
+                  showEdit={message.role === "user" && showUserEdit}
                   actionAlign={message.role === "user" ? "end" : "start"}
                   showActionsAlways={message.role === "user"}
+                  desktopHoverMenu
+                  onLongPressEdit={
+                    message.role === "user" && showUserEdit ? startEditUser : undefined
+                  }
                 >
                   {inner}
                 </ChatBubbleShell>
@@ -2343,28 +2487,28 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-4">
-            <div className="grid grid-cols-3 gap-2">
-              <div className="flex aspect-square min-h-[4.25rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50 p-1 text-center dark:border-slate-700 dark:bg-slate-950">
-                <span className="text-xl font-bold tabular-nums leading-none text-slate-900 dark:text-white">
+            <div className="grid grid-cols-3 gap-1.5">
+              <div className="flex min-h-[3rem] flex-col items-center justify-center rounded-lg border border-slate-200/90 bg-gradient-to-b from-slate-50 to-slate-100/90 px-1 py-1.5 text-center dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
+                <span className="text-lg font-bold tabular-nums leading-none text-slate-900 dark:text-white">
                   {snapshot.pending}
                 </span>
-                <span className="mt-1 text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
+                <span className="mt-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
                   Left
                 </span>
               </div>
-              <div className="flex aspect-square min-h-[4.25rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50 p-1 text-center dark:border-slate-700 dark:bg-slate-950">
-                <span className="text-xl font-bold tabular-nums leading-none text-slate-900 dark:text-white">
+              <div className="flex min-h-[3rem] flex-col items-center justify-center rounded-lg border border-slate-200/90 bg-gradient-to-b from-slate-50 to-slate-100/90 px-1 py-1.5 text-center dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
+                <span className="text-lg font-bold tabular-nums leading-none text-slate-900 dark:text-white">
                   {snapshot.today}
                 </span>
-                <span className="mt-1 text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
+                <span className="mt-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
                   Today
                 </span>
               </div>
-              <div className="flex aspect-square min-h-[4.25rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50 p-1 text-center dark:border-slate-700 dark:bg-slate-950">
-                <span className="text-xl font-bold tabular-nums leading-none text-slate-900 dark:text-white">
+              <div className="flex min-h-[3rem] flex-col items-center justify-center rounded-lg border border-slate-200/90 bg-gradient-to-b from-slate-50 to-slate-100/90 px-1 py-1.5 text-center dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
+                <span className="text-lg font-bold tabular-nums leading-none text-slate-900 dark:text-white">
                   {snapshot.missed}
                 </span>
-                <span className="mt-1 text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
+                <span className="mt-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
                   Late
                 </span>
               </div>
@@ -2447,16 +2591,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               ) : null}
             </div>
 
-            <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="mt-3 grid grid-cols-3 gap-1.5">
               <button
                 type="button"
                 onClick={() => {
                   setIsSnapshotOpen(false);
                   openCreateModal();
                 }}
-                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl bg-violet-600 px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
+                className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-violet-500 to-violet-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-violet-400/25 transition hover:brightness-110 active:scale-[0.98]"
               >
-                Create
+                <span aria-hidden className="text-sm leading-none opacity-90">
+                  ＋
+                </span>
+                <span className="mt-0.5 leading-tight">Create</span>
               </button>
               <button
                 type="button"
@@ -2464,9 +2611,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   setIsSnapshotOpen(false);
                   setIsListOpen(true);
                 }}
-                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl bg-violet-600 px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
+                className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-violet-500 to-violet-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-violet-400/25 transition hover:brightness-110 active:scale-[0.98]"
               >
-                Reminders
+                <span aria-hidden className="text-sm leading-none opacity-90">
+                  ☰
+                </span>
+                <span className="mt-0.5 leading-tight">Reminders</span>
               </button>
               <button
                 type="button"
@@ -2476,13 +2626,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   void refreshTasks();
                   setIsTasksOpen(true);
                 }}
-                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl bg-violet-600 px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-violet-500 active:scale-[0.99]"
+                className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-violet-500 to-violet-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-violet-400/25 transition hover:brightness-110 active:scale-[0.98]"
               >
-                Tasks
+                <span aria-hidden className="text-sm leading-none opacity-90">
+                  ✓
+                </span>
+                <span className="mt-0.5 leading-tight">Tasks</span>
               </button>
             </div>
 
-            <div className="mt-2 grid grid-cols-3 gap-2">
+            <div className="mt-1.5 grid grid-cols-3 gap-1.5">
               <button
                 type="button"
                 onClick={() => {
@@ -2490,7 +2643,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   setImportStatus(null);
                   setIsImportOpen(true);
                 }}
-                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-white px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-slate-800 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                className="flex min-h-[2.35rem] flex-col items-center justify-center rounded-lg border border-slate-300/90 bg-slate-50/90 px-1.5 py-1 text-center text-[10px] font-semibold leading-tight text-slate-800 shadow-sm transition hover:bg-white dark:border-slate-600 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-slate-800"
               >
                 Import
               </button>
@@ -2501,7 +2654,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   handleExportChat();
                 }}
                 disabled={isLoading || messages.length === 0}
-                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-white px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                className="flex min-h-[2.35rem] flex-col items-center justify-center rounded-lg border border-slate-300/90 bg-slate-50/90 px-1.5 py-1 text-center text-[10px] font-semibold leading-tight text-slate-800 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-slate-800"
               >
                 Export
               </button>
@@ -2513,7 +2666,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   setIsBatchOpen(true);
                 }}
                 disabled={isBatchRunning || isLoading}
-                className="flex aspect-square min-h-[3.75rem] flex-col items-center justify-center rounded-xl border border-slate-200 bg-white px-1 py-1.5 text-center text-[11px] font-semibold leading-tight text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                className="flex min-h-[2.35rem] flex-col items-center justify-center rounded-lg border border-slate-300/90 bg-slate-50/90 px-1.5 py-1 text-center text-[10px] font-semibold leading-tight text-slate-800 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-slate-800"
               >
                 Batch
               </button>

@@ -68,14 +68,30 @@ function starSuffix(p?: number): string {
   return ` ${"★".repeat(n)}`;
 }
 
+/** One chat bubble per part when streaming a session briefing. */
+export type BriefingSection =
+  | "greeting"
+  | "completed"
+  | "overdue"
+  | "today"
+  | "tomorrow"
+  | "later"
+  | "closing";
+
+export interface BriefingMessagePart {
+  section: BriefingSection;
+  /** Plain text for this bubble (may include newlines). */
+  text: string;
+}
+
 /**
- * Full session briefing: greeting + completed + overdue + today + tomorrow + later upcoming (all items per section).
+ * Session briefing split into separate messages (greeting, then each bucket, then closing line).
  */
-export function buildBriefingNarrative(
+export function buildBriefingParts(
   reminders: ReminderItem[],
   firstName?: string | null,
   now = new Date()
-): string {
+): BriefingMessagePart[] {
   const name = firstName?.trim();
   const greet = name
     ? `Hello, ${name} — this is your briefing.`
@@ -99,61 +115,76 @@ export function buildBriefingNarrative(
     .filter((r) => bucketOf(r, now) === "upcoming")
     .sort(sortByPriorityThenDue);
 
-  const lines: string[] = [greet, ""];
-
-  lines.push(`COMPLETED (${completed.length})`);
+  const completedLines: string[] = [`COMPLETED (${completed.length})`];
   if (completed.length === 0) {
-    lines.push("• None yet.");
+    completedLines.push("• None yet.");
   } else {
     for (const r of completed) {
-      lines.push(`• ${r.title}${starSuffix(r.priority)} — completed ${fmtUpdated(r.updatedAt)}`);
+      completedLines.push(`• ${r.title}${starSuffix(r.priority)} — completed ${fmtUpdated(r.updatedAt)}`);
     }
   }
-  lines.push("");
 
-  lines.push(`OVERDUE / MISSED (${missed.length})`);
+  const missedLines: string[] = [`OVERDUE / MISSED (${missed.length})`];
   if (missed.length === 0) {
-    lines.push("• None — you're caught up on overdue items.");
+    missedLines.push("• None — you're caught up on overdue items.");
   } else {
     for (const m of missed) {
-      lines.push(`• ${m.title}${starSuffix(m.priority)} — was due ${fmtTime(m.dueAt)}`);
+      missedLines.push(`• ${m.title}${starSuffix(m.priority)} — was due ${fmtTime(m.dueAt)}`);
     }
   }
-  lines.push("");
 
-  lines.push(`TODAY (${today.length})`);
+  const todayLines: string[] = [`TODAY (${today.length})`];
   if (today.length === 0) {
-    lines.push("• Nothing else scheduled for today.");
+    todayLines.push("• Nothing else scheduled for today.");
   } else {
     for (const r of today) {
-      lines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
+      todayLines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
     }
   }
-  lines.push("");
 
-  lines.push(`TOMORROW (${tomorrow.length})`);
+  const tomorrowLines: string[] = [`TOMORROW (${tomorrow.length})`];
   if (tomorrow.length === 0) {
-    lines.push("• Nothing scheduled for tomorrow yet.");
+    tomorrowLines.push("• Nothing scheduled for tomorrow yet.");
   } else {
     for (const r of tomorrow) {
-      lines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
+      tomorrowLines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
     }
   }
-  lines.push("");
 
-  lines.push(`COMING UP LATER (${later.length})`);
+  const laterLines: string[] = [`COMING UP LATER (${later.length})`];
   if (later.length === 0) {
-    lines.push("• Nothing further out on the calendar.");
+    laterLines.push("• Nothing further out on the calendar.");
   } else {
     for (const r of later) {
-      lines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
+      laterLines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
     }
   }
 
-  lines.push("");
-  lines.push("Ask me anything about these, or tell me what to reschedule.");
+  return [
+    { section: "greeting", text: greet },
+    { section: "completed", text: completedLines.join("\n") },
+    { section: "overdue", text: missedLines.join("\n") },
+    { section: "today", text: todayLines.join("\n") },
+    { section: "tomorrow", text: tomorrowLines.join("\n") },
+    { section: "later", text: laterLines.join("\n") },
+    {
+      section: "closing",
+      text: "Ask me anything about these, or tell me what to reschedule.",
+    },
+  ];
+}
 
-  return lines.join("\n");
+/**
+ * Full session briefing as a single string (legacy / copy-paste).
+ */
+export function buildBriefingNarrative(
+  reminders: ReminderItem[],
+  firstName?: string | null,
+  now = new Date()
+): string {
+  return buildBriefingParts(reminders, firstName, now)
+    .map((p) => p.text)
+    .join("\n\n");
 }
 
 export type FollowUpQuestion = {
