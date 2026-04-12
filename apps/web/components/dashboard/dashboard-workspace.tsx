@@ -1852,6 +1852,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </div>
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
+          <div className="flex shrink-0 items-center justify-end gap-2 border-b border-white/10 bg-slate-950/35 px-3 py-2 sm:px-4">
+            <button
+              type="button"
+              onClick={() => runBriefingStream()}
+              disabled={!isHistoryLoaded || briefingStreaming || isLoading}
+              className="rounded-lg border border-violet-400/45 bg-violet-950/55 px-3 py-1.5 text-xs font-semibold text-violet-100 shadow-sm transition hover:bg-violet-900/65 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Briefing
+            </button>
+          </div>
           <div
             ref={chatScrollRef}
             onScroll={onChatScroll}
@@ -2128,15 +2138,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </button>
             </div>
           ) : null}
-          <div className="flex w-full min-w-0 flex-wrap items-end gap-2">
-            <button
-              type="button"
-              onClick={() => runBriefingStream()}
-              disabled={!isHistoryLoaded || briefingStreaming || isLoading}
-              className="shrink-0 rounded-xl border border-violet-400/40 bg-violet-950/50 px-3 py-2.5 text-xs font-semibold text-violet-100 shadow-sm transition hover:bg-violet-900/60 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Briefing
-            </button>
+          <div className="flex w-full min-w-0 items-end gap-2">
             <div className="relative min-h-[2.75rem] min-w-0 flex-1 rounded-xl border border-slate-600/80 bg-slate-900/60 px-2 py-1.5 dark:border-slate-600">
               {!input.trim() ? (
                 <div
@@ -2168,7 +2170,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 readOnly={briefingComposerLocked && !editingMessageId}
                 aria-busy={briefingStreaming}
                 aria-label={briefingStreaming ? "Message (wait for briefing to finish)" : "Message"}
-                className={`relative z-10 max-h-32 min-h-11 w-full resize-none bg-transparent px-2 py-1.5 text-sm text-slate-100 outline-none placeholder:text-slate-500 ${
+                className={`relative z-10 max-h-[min(46vh,13rem)] min-h-11 w-full resize-none overflow-y-auto bg-transparent px-2 py-1.5 text-sm leading-relaxed text-slate-100 [overflow-wrap:anywhere] outline-none placeholder:text-slate-500 [scrollbar-width:thin] ${
                   briefingComposerLocked && !editingMessageId ? "cursor-wait caret-transparent" : ""
                 }`}
               />
