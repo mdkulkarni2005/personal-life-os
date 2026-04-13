@@ -579,7 +579,7 @@ function ChatBubbleShell({
       >
         <button
           type="button"
-          className="rounded-md px-1 text-[10px] font-semibold text-amber-200/95 hover:underline"
+          className="rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-500 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
           onClick={onReply}
         >
           Reply
@@ -587,7 +587,7 @@ function ChatBubbleShell({
         {showEdit && onEdit ? (
           <button
             type="button"
-            className="rounded-md px-1 text-[10px] font-semibold text-emerald-100/95 hover:underline"
+            className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100"
             onClick={onEdit}
           >
             Edit
@@ -2289,6 +2289,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     [resetReminderForm]
   );
 
+  useEffect(() => {
+    const openCreate = () => openCreateModal();
+    window.addEventListener("dashboard:create-reminder", openCreate);
+    return () => window.removeEventListener("dashboard:create-reminder", openCreate);
+  }, [openCreateModal]);
+
   const openCreateReminderFromRemindersList = () => {
     setIsListOpen(false);
     openCreateModal();
@@ -2680,361 +2686,483 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   return (
     <>
-      <section className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-transparent px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1 sm:px-4 lg:mx-auto lg:max-w-3xl lg:px-6">
-        {typeof Notification !== "undefined"
-        && Notification.permission === "default"
-        && !dueNotifBannerDismissed ? (
-          <div className="mb-2 flex flex-col gap-2 rounded-xl border border-violet-400/35 bg-violet-950/50 px-3 py-2 text-xs text-violet-50 shadow-sm lg:hidden">
-            <p className="leading-snug">
-              Allow notifications to get an instant alert when a reminder’s time hits—then use Done, Snooze, or Delete
-              from the notification (best when this app is installed to your home screen).
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void requestDueNotificationPermission()}
-                className="rounded-full bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500"
+      <section className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-transparent px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pt-4">
+        <div className="pointer-events-none absolute inset-x-8 top-0 -z-10 h-48 rounded-full bg-[radial-gradient(circle_at_center,rgba(109,94,252,0.12),transparent_68%)] blur-3xl" />
+        <div className="mx-auto flex min-h-0 w-full max-w-[88rem] flex-1 gap-3 lg:gap-6">
+          <aside className="hidden w-20 shrink-0 lg:flex lg:flex-col lg:items-center lg:gap-3 lg:pt-6">
+            <button
+              type="button"
+              onClick={() => setIsListOpen(true)}
+              className="relative flex h-14 w-14 items-center justify-center rounded-[22px] bg-[linear-gradient(135deg,#79d8c2_0%,#7568ff_100%)] text-white shadow-[0_24px_45px_-22px_rgba(117,104,255,0.75)] transition hover:-translate-y-0.5"
+              aria-label="Open reminders"
+              title="Open reminders"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-5 w-5"
+                aria-hidden="true"
               >
-                Allow alerts
-              </button>
-              <button
-                type="button"
-                onClick={dismissDueNotifBanner}
-                className="rounded-full border border-white/25 px-3 py-1.5 text-xs font-semibold text-violet-100 hover:bg-white/10"
+                <path d="M7 7h10" />
+                <path d="M7 12h10" />
+                <path d="M7 17h6" />
+              </svg>
+              {snapshot.missed > 0 ? (
+                <span className="absolute -bottom-1 -right-1 inline-flex min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                  {snapshot.missed > 99 ? "99+" : snapshot.missed}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsSnapshotOpen(true)}
+              className="relative flex h-14 w-14 items-center justify-center rounded-[22px] bg-violet-600 text-white shadow-[0_24px_45px_-22px_rgba(124,58,237,0.7)] transition hover:-translate-y-0.5"
+              aria-label="Open workspace menu"
+              title="Open workspace menu"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-5 w-5"
+                aria-hidden="true"
               >
-                Not now
-              </button>
-            </div>
-          </div>
-        ) : null}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[linear-gradient(180deg,#020617_0%,#0b1730_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
-          <div className="flex shrink-0 items-center justify-end gap-2 border-b border-white/10 bg-slate-950/35 px-3 py-2 sm:px-4">
+                <circle cx="12" cy="12" r="2.5" />
+                <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a1 1 0 0 1 0 1.4l-1.3 1.3a1 1 0 0 1-1.4 0l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a1 1 0 0 1-1 1h-1.8a1 1 0 0 1-1-1v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a1 1 0 0 1-1.4 0l-1.3-1.3a1 1 0 0 1 0-1.4l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a1 1 0 0 1-1-1v-1.8a1 1 0 0 1 1-1h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a1 1 0 0 1 0-1.4l1.3-1.3a1 1 0 0 1 1.4 0l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a1 1 0 0 1 1-1h1.8a1 1 0 0 1 1 1v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1 1 0 0 1 1.4 0l1.3 1.3a1 1 0 0 1 0 1.4l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6H20a1 1 0 0 1 1 1v1.8a1 1 0 0 1-1 1h-.2a1 1 0 0 0-.9.6Z" />
+              </svg>
+              {shareInbox.length > 0 ? (
+                <span className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-white bg-rose-500" />
+              ) : null}
+            </button>
             <button
               type="button"
               onClick={() => runBriefingStream()}
               disabled={!isHistoryLoaded || briefingStreaming || isLoading}
-              className="rounded-lg border border-violet-400/45 bg-violet-950/55 px-3 py-1.5 text-xs font-semibold text-violet-100 shadow-sm transition hover:bg-violet-900/65 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Run briefing"
+              title="Run briefing"
             >
-              Briefing
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4"
+                aria-hidden="true"
+              >
+                <path d="M6 12h12" />
+                <path d="M12 6v12" />
+              </svg>
             </button>
-          </div>
-          <div
-            ref={chatScrollRef}
-            onScroll={onChatScroll}
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain p-3 scrollbar-none sm:p-4"
-          >
-          <div className="grid min-w-0 gap-3">
-            {messages.map((message) => {
-              const startReplyTo = () => {
-                setReplyTarget(message);
-                setEditingMessageId(null);
-              };
-              const startEditUser = () => {
-                if (message.role !== "user") return;
-                setEditingMessageId(message.id);
-                setInput(message.content);
-                setReplyTarget(null);
-              };
+          </aside>
 
-              if (message.role === "system") {
-                return (
-                  <ChatBubbleShell
-                    key={message.id}
-                    onReply={startReplyTo}
-                    showEdit={false}
-                    actionAlign="center"
-                    showActionsAlways
-                    desktopHoverMenu
+          <div className="flex min-h-0 flex-1 flex-col gap-3">
+            {typeof Notification !== "undefined"
+            && Notification.permission === "default"
+            && !dueNotifBannerDismissed ? (
+              <div className="flex flex-col gap-2 rounded-[24px] border border-violet-200 bg-white px-4 py-3 text-xs text-slate-600 shadow-sm lg:hidden">
+                <p className="leading-snug text-slate-600">
+                  Allow notifications to get an instant alert when a reminder is due, then act from the alert with
+                  Done, Snooze, or Delete.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void requestDueNotificationPermission()}
+                    className="rounded-full bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500"
                   >
-                    <div className="mx-auto min-w-0 max-w-[92%] rounded-2xl border border-amber-400/35 bg-amber-950/40 px-3 py-2 text-center text-xs text-amber-50 shadow-sm">
-                      <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
-                        {message.content}
-                      </p>
-                      <p className="mt-1 text-[10px] text-amber-200/80">
-                        {new Date(message.createdAt).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </p>
-                    </div>
-                  </ChatBubbleShell>
-                );
-              }
-              const dueMeta = message.meta?.kind === "due_reminder" ? message.meta : null;
-              const replyQuote = message.meta?.replyTo;
-              const showUserEdit = message.role === "user" && !dueMeta?.reminderId;
-              const bubbleClass =
-                message.role === "user"
-                  ? `relative ml-auto min-w-0 max-w-[92%] overflow-hidden rounded-3xl rounded-br-lg bg-emerald-600 py-2 pl-4 text-sm text-white shadow-sm ${
-                      showUserEdit ? "pr-14" : "pr-4"
-                    }`
-                  : "min-w-0 max-w-[92%] overflow-hidden rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-800 shadow-sm dark:bg-slate-800 dark:text-slate-100";
-
-              const inner = (
-                <div className={bubbleClass}>
-                  {showUserEdit ? (
-                    <button
-                      type="button"
-                      onClick={startEditUser}
-                      aria-label="Edit message"
-                      title="Edit message (or long-press on phone)"
-                      className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full border border-white/35 bg-emerald-950/55 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-md backdrop-blur-[2px] hover:bg-emerald-950/85 active:scale-[0.97] md:hidden"
-                    >
-                      <span className="text-xs leading-none" aria-hidden>
-                        ✎
-                      </span>
-                      Edit
-                    </button>
-                  ) : null}
-                  {replyQuote ? (
-                    <div
-                      className={`mb-2 rounded-lg border-l-4 border-amber-400/95 pl-2.5 ${
-                        message.role === "user" ? "bg-emerald-800/45" : "bg-slate-100/90 dark:bg-slate-900/80"
-                      }`}
-                    >
-                      <p
-                        className={`text-[10px] font-semibold ${
-                          message.role === "user" ? "text-amber-100" : "text-amber-700 dark:text-amber-200"
-                        }`}
-                      >
-                        {chatReplyLabel(replyQuote.role)}
-                      </p>
-                      <p
-                        className={`line-clamp-5 whitespace-pre-wrap text-[11px] leading-snug ${
-                          message.role === "user" ? "text-emerald-50/95" : "text-slate-700 dark:text-slate-200"
-                        }`}
-                      >
-                        {replyQuote.content}
-                      </p>
-                    </div>
-                  ) : null}
-                  {dueMeta?.reminderId ? (
-                    <>
-                      <p className="font-semibold text-slate-900 dark:text-white">Reminder due</p>
-                      <p className="mt-1 min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed text-slate-800 [overflow-wrap:anywhere] dark:text-slate-100">
-                        {dueMeta.title}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                        {new Date(dueMeta.dueAt ?? Date.now()).toLocaleString()}
-                      </p>
-                      {dueMeta.notes ? (
-                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">{dueMeta.notes}</p>
-                      ) : null}
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void handleDueReminderAction(message.id, dueMeta.reminderId!, "done")
-                          }
-                          className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500"
-                        >
-                          Done
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void handleDueReminderAction(message.id, dueMeta.reminderId!, "snooze")
-                          }
-                          className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                        >
-                          Snooze 1h
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void handleDueReminderAction(message.id, dueMeta.reminderId!, "reschedule")
-                          }
-                          className="rounded-full border border-violet-400 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/60 dark:text-violet-100"
-                        >
-                          Set new time
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void handleDueReminderAction(message.id, dueMeta.reminderId!, "delete")
-                          }
-                          className="rounded-full bg-rose-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-rose-500"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      {message.meta?.kind === "briefing" ? (
-                        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                          {briefingSectionLabel(message.meta.briefingSection)}
-                        </p>
-                      ) : null}
-                      <p className="min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
-                        {message.content}
-                      </p>
-                    </>
-                  )}
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <p
-                      className={`flex min-w-0 flex-wrap items-center gap-2 text-[10px] ${
-                        message.role === "user" ? "text-emerald-100" : "text-slate-500 dark:text-slate-400"
-                      }`}
-                    >
-                      <span>
-                        {new Date(message.createdAt).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                      {message.meta?.editedAt && message.role === "user" ? (
-                        <span className="rounded bg-emerald-800/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-100/90">
-                          Edited
-                        </span>
-                      ) : null}
-                    </p>
-                  </div>
+                    Allow alerts
+                  </button>
+                  <button
+                    type="button"
+                    onClick={dismissDueNotifBanner}
+                    className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    Not now
+                  </button>
                 </div>
-              );
-
-              return (
-                <ChatBubbleShell
-                  key={message.id}
-                  onReply={startReplyTo}
-                  onEdit={message.role === "user" && showUserEdit ? startEditUser : undefined}
-                  showEdit={message.role === "user" && showUserEdit}
-                  actionAlign={message.role === "user" ? "end" : "start"}
-                  showActionsAlways={message.role === "user"}
-                  desktopHoverMenu
-                  onLongPressEdit={
-                    message.role === "user" && showUserEdit ? startEditUser : undefined
-                  }
-                >
-                  {inner}
-                </ChatBubbleShell>
-              );
-            })}
-            {isLoading ? (
-              <div className="min-w-0 max-w-[84%] rounded-3xl rounded-bl-lg bg-white px-4 py-2 text-sm text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-100">
-                <p className="min-w-0 break-words [overflow-wrap:anywhere]">{loadingTexts[loadingTextIndex]}</p>
               </div>
             ) : null}
-          </div>
-          </div>
 
-        {showSuggestedQuestions && followUpQuestions.length > 0 ? (
-          <div className="shrink-0 border-t border-white/10 px-3 pb-2 pt-2 sm:px-4">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-              Suggested
-            </p>
-            <div className="flex flex-col gap-2">
-              {followUpQuestions.map((q, i) => (
-                <button
-                  key={`${q.kind}-${i}-${q.text.slice(0, 24)}`}
-                  type="button"
-                  disabled={briefingStreaming}
-                  onClick={() => {
-                    const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content;
-                    const taskBrief: TaskItemBrief[] = tasks.map((t) => ({
-                      id: t.id,
-                      title: t.title,
-                      dueAt: t.dueAt,
-                      status: t.status,
-                      priority: t.priority,
-                    }));
-                    setInput(q.text);
-                    setFollowUpQuestions((prev) =>
-                      replaceFollowUpSlot(prev, i as 0 | 1 | 2, {
-                        reminders,
-                        tasks: taskBrief,
-                        lastUserMessage: lastUser,
-                        firstName: user?.firstName,
-                      })
-                    );
-                  }}
-                  className={`w-full rounded-2xl border px-3 py-2.5 text-left text-xs font-medium leading-snug transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 ${
-                    q.kind === "action"
-                      ? "border-emerald-500/50 bg-emerald-950/35 text-emerald-50 hover:bg-emerald-900/45"
-                      : "border-slate-600/80 bg-slate-900/50 text-slate-100 hover:bg-slate-800/65"
-                  }`}
-                >
-                  {q.text}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <form
-          onSubmit={handleChatSubmit}
-          className={`shrink-0 border-t border-white/10 bg-slate-950/40 p-2 sm:p-3 ${
-            briefingComposerLocked ? "opacity-90" : ""
-          }`}
-        >
-          {editingMessageId ? (
-            <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-violet-500/35 bg-violet-950/45 px-3 py-2 text-xs text-violet-100">
-              <span className="font-medium">Editing your message</span>
-              <button
-                type="button"
-                className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold text-violet-200 hover:bg-violet-900/60"
-                onClick={() => {
-                  setEditingMessageId(null);
-                  setInput("");
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          ) : null}
-          {replyTarget && !editingMessageId ? (
-            <div className="mb-2 flex items-start gap-2 rounded-xl border border-amber-500/35 bg-amber-950/35 px-3 py-2">
-              <div className="min-w-0 flex-1 border-l-4 border-amber-400 pl-2.5">
-                <p className="text-[10px] font-semibold text-amber-200">{chatReplyLabel(replyTarget.role)}</p>
-                <p className="line-clamp-4 whitespace-pre-wrap text-xs leading-snug text-slate-100">
-                  {replyTarget.content}
-                </p>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[32px] border border-slate-200/80 bg-white shadow-[0_32px_90px_-56px_rgba(15,23,42,0.35)]">
+              <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 px-4 py-4 sm:px-6">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
+                    Assistant Workspace
+                  </p>
+                  <h2 className="mt-1 text-base font-semibold tracking-tight text-slate-900 sm:text-lg">
+                    Plan your day with less friction
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Ask, capture, reschedule, or review everything from one thread.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsListOpen(true)}
+                    className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 lg:hidden"
+                  >
+                    <span
+                      aria-hidden
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-slate-600"
+                    >
+                      ☰
+                    </span>
+                    Reminders
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSnapshotOpen(true)}
+                    className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 lg:hidden"
+                  >
+                    Menu
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => runBriefingStream()}
+                    disabled={!isHistoryLoaded || briefingStreaming || isLoading}
+                    className="inline-flex h-10 items-center rounded-full border border-violet-200 bg-violet-50 px-4 text-xs font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Briefing
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                className="shrink-0 rounded-full px-2 py-0.5 text-lg leading-none text-slate-300 hover:bg-white/10 hover:text-white"
-                aria-label="Cancel reply"
-                onClick={() => setReplyTarget(null)}
+
+              <div
+                ref={chatScrollRef}
+                onScroll={onChatScroll}
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-[radial-gradient(circle_at_top,rgba(121,216,194,0.12),transparent_32%),linear-gradient(180deg,#ffffff_0%,#fafaf7_100%)] px-4 py-5 scrollbar-none sm:px-6 sm:py-6"
               >
-                ×
-              </button>
-            </div>
-          ) : null}
-          <div className="flex w-full min-w-0 items-end gap-2">
-            <div className="relative min-h-[2.75rem] min-w-0 flex-1 rounded-xl border border-slate-600/80 bg-slate-900/60 px-2 py-1.5 dark:border-slate-600">
-              <textarea
-                rows={1}
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                placeholder={
-                  briefingComposerLocked && !editingMessageId
-                    ? "Briefing in progress…"
-                    : "Type here to start"
-                }
-                readOnly={briefingComposerLocked && !editingMessageId}
-                aria-busy={briefingStreaming}
-                aria-label={briefingStreaming ? "Message (wait for briefing to finish)" : "Message"}
-                className={`relative z-10 max-h-[min(46vh,13rem)] min-h-11 w-full resize-none overflow-y-auto bg-transparent px-2 py-1.5 text-sm leading-relaxed text-slate-100 [overflow-wrap:anywhere] outline-none placeholder:text-slate-500 [scrollbar-width:thin] ${
-                  briefingComposerLocked && !editingMessageId ? "cursor-wait caret-transparent" : ""
+                <div className="mx-auto grid min-w-0 max-w-4xl gap-4">
+                  {messages.map((message) => {
+                    const startReplyTo = () => {
+                      setReplyTarget(message);
+                      setEditingMessageId(null);
+                    };
+                    const startEditUser = () => {
+                      if (message.role !== "user") return;
+                      setEditingMessageId(message.id);
+                      setInput(message.content);
+                      setReplyTarget(null);
+                    };
+
+                    if (message.role === "system") {
+                      return (
+                        <ChatBubbleShell
+                          key={message.id}
+                          onReply={startReplyTo}
+                          showEdit={false}
+                          actionAlign="center"
+                          showActionsAlways
+                          desktopHoverMenu
+                        >
+                          <div className="mx-auto min-w-0 max-w-[42rem] rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-3 text-center text-xs text-amber-900 shadow-sm">
+                            <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
+                              {message.content}
+                            </p>
+                            <p className="mt-1 text-[10px] text-amber-700/80">
+                              {new Date(message.createdAt).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </p>
+                          </div>
+                        </ChatBubbleShell>
+                      );
+                    }
+                    const dueMeta = message.meta?.kind === "due_reminder" ? message.meta : null;
+                    const replyQuote = message.meta?.replyTo;
+                    const showUserEdit = message.role === "user" && !dueMeta?.reminderId;
+                    const bubbleClass =
+                      message.role === "user"
+                        ? `relative ml-auto min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-br-[12px] bg-[linear-gradient(135deg,#7c3aed_0%,#5b7bff_100%)] py-3 pl-4 text-sm text-white shadow-[0_24px_45px_-28px_rgba(91,123,255,0.9)] ${
+                            showUserEdit ? "pr-14" : "pr-4"
+                          }`
+                        : "min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-bl-[12px] border border-slate-200 bg-[#f6f7fb] px-4 py-3 text-sm text-slate-800 shadow-[0_20px_40px_-36px_rgba(15,23,42,0.55)]";
+
+                    const inner = (
+                      <div className={bubbleClass}>
+                        {showUserEdit ? (
+                          <button
+                            type="button"
+                            onClick={startEditUser}
+                            aria-label="Edit message"
+                            title="Edit message (or long-press on phone)"
+                            className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full border border-white/35 bg-black/15 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-md backdrop-blur-[2px] hover:bg-black/25 active:scale-[0.97] md:hidden"
+                          >
+                            <span className="text-xs leading-none" aria-hidden>
+                              ✎
+                            </span>
+                            Edit
+                          </button>
+                        ) : null}
+                        {replyQuote ? (
+                          <div
+                            className={`mb-2 rounded-2xl border-l-4 border-amber-400 pl-3 ${
+                              message.role === "user" ? "bg-white/12" : "bg-white/70"
+                            }`}
+                          >
+                            <p
+                              className={`pt-2 text-[10px] font-semibold ${
+                                message.role === "user" ? "text-amber-100" : "text-amber-700"
+                              }`}
+                            >
+                              {chatReplyLabel(replyQuote.role)}
+                            </p>
+                            <p
+                              className={`line-clamp-5 whitespace-pre-wrap pb-2 text-[11px] leading-snug ${
+                                message.role === "user" ? "text-violet-50/95" : "text-slate-700"
+                              }`}
+                            >
+                              {replyQuote.content}
+                            </p>
+                          </div>
+                        ) : null}
+                        {dueMeta?.reminderId ? (
+                          <>
+                            <p className="font-semibold text-slate-900">Reminder due</p>
+                            <p className="mt-1 min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed text-slate-800 [overflow-wrap:anywhere]">
+                              {dueMeta.title}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-600">
+                              {new Date(dueMeta.dueAt ?? Date.now()).toLocaleString()}
+                            </p>
+                            {dueMeta.notes ? (
+                              <p className="mt-1 text-xs text-slate-500">{dueMeta.notes}</p>
+                            ) : null}
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDueReminderAction(message.id, dueMeta.reminderId!, "done")
+                                }
+                                className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500"
+                              >
+                                Done
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDueReminderAction(message.id, dueMeta.reminderId!, "snooze")
+                                }
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50"
+                              >
+                                Snooze 1h
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDueReminderAction(message.id, dueMeta.reminderId!, "reschedule")
+                                }
+                                className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-100"
+                              >
+                                Set new time
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDueReminderAction(message.id, dueMeta.reminderId!, "delete")
+                                }
+                                className="rounded-full bg-rose-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-rose-500"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            {message.meta?.kind === "briefing" ? (
+                              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
+                                {briefingSectionLabel(message.meta.briefingSection)}
+                              </p>
+                            ) : null}
+                            <p className="min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
+                              {message.content}
+                            </p>
+                          </>
+                        )}
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <p
+                            className={`flex min-w-0 flex-wrap items-center gap-2 text-[10px] ${
+                              message.role === "user" ? "text-violet-100" : "text-slate-500"
+                            }`}
+                          >
+                            <span>
+                              {new Date(message.createdAt).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                            {message.meta?.editedAt && message.role === "user" ? (
+                              <span className="rounded-full bg-white/15 px-2 py-0.5 text-[9px] font-medium uppercase tracking-wide text-violet-50">
+                                Edited
+                              </span>
+                            ) : null}
+                          </p>
+                        </div>
+                      </div>
+                    );
+
+                    return (
+                      <ChatBubbleShell
+                        key={message.id}
+                        onReply={startReplyTo}
+                        onEdit={message.role === "user" && showUserEdit ? startEditUser : undefined}
+                        showEdit={message.role === "user" && showUserEdit}
+                        actionAlign={message.role === "user" ? "end" : "start"}
+                        showActionsAlways={message.role === "user"}
+                        desktopHoverMenu
+                        onLongPressEdit={
+                          message.role === "user" && showUserEdit ? startEditUser : undefined
+                        }
+                      >
+                        {inner}
+                      </ChatBubbleShell>
+                    );
+                  })}
+                  {isLoading ? (
+                    <div className="min-w-0 max-w-[42rem] rounded-[28px] rounded-bl-[12px] border border-slate-200 bg-[#f6f7fb] px-4 py-3 text-sm text-slate-700 shadow-[0_20px_40px_-36px_rgba(15,23,42,0.55)]">
+                      <p className="min-w-0 break-words [overflow-wrap:anywhere]">{loadingTexts[loadingTextIndex]}</p>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {showSuggestedQuestions && followUpQuestions.length > 0 ? (
+                <div className="shrink-0 border-t border-slate-100 px-4 pb-3 pt-3 sm:px-6">
+                  <div className="mx-auto max-w-4xl">
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
+                      Suggested
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {followUpQuestions.map((q, i) => (
+                        <button
+                          key={`${q.kind}-${i}-${q.text.slice(0, 24)}`}
+                          type="button"
+                          disabled={briefingStreaming}
+                          onClick={() => {
+                            const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content;
+                            const taskBrief: TaskItemBrief[] = tasks.map((t) => ({
+                              id: t.id,
+                              title: t.title,
+                              dueAt: t.dueAt,
+                              status: t.status,
+                              priority: t.priority,
+                            }));
+                            setInput(q.text);
+                            setFollowUpQuestions((prev) =>
+                              replaceFollowUpSlot(prev, i as 0 | 1 | 2, {
+                                reminders,
+                                tasks: taskBrief,
+                                lastUserMessage: lastUser,
+                                firstName: user?.firstName,
+                              })
+                            );
+                          }}
+                          className={`rounded-full border px-3 py-2 text-left text-xs font-medium leading-snug transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 ${
+                            q.kind === "action"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+                          }`}
+                        >
+                          {q.text}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              <form
+                onSubmit={handleChatSubmit}
+                className={`shrink-0 border-t border-slate-100 bg-white px-4 pb-4 pt-3 sm:px-6 ${
+                  briefingComposerLocked ? "opacity-90" : ""
                 }`}
-              />
+              >
+                <div className="mx-auto max-w-4xl">
+                  {editingMessageId ? (
+                    <div className="mb-3 flex items-center justify-between gap-2 rounded-[22px] border border-violet-200 bg-violet-50 px-4 py-3 text-xs text-violet-700">
+                      <span className="font-medium">Editing your message</span>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-full border border-violet-200 px-3 py-1 text-[11px] font-semibold text-violet-700 hover:bg-violet-100"
+                        onClick={() => {
+                          setEditingMessageId(null);
+                          setInput("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
+                  {replyTarget && !editingMessageId ? (
+                    <div className="mb-3 flex items-start gap-2 rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3">
+                      <div className="min-w-0 flex-1 border-l-4 border-amber-400 pl-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-700">
+                          {chatReplyLabel(replyTarget.role)}
+                        </p>
+                        <p className="line-clamp-4 whitespace-pre-wrap text-xs leading-snug text-slate-700">
+                          {replyTarget.content}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-full border border-amber-200 px-2.5 py-0.5 text-lg leading-none text-amber-700 hover:bg-amber-100"
+                        aria-label="Cancel reply"
+                        onClick={() => setReplyTarget(null)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="flex w-full min-w-0 items-end gap-3 rounded-[28px] border border-slate-200 bg-[#f5f6fa] px-3 py-2 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
+                    <div className="relative min-h-[2.75rem] min-w-0 flex-1">
+                      <textarea
+                        rows={1}
+                        value={input}
+                        onChange={(event) => setInput(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            event.currentTarget.form?.requestSubmit();
+                          }
+                        }}
+                        placeholder={
+                          briefingComposerLocked && !editingMessageId
+                            ? "Briefing in progress…"
+                            : "Ask about today, create a reminder, or reschedule something"
+                        }
+                        readOnly={briefingComposerLocked && !editingMessageId}
+                        aria-busy={briefingStreaming}
+                        aria-label={briefingStreaming ? "Message (wait for briefing to finish)" : "Message"}
+                        className={`relative z-10 max-h-[min(46vh,13rem)] min-h-11 w-full resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm leading-relaxed text-slate-800 [overflow-wrap:anywhere] outline-none placeholder:text-slate-400 [scrollbar-width:thin] ${
+                          briefingComposerLocked && !editingMessageId ? "cursor-wait caret-transparent" : ""
+                        }`}
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={!input.trim() || isLoading || (briefingStreaming && !editingMessageId)}
+                      className="h-11 w-11 shrink-0 rounded-full bg-violet-600 text-base font-semibold text-white shadow-md transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Send message"
+                    >
+                      {isLoading ? "…" : briefingStreaming && !editingMessageId ? "…" : "➤"}
+                    </button>
+                  </div>
+                </div>
+              </form>
             </div>
-            <button
-              type="submit"
-              disabled={!input.trim() || isLoading || (briefingStreaming && !editingMessageId)}
-              className="h-11 w-11 shrink-0 rounded-full bg-emerald-600 text-base font-semibold text-white shadow-md transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Send message"
-            >
-              {isLoading ? "…" : briefingStreaming && !editingMessageId ? "…" : "➤"}
-            </button>
           </div>
-        </form>
         </div>
       </section>
 

@@ -6,8 +6,7 @@ import Image from "next/image";
 import localFont from "next/font/local";
 import { InstallAppBanner } from "../components/pwa/install-app-banner";
 import { RegisterServiceWorker } from "../components/pwa/register-sw";
-import { OpenRemindersButton } from "../components/dashboard/open-reminders-button";
-import { SnapshotNavTrigger } from "../components/dashboard/snapshot-nav-trigger";
+import { CreateReminderTrigger } from "../components/dashboard/create-reminder-trigger";
 import { UserMenu } from "../components/auth/user-menu";
 import { ThemeProvider } from "../components/theme/theme-provider";
 import "./globals.css";
@@ -45,15 +44,17 @@ export default async function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <ClerkProvider>
           <ThemeProvider>
-            <header className="sticky top-0 z-40 shrink-0 border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
-              <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
+            <header className="sticky top-0 z-40 shrink-0 border-b border-slate-200/80 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
+              <div className="mx-auto flex h-16 w-full max-w-[88rem] items-center justify-between px-4 sm:px-6 lg:px-10">
                 <Link
                   href="/"
-                  className="flex min-w-0 items-center gap-2 text-slate-900 dark:text-slate-100"
+                  className="flex min-w-0 items-center gap-3 text-slate-900 dark:text-slate-100"
                 >
-                  <Image src="/logo-remindos.svg" alt="RemindOS logo" width={24} height={24} />
-                  <span className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-baseline sm:gap-1.5">
-                    <span className="truncate text-sm font-semibold tracking-tight">RemindOS</span>
+                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#6d5efc_0%,#69d2b5_100%)] shadow-[0_12px_30px_-18px_rgba(109,94,252,0.9)]">
+                    <Image src="/logo-remindos.svg" alt="RemindOS logo" width={20} height={20} />
+                  </span>
+                  <span className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-baseline sm:gap-2">
+                    <span className="truncate text-sm font-semibold tracking-tight sm:text-base">RemindOS</span>
                     {firstDisplay ? (
                       <span className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">
                         {firstDisplay}
@@ -81,8 +82,7 @@ export default async function RootLayout({
                     </Link>
                   </Show>
                   <Show when="signed-in">
-                    <OpenRemindersButton />
-                    <SnapshotNavTrigger />
+                    <CreateReminderTrigger />
                     <UserMenu />
                   </Show>
                 </div>
