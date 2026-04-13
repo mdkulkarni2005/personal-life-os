@@ -3280,20 +3280,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             ) : null}
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[32px] border border-slate-200/80 bg-white shadow-[0_32px_90px_-56px_rgba(15,23,42,0.35)]">
-              <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6">
-                <div className="min-w-0 max-w-[28rem]">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
-                    Assistant Workspace
-                  </p>
-                  <h2 className="mt-1 text-base font-semibold tracking-tight text-slate-900 sm:text-lg">
-                    Plan your day with less friction
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Ask, capture, reschedule, or review everything from one
-                    thread.
-                  </p>
-                </div>
-                <div className="hidden w-full min-w-0 items-center gap-2 sm:flex sm:w-auto sm:justify-end">
+              <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 px-4 py-4 sm:px-6">
+                <div className="hidden items-center gap-2 sm:flex">
                   <button
                     type="button"
                     onClick={() => showReminderListOverlay()}
@@ -3314,17 +3302,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   >
                     Menu
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => runBriefingStream()}
-                    disabled={
-                      !isHistoryLoaded || briefingStreaming || isLoading
-                    }
-                    className="inline-flex h-10 items-center justify-center rounded-full border border-violet-200 bg-violet-50 px-4 text-xs font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Briefing
-                  </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => runBriefingStream()}
+                  disabled={
+                    !isHistoryLoaded || briefingStreaming || isLoading
+                  }
+                  className="inline-flex h-10 items-center justify-center rounded-full border border-violet-200 bg-violet-50 px-4 text-xs font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Briefing
+                </button>
               </div>
 
               <div
