@@ -13,7 +13,7 @@ export function CreateReminderTrigger() {
         if (pathname === "/dashboard") {
           window.dispatchEvent(new CustomEvent("dashboard:create-reminder"));
         } else {
-          router.push("/dashboard");
+          router.push("/dashboard?open=create");
         }
       }}
       className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 hover:text-slate-950"

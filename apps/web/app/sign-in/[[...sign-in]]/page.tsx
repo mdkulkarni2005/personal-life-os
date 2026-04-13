@@ -1,9 +1,21 @@
 import { SignIn } from "@clerk/nextjs";
+import { AuthShell } from "../../../components/auth/auth-shell";
+import { authClerkAppearance } from "../../../components/auth/clerk-appearance";
 
 export default function SignInPage() {
   return (
-    <main className="mx-auto flex min-h-[calc(100svh-64px)] w-full max-w-6xl items-center justify-center px-4 py-10 sm:px-6 lg:px-8">
-      <SignIn forceRedirectUrl="/dashboard" signUpUrl="/sign-up" />
-    </main>
+    <AuthShell
+      badge="Sign in"
+      title="Pick up your reminders without losing context."
+      description="Return to your workspace, review what is overdue, and continue the chat-first planning flow without digging through multiple screens."
+      alternateHref="/sign-up"
+      alternateLabel="Create account"
+    >
+      <SignIn
+        forceRedirectUrl="/dashboard"
+        signUpUrl="/sign-up"
+        appearance={authClerkAppearance}
+      />
+    </AuthShell>
   );
 }

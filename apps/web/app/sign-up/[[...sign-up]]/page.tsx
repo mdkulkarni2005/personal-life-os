@@ -1,9 +1,21 @@
 import { SignUp } from "@clerk/nextjs";
+import { AuthShell } from "../../../components/auth/auth-shell";
+import { authClerkAppearance } from "../../../components/auth/clerk-appearance";
 
 export default function SignUpPage() {
   return (
-    <main className="mx-auto flex min-h-[calc(100svh-64px)] w-full max-w-6xl items-center justify-center px-4 py-10 sm:px-6 lg:px-8">
-      <SignUp forceRedirectUrl="/dashboard" signInUrl="/sign-in" />
-    </main>
+    <AuthShell
+      badge="Create account"
+      title="Build a calmer system for tasks, reminders, and daily follow-through."
+      description="Start with a workspace that keeps reminders, linked tasks, shared planning, and daily briefings in one place instead of scattering them across tools."
+      alternateHref="/sign-in"
+      alternateLabel="Sign in"
+    >
+      <SignUp
+        forceRedirectUrl="/dashboard"
+        signInUrl="/sign-in"
+        appearance={authClerkAppearance}
+      />
+    </AuthShell>
   );
 }

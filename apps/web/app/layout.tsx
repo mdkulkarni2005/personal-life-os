@@ -7,6 +7,8 @@ import localFont from "next/font/local";
 import { InstallAppBanner } from "../components/pwa/install-app-banner";
 import { RegisterServiceWorker } from "../components/pwa/register-sw";
 import { CreateReminderTrigger } from "../components/dashboard/create-reminder-trigger";
+import { OpenRemindersButton } from "../components/dashboard/open-reminders-button";
+import { SnapshotNavTrigger } from "../components/dashboard/snapshot-nav-trigger";
 import { UserMenu } from "../components/auth/user-menu";
 import { ThemeProvider } from "../components/theme/theme-provider";
 import "./globals.css";
@@ -66,7 +68,7 @@ export default async function RootLayout({
                     )}
                   </span>
                 </Link>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3">
                   <Show when="signed-out">
                     <Link
                       href="/sign-in"
@@ -82,6 +84,8 @@ export default async function RootLayout({
                     </Link>
                   </Show>
                   <Show when="signed-in">
+                    <OpenRemindersButton />
+                    <SnapshotNavTrigger />
                     <CreateReminderTrigger />
                     <UserMenu />
                   </Show>
