@@ -118,7 +118,7 @@ export function OpenRemindersButton() {
           router.push("/dashboard?open=reminders");
         }
       }}
-      className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border bg-white shadow-sm transition dark:bg-slate-900 ${
+      className={`relative inline-flex h-9 w-9 items-center justify-center rounded-full border bg-white shadow-sm transition sm:h-10 sm:w-10 dark:bg-slate-900 ${
         missedCount > 0
           ? "border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/40"
           : "border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"

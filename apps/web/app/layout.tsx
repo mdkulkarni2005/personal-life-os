@@ -47,10 +47,10 @@ export default async function RootLayout({
         <ClerkProvider>
           <ThemeProvider>
             <header className="sticky top-0 z-40 shrink-0 border-b border-slate-200/80 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
-              <div className="mx-auto flex h-16 w-full max-w-[88rem] items-center justify-between px-4 sm:px-6 lg:px-10">
+              <div className="mx-auto flex h-16 w-full max-w-[88rem] items-center justify-between gap-3 px-3 sm:px-6 lg:px-10">
                 <Link
                   href="/"
-                  className="flex min-w-0 items-center gap-3 text-slate-900 dark:text-slate-100"
+                  className="flex min-w-0 flex-1 items-center gap-3 text-slate-900 dark:text-slate-100"
                 >
                   <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#6d5efc_0%,#69d2b5_100%)] shadow-[0_12px_30px_-18px_rgba(109,94,252,0.9)]">
                     <Image src="/logo-remindos.svg" alt="RemindOS logo" width={20} height={20} />
@@ -58,7 +58,7 @@ export default async function RootLayout({
                   <span className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-baseline sm:gap-2">
                     <span className="truncate text-sm font-semibold tracking-tight sm:text-base">RemindOS</span>
                     {firstDisplay ? (
-                      <span className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">
+                      <span className="hidden truncate text-xs font-medium text-slate-500 dark:text-slate-400 sm:inline">
                         {firstDisplay}
                       </span>
                     ) : (
@@ -68,7 +68,7 @@ export default async function RootLayout({
                     )}
                   </span>
                 </Link>
-                <div className="flex items-center gap-2 sm:gap-3">
+                <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
                   <Show when="signed-out">
                     <Link
                       href="/sign-in"
@@ -87,7 +87,9 @@ export default async function RootLayout({
                     <OpenRemindersButton />
                     <SnapshotNavTrigger />
                     <CreateReminderTrigger />
-                    <UserMenu />
+                    <div className="[&_.cl-avatarBox]:h-9 [&_.cl-avatarBox]:w-9 sm:[&_.cl-avatarBox]:h-10 sm:[&_.cl-avatarBox]:w-10 [&_.cl-userButtonTrigger]:h-9 [&_.cl-userButtonTrigger]:w-9 sm:[&_.cl-userButtonTrigger]:h-10 sm:[&_.cl-userButtonTrigger]:w-10">
+                      <UserMenu />
+                    </div>
                   </Show>
                 </div>
               </div>

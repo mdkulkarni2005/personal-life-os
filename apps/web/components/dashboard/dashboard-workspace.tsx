@@ -3267,8 +3267,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             ) : null}
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[32px] border border-slate-200/80 bg-white shadow-[0_32px_90px_-56px_rgba(15,23,42,0.35)]">
-              <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 px-4 py-4 sm:px-6">
-                <div className="min-w-0">
+              <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6">
+                <div className="min-w-0 max-w-[28rem]">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
                     Assistant Workspace
                   </p>
@@ -3280,11 +3280,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     thread.
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:justify-end">
                   <button
                     type="button"
                     onClick={() => showReminderListOverlay()}
-                    className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 lg:hidden"
+                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 sm:inline-flex lg:hidden"
                   >
                     <span
                       aria-hidden
@@ -3297,7 +3297,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   <button
                     type="button"
                     onClick={() => showSnapshotOverlay()}
-                    className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 lg:hidden"
+                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 sm:inline-flex lg:hidden"
                   >
                     Menu
                   </button>
@@ -3307,7 +3307,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     disabled={
                       !isHistoryLoaded || briefingStreaming || isLoading
                     }
-                    className="inline-flex h-10 items-center rounded-full border border-violet-200 bg-violet-50 px-4 text-xs font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex h-10 items-center justify-center rounded-full border border-violet-200 bg-violet-50 px-4 text-xs font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Briefing
                   </button>
