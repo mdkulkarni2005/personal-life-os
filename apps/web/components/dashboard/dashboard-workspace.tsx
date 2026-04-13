@@ -797,6 +797,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const listOpenRef = useRef(false);
   const [briefingStreaming, setBriefingStreaming] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   /** When false, do not auto-scroll on new/streaming content so the user can read history. */
   const chatPinnedToBottomRef = useRef(true);
   /** After clear chat, ignore poll merges briefly so in-flight GETs cannot restore deleted history. */
@@ -1370,6 +1371,18 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     });
     return () => cancelAnimationFrame(id);
   }, [messages, isLoading, briefingStreaming]);
+
+  useEffect(() => {
+    const textarea = composerTextareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "0px";
+    const maxHeight = Math.min(window.innerHeight * 0.46, 208);
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${Math.max(nextHeight, 44)}px`;
+    textarea.style.overflowY =
+      textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [input, briefingStreaming, editingMessageId, replyTarget]);
 
   const inviteQueryParam = searchParams.get("invite");
 
@@ -3280,7 +3293,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     thread.
                   </p>
                 </div>
-                <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:justify-end">
+                <div className="hidden w-full min-w-0 items-center gap-2 sm:flex sm:w-auto sm:justify-end">
                   <button
                     type="button"
                     onClick={() => showReminderListOverlay()}
@@ -3659,6 +3672,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   <div className="flex w-full min-w-0 items-end gap-3 rounded-[28px] border border-slate-200 bg-[#f5f6fa] px-3 py-2 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
                     <div className="relative min-h-[2.75rem] min-w-0 flex-1">
                       <textarea
+                        ref={composerTextareaRef}
                         rows={1}
                         value={input}
                         onChange={(event) => setInput(event.target.value)}
@@ -3680,7 +3694,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             ? "Message (wait for briefing to finish)"
                             : "Message"
                         }
-                        className={`relative z-10 max-h-[min(46vh,13rem)] min-h-11 w-full resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm leading-relaxed text-slate-800 [overflow-wrap:anywhere] outline-none placeholder:text-slate-400 [scrollbar-width:thin] ${
+                        className={`scrollbar-none relative z-10 min-h-11 w-full resize-none overflow-y-hidden bg-transparent px-2 py-2 text-sm leading-relaxed text-slate-800 [overflow-wrap:anywhere] outline-none placeholder:text-slate-400 ${
                           briefingComposerLocked && !editingMessageId
                             ? "cursor-wait caret-transparent"
                             : ""
