@@ -997,6 +997,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const briefingRanRef = useRef(false);
   const openingSummaryAppliedRef = useRef(false);
+  const missedRemindersAppliedRef = useRef(false);
   const resetTaskFormRef = useRef<() => void>(() => {});
   const briefingPlaybackActiveRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1518,6 +1519,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   useEffect(() => {
     briefingRanRef.current = false;
     openingSummaryAppliedRef.current = false;
+    missedRemindersAppliedRef.current = false;
     setTasksLoaded(false);
   }, [userId]);
 
@@ -1543,6 +1545,42 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     ]);
     openingSummaryAppliedRef.current = true;
   }, [isHistoryLoaded, remindersLoaded, tasksLoaded, reminders, tasks, user?.firstName]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded || !remindersLoaded || !tasksLoaded) return;
+    if (missedRemindersAppliedRef.current) return;
+    if (!openingSummaryAppliedRef.current) return;
+
+    const missed = reminders.filter(
+      (r) => r.status !== "done" && r.status !== "archived" && new Date(r.dueAt).getTime() < Date.now(),
+    );
+
+    if (missed.length === 0) {
+      missedRemindersAppliedRef.current = true;
+      return;
+    }
+
+    const missedBubbles: ChatMessage[] = missed
+      .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())
+      .map((reminder) => ({
+        id: `due-reminder-${reminder.id}-${Date.now()}`,
+        role: "assistant" as const,
+        content: `**Reminder due**\n\n${reminder.title}\n\n${new Date(reminder.dueAt).toLocaleString()}${
+          reminder.notes ? `\n\n${reminder.notes}` : ""
+        }`,
+        createdAt: new Date().toISOString(),
+        meta: {
+          kind: "due_reminder" as const,
+          reminderId: reminder.id,
+          dueAt: new Date(reminder.dueAt).getTime(),
+          title: reminder.title,
+          notes: reminder.notes,
+        },
+      }));
+
+    setMessages((prev) => [...prev, ...missedBubbles]);
+    missedRemindersAppliedRef.current = true;
+  }, [isHistoryLoaded, remindersLoaded, tasksLoaded, reminders]);
 
   useEffect(() => {
     const container = chatScrollRef.current;
@@ -2484,6 +2522,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     void dispatchAssistantResponse(prompt, replyPayload, messagesRef.current);
   };
 
+  const getMinDate = () => {
+    const now = new Date();
+    return now.toISOString().slice(0, 10);
+  };
+
   const resetReminderForm = useCallback(() => {
     setNewTitle("");
     setNewDate("");
@@ -3111,32 +3154,35 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     showTasksOverlay,
   ]);
 
-  const openEditModal = (reminder: ReminderItem) => {
-    setCreateFormError(null);
-    setShowReminderInlineTask(false);
-    setReminderInlineTaskTitle("");
-    setReminderInlineTaskDue("");
-    const dueDate = new Date(reminder.dueAt);
-    const datePart = dueDate.toISOString().slice(0, 10);
-    const timePart = dueDate.toTimeString().slice(0, 5);
-    setEditingReminderId(reminder.id);
-    setNewTitle(reminder.title);
-    setNewDate(datePart);
-    setNewTime(timePart);
-    setNewRecurrence(reminder.recurrence ?? "none");
-    setNewNotes(reminder.notes ?? "");
-    setReminderStars(
-      typeof reminder.priority === "number" &&
-        reminder.priority >= 1 &&
-        reminder.priority <= 5
-        ? reminder.priority
-        : 0,
-    );
-    setReminderLinkedTaskId(reminder.linkedTaskId ?? "");
-    setReminderDomain(reminder.domain ?? "");
-    setIsCreateOpen(true);
-    pushDashboardOverlay({ overlay: "create" });
-  };
+  const openEditModal = useCallback(
+    (reminder: ReminderItem) => {
+      setCreateFormError(null);
+      setShowReminderInlineTask(false);
+      setReminderInlineTaskTitle("");
+      setReminderInlineTaskDue("");
+      const dueDate = new Date(reminder.dueAt);
+      const datePart = dueDate.toISOString().slice(0, 10);
+      const timePart = dueDate.toTimeString().slice(0, 5);
+      setEditingReminderId(reminder.id);
+      setNewTitle(reminder.title);
+      setNewDate(datePart);
+      setNewTime(timePart);
+      setNewRecurrence(reminder.recurrence ?? "none");
+      setNewNotes(reminder.notes ?? "");
+      setReminderStars(
+        typeof reminder.priority === "number" &&
+          reminder.priority >= 1 &&
+          reminder.priority <= 5
+          ? reminder.priority
+          : 0,
+      );
+      setReminderLinkedTaskId(reminder.linkedTaskId ?? "");
+      setReminderDomain(reminder.domain ?? "");
+      setIsCreateOpen(true);
+      pushDashboardOverlay({ overlay: "create" });
+    },
+    [pushDashboardOverlay],
+  );
 
   const handleManualCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -3150,6 +3196,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     const dueAtMs = new Date(dueAt).getTime();
     if (!Number.isFinite(dueAtMs)) {
       setCreateFormError("Invalid date or time.");
+      return;
+    }
+    if (dueAtMs <= Date.now()) {
+      setCreateFormError("Date and time must be in the future.");
       return;
     }
 
@@ -4302,6 +4352,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     Date
                     <input
                       type="date"
+                      min={getMinDate()}
                       value={newDate}
                       onChange={(e) => setNewDate(e.target.value)}
                       className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
@@ -4311,6 +4362,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     Time
                     <input
                       type="time"
+                      min={newDate === getMinDate() ? new Date().toTimeString().slice(0, 5) : undefined}
                       value={newTime}
                       onChange={(e) => setNewTime(e.target.value)}
                       className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"

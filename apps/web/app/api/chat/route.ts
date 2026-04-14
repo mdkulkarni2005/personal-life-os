@@ -37,6 +37,7 @@ interface ReminderAgentAction {
   title?: string;
   dueAt?: string;
   notes?: string;
+  linkedTaskId?: string;
   targetTitle?: string;
   targetId?: string;
   scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all";
@@ -195,7 +196,9 @@ function hasDayAfterTomorrowHint(input: string) {
 
 function parseTimeFromInput(input: string) {
   const normalized = input.replace(/\b([ap])\.\s?m\.\b/gi, "$1m");
-  const meridiemMatch = normalized.match(/\b(\d{1,2})(?::(\d{2}))?\s?(am|pm)\b/i);
+  
+  // Match times with meridiem (am/pm): 11:23 am, 11.23 pm, 11 am, etc.
+  const meridiemMatch = normalized.match(/\b(\d{1,2})(?:[:.]\s*(\d{2}))?\s?(am|pm)\b/i);
   if (meridiemMatch) {
     const rawHour = Number.parseInt(meridiemMatch[1] ?? "0", 10);
     const minute = Number.parseInt(meridiemMatch[2] ?? "0", 10);
@@ -205,7 +208,8 @@ function parseTimeFromInput(input: string) {
     return { hour, minute };
   }
 
-  const clockMatch = input.match(/\b(\d{1,2}):(\d{2})\b/);
+  // Match 24-hour clock format: 11:23 or 11.23
+  const clockMatch = input.match(/\b(\d{1,2})[:.]\s*(\d{2})\b/);
   if (clockMatch) {
     return {
       hour: Number.parseInt(clockMatch[1] ?? "0", 10),
@@ -651,12 +655,34 @@ export async function POST(request: Request) {
         } satisfies ReminderAgentResponse);
       }
 
+      // Ask for time if missing
       if (!parsed.action.dueAt || !hasExplicitTime(effectiveMessage) || !isValidFutureIsoDate(parsed.action.dueAt)) {
         return NextResponse.json({
           reply:
             "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
           action: { type: "clarify", title: parsed.action.title },
         } satisfies ReminderAgentResponse);
+      }
+
+      // Ask for linked task if tasks exist
+      if (tasks && tasks.length > 0 && !parsed.action.linkedTaskId) {
+        const pendingTasks = tasks.filter((t: unknown) => {
+          const task = t as Record<string, unknown>;
+          return task.status === "pending";
+        });
+        if (pendingTasks.length > 0) {
+          const taskList = pendingTasks
+            .slice(0, 5)
+            .map((t: unknown, idx: number) => {
+              const task = t as Record<string, unknown>;
+              return `${idx + 1}. ${task.title}`;
+            })
+            .join("\n");
+          return NextResponse.json({
+            reply: `Got it. Should this reminder be linked to a task?\n\n${taskList}\n\nOr just say "no" if it's standalone.`,
+            action: { type: "clarify", title: parsed.action.title, dueAt: parsed.action.dueAt },
+          } satisfies ReminderAgentResponse);
+        }
       }
     }
 

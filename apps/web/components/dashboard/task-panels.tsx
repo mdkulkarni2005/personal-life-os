@@ -400,6 +400,7 @@ export function TaskFormOverlay({
               </span>
               <input
                 type="datetime-local"
+                min={new Date().toISOString().slice(0, 16)}
                 value={taskFormDue}
                 onFocus={() => setTaskDueUserEdited(true)}
                 onChange={(e) => {

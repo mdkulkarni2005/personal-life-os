@@ -38,6 +38,9 @@ export async function POST(request: Request) {
 
   const dueAt =
     body.dueAt != null && Number.isFinite(Number(body.dueAt)) ? Number(body.dueAt) : undefined;
+  if (dueAt != null && dueAt <= Date.now()) {
+    return NextResponse.json({ error: "dueAt must be in the future" }, { status: 400 });
+  }
 
   const rawPri = (body as { priority?: number }).priority;
   const priority =

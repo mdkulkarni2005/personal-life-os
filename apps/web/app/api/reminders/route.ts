@@ -72,6 +72,9 @@ export async function POST(request: Request) {
   if (!Number.isFinite(dueAt)) {
     return NextResponse.json({ error: "dueAt must be a valid timestamp" }, { status: 400 });
   }
+  if (dueAt <= Date.now()) {
+    return NextResponse.json({ error: "dueAt must be in the future" }, { status: 400 });
+  }
 
   const notes =
     typeof body.notes === "string" && body.notes.trim().length > 0 ? body.notes.trim() : undefined;

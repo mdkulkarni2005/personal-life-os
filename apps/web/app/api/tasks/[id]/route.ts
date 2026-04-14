@@ -42,6 +42,16 @@ export async function PATCH(
     );
   }
 
+  if (body.dueAt != null) {
+    const dueAt = Number(body.dueAt);
+    if (!Number.isFinite(dueAt)) {
+      return NextResponse.json({ error: "dueAt must be a valid timestamp" }, { status: 400 });
+    }
+    if (dueAt <= Date.now()) {
+      return NextResponse.json({ error: "dueAt must be in the future" }, { status: 400 });
+    }
+  }
+
   const patch: {
     userId: string;
     taskId: ReturnType<typeof parseTaskId>;
