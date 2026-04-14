@@ -1792,6 +1792,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     notifUrlHandledRef.current = sig;
     void runReminderQuickAction(rid, act).finally(() => {
       const reminderTitle = remindersRef.current.find((r) => r.id === rid)?.title ?? "Reminder";
+      const resolutionLine =
+        act === "done"
+          ? `Marked "${reminderTitle}" as done.`
+          : act === "snooze"
+            ? `Snoozed "${reminderTitle}" by one hour.`
+            : `Deleted "${reminderTitle}".`;
+      resolveDueReminderById(rid, resolutionLine);
       setMessages((prev) => [
         ...prev,
         {
@@ -1838,6 +1845,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             remindersRef.current.find((r) => r.id === d.reminderId)?.title ??
             d.title ??
             "Reminder";
+          const resolutionLine =
+            a === "done"
+              ? `Marked "${reminderTitle}" as done.`
+              : a === "snooze"
+                ? `Snoozed "${reminderTitle}" by one hour.`
+                : `Deleted "${reminderTitle}".`;
+          resolveDueReminderById(d.reminderId, resolutionLine);
           setMessages((prev) => [
             ...prev,
             {
@@ -3652,6 +3666,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       message.meta?.kind === "due_reminder"
                         ? message.meta
                         : null;
+                    const dueReminder = dueMeta?.reminderId
+                      ? reminders.find((r) => r.id === dueMeta.reminderId)
+                      : null;
+                    const dueReminderResolved =
+                      !!dueMeta?.reminderId &&
+                      (!dueReminder ||
+                        dueReminder.status === "done" ||
+                        dueReminder.status === "archived");
                     const replyQuote = message.meta?.replyTo;
                     const showUserEdit =
                       message.role === "user" && !dueMeta?.reminderId;
@@ -3708,60 +3730,68 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                 {dueMeta.notes}
                               </p>
                             ) : null}
-                            <div className="mt-3 flex flex-wrap gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleDueReminderAction(
-                                    message.id,
-                                    dueMeta.reminderId!,
-                                    "done",
-                                  )
-                                }
-                                className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500"
-                              >
-                                Done
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleDueReminderAction(
-                                    message.id,
-                                    dueMeta.reminderId!,
-                                    "snooze",
-                                  )
-                                }
-                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50"
-                              >
-                                Snooze 1h
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleDueReminderAction(
-                                    message.id,
-                                    dueMeta.reminderId!,
-                                    "reschedule",
-                                  )
-                                }
-                                className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-100"
-                              >
-                                Set new time
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleDueReminderAction(
-                                    message.id,
-                                    dueMeta.reminderId!,
-                                    "delete",
-                                  )
-                                }
-                                className="rounded-full bg-rose-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-rose-500"
-                              >
-                                Delete
-                              </button>
-                            </div>
+                            {dueReminderResolved ? (
+                              <p className="mt-3 text-xs font-medium text-slate-600">
+                                {dueReminder?.status === "done"
+                                  ? "Already marked done."
+                                  : "This reminder was already updated from another action."}
+                              </p>
+                            ) : (
+                              <div className="mt-3 flex flex-wrap gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleDueReminderAction(
+                                      message.id,
+                                      dueMeta.reminderId!,
+                                      "done",
+                                    )
+                                  }
+                                  className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500"
+                                >
+                                  Done
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleDueReminderAction(
+                                      message.id,
+                                      dueMeta.reminderId!,
+                                      "snooze",
+                                    )
+                                  }
+                                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50"
+                                >
+                                  Snooze 1h
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleDueReminderAction(
+                                      message.id,
+                                      dueMeta.reminderId!,
+                                      "reschedule",
+                                    )
+                                  }
+                                  className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-100"
+                                >
+                                  Set new time
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleDueReminderAction(
+                                      message.id,
+                                      dueMeta.reminderId!,
+                                      "delete",
+                                    )
+                                  }
+                                  className="rounded-full bg-rose-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-rose-500"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
                           </>
                         ) : (
                           <>
