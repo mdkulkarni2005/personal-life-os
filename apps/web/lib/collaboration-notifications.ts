@@ -2,6 +2,8 @@
  * Lightweight reminders-style alerts for sharing (invite accepted, etc.).
  * Requires Notification permission + service worker (same as due reminders).
  */
+import { playUiCue } from "./ui-sound";
+
 export async function showCollaborationNotification(
   title: string,
   body: string,
@@ -12,6 +14,7 @@ export async function showCollaborationNotification(
     return;
   }
   try {
+    void playUiCue("share");
     const reg = await navigator.serviceWorker.ready;
     await reg.showNotification(title, {
       body,

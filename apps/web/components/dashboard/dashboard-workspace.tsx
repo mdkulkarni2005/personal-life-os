@@ -30,11 +30,18 @@ import {
 } from "react";
 import { useSearchParams } from "next/navigation";
 import { StarRating, priorityStarsLabel } from "./star-rating";
+import { StructuredMessage } from "./structured-message";
+import {
+  TaskFormOverlay,
+  TaskListOverlay,
+  type TaskRow,
+} from "./task-panels";
 import { showDueReminderSystemNotification } from "../../lib/due-notifications-client";
 import {
   showCollaborationNotification,
   shouldNotifyForCollaboration,
 } from "../../lib/collaboration-notifications";
+import { playUiCue } from "../../lib/ui-sound";
 import type { ReplyContextPayload } from "../../lib/chat-reply-context";
 import {
   isCompactViewport,
@@ -56,7 +63,7 @@ interface ChatReplyToRef {
 }
 
 interface ChatMessageMeta {
-  kind?: "due_reminder" | "briefing";
+  kind?: "due_reminder" | "briefing" | "opening_summary";
   /** Which slice of the session briefing this bubble is (split messages). */
   briefingSection?: BriefingSection;
   reminderId?: string;
@@ -144,6 +151,7 @@ interface ShareInboxRow {
   shareBatchId?: string;
 }
 
+
 function groupShareInboxRows(
   rows: ShareInboxRow[],
 ): { batchKey: string; rows: ShareInboxRow[] }[] {
@@ -179,15 +187,113 @@ const STARTER_MESSAGE = {
   content:
     "Hi! Ask me anything about your reminders—what's next, times, notes, or compare your day. I can also create or complete them. Example: 'Create reminder tomorrow at 9am for gym'.",
   createdAt: new Date().toISOString(),
+  meta: {
+    skipPersist: true,
+  },
 };
+
+function formatSummaryTime(value: string) {
+  try {
+    return new Date(value).toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return value;
+  }
+}
+
+function buildOpeningSummaryMessage(input: {
+  reminders: ReminderItem[];
+  tasks: TaskItemBrief[];
+  firstName?: string | null;
+  now?: Date;
+}): ChatMessage {
+  const now = input.now ?? new Date();
+  const end = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+
+  const completedItems = [
+    ...input.reminders.filter((item) => item.status === "done"),
+    ...input.tasks.filter((item) => item.status === "done"),
+  ];
+  const completedToday = completedItems.filter((item) => {
+    const updatedAt = "updatedAt" in item ? item.updatedAt : undefined;
+    if (!updatedAt) return false;
+    return new Date(updatedAt).toDateString() === now.toDateString();
+  }).length;
+  const highPriorityWins = completedItems.filter(
+    (item) => (item.priority ?? 0) >= 4,
+  ).length;
+
+  const upcoming = [
+    ...input.reminders
+      .filter((item) => item.status !== "done" && item.status !== "archived")
+      .filter((item) => {
+        const due = new Date(item.dueAt).getTime();
+        return due >= now.getTime() && due < end.getTime();
+      })
+      .map((item) => ({
+        kind: "reminder" as const,
+        dueAt: item.dueAt,
+        title: item.title,
+        priority: item.priority ?? 0,
+      })),
+    ...input.tasks
+      .filter((item) => item.status === "pending" && item.dueAt)
+      .filter((item) => {
+        const due = new Date(item.dueAt!).getTime();
+        return due >= now.getTime() && due < end.getTime();
+      })
+      .map((item) => ({
+        kind: "task" as const,
+        dueAt: item.dueAt!,
+        title: item.title,
+        priority: item.priority ?? 0,
+      })),
+  ].sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+
+  const firstItem = upcoming[0];
+  const name = input.firstName?.trim();
+  const lines = [
+    `🏆 Rewards: ${completedItems.length} completed item${completedItems.length === 1 ? "" : "s"}${completedItems.length > 0 ? `, ${highPriorityWins} high-priority win${highPriorityWins === 1 ? "" : "s"}` : ""}.`,
+    `🌟 Achievements: ${completedToday} finish${completedToday === 1 ? "" : "es"} logged today${name ? `, ${name}` : ""}.`,
+    firstItem
+      ? `✨ Momentum: next up is **${firstItem.title}** at ${formatSummaryTime(firstItem.dueAt)}.`
+      : "✨ Momentum: nothing urgent is due in the next two hours.",
+    "⏰ Next two hours:",
+  ];
+
+  if (upcoming.length === 0) {
+    lines.push("- Clear window.");
+  } else {
+    for (const item of upcoming.slice(0, 6)) {
+      lines.push(
+        `- ${formatSummaryTime(item.dueAt)} — **${item.title}**${item.kind === "task" ? " *(task)*" : ""}${item.priority >= 4 ? ` ${"★".repeat(Math.min(5, item.priority))}` : ""}`,
+      );
+    }
+  }
+
+  return {
+    id: `opening-summary-${Date.now()}`,
+    role: "assistant",
+    content: lines.join("\n"),
+    createdAt: now.toISOString(),
+    meta: {
+      kind: "opening_summary",
+      skipPersist: true,
+    },
+  };
+}
 
 const SHOW_SUGGESTED_QUESTIONS_KEY = "remindos:showSuggestedQuestions";
 
 function usePersistentReminders(userId: string) {
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
     setReminders([]);
+    setIsLoaded(false);
     const load = async () => {
       try {
         const response = await fetch("/api/reminders");
@@ -201,6 +307,8 @@ function usePersistentReminders(userId: string) {
         setReminders(parsed);
       } catch {
         setReminders([]);
+      } finally {
+        setIsLoaded(true);
       }
     };
     void load();
@@ -214,7 +322,7 @@ function usePersistentReminders(userId: string) {
     });
   };
 
-  return [reminders, updateReminders] as const;
+  return [reminders, updateReminders, isLoaded] as const;
 }
 
 function dedupeMessagesById(messages: ChatMessage[]) {
@@ -343,16 +451,6 @@ function parseLifeDomain(value: unknown): LifeDomain | undefined {
   return typeof value === "string" && LIFE_DOMAINS.has(value)
     ? (value as LifeDomain)
     : undefined;
-}
-
-interface TaskRow {
-  id: string;
-  title: string;
-  notes?: string;
-  dueAt?: string;
-  status: "pending" | "done";
-  priority?: number;
-  domain?: LifeDomain;
 }
 
 function fromApiTask(row: Record<string, unknown>): TaskRow {
@@ -492,6 +590,8 @@ function briefingSectionLabel(section: BriefingSection | undefined): string {
       return "Tomorrow";
     case "later":
       return "Coming up";
+    case "tasks":
+      return "Tasks by priority";
     case "closing":
       return "Next step";
     default:
@@ -522,6 +622,9 @@ function ChatBubbleShell({
   const touchStart = useRef({ x: 0, y: 0 });
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [desktopMenuOpen, setDesktopMenuOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [swipeReleasing, setSwipeReleasing] = useState(false);
 
   const clearLongPress = () => {
     if (longPressTimer.current) {
@@ -537,18 +640,47 @@ function ChatBubbleShell({
         ? "justify-start"
         : "justify-end";
 
+  const runReplySwipeAnimation = () => {
+    setSwipeReleasing(true);
+    setSwipeOffset(96);
+    window.setTimeout(() => {
+      setSwipeOffset(0);
+    }, 110);
+    window.setTimeout(() => {
+      setSwipeReleasing(false);
+    }, 240);
+  };
+
   return (
     <div
       className="group/msg relative min-w-0 w-full max-w-full"
       onTouchStart={(e) => {
         const t = e.touches[0];
-        if (t) touchStart.current = { x: t.clientX, y: t.clientY };
-        if (onLongPressEdit) {
+        if (!t) return;
+        touchStart.current = { x: t.clientX, y: t.clientY };
+        setSwipeReleasing(false);
+        if (swipeOffset !== 0) setSwipeOffset(0);
+        clearLongPress();
+        longPressTimer.current = setTimeout(() => {
+          longPressTimer.current = null;
+          setMobileMenuOpen(true);
+        }, 470);
+      }}
+      onTouchMove={(e) => {
+        const t = e.touches[0];
+        if (!t) return;
+        const dx = t.clientX - touchStart.current.x;
+        const dy = t.clientY - touchStart.current.y;
+
+        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
           clearLongPress();
-          longPressTimer.current = setTimeout(() => {
-            longPressTimer.current = null;
-            onLongPressEdit();
-          }, 520);
+        }
+
+        if (dx > 0 && Math.abs(dy) < 72 && dx > Math.abs(dy)) {
+          setSwipeReleasing(false);
+          setSwipeOffset(Math.min(dx, 96));
+        } else if (swipeOffset !== 0) {
+          setSwipeOffset(0);
         }
       }}
       onTouchEnd={(e) => {
@@ -557,9 +689,29 @@ function ChatBubbleShell({
         if (!t) return;
         const dx = t.clientX - touchStart.current.x;
         const dy = t.clientY - touchStart.current.y;
-        if (dx > 48 && Math.abs(dy) < 56) onReply();
+        if (dx > 84 && Math.abs(dy) < 64) {
+          runReplySwipeAnimation();
+          onReply();
+          return;
+        }
+        if (swipeOffset > 0) {
+          setSwipeReleasing(true);
+          setSwipeOffset(0);
+          window.setTimeout(() => {
+            setSwipeReleasing(false);
+          }, 180);
+        }
       }}
-      onTouchMove={clearLongPress}
+      onTouchCancel={() => {
+        clearLongPress();
+        if (swipeOffset > 0) {
+          setSwipeReleasing(true);
+          setSwipeOffset(0);
+          window.setTimeout(() => {
+            setSwipeReleasing(false);
+          }, 180);
+        }
+      }}
     >
       {desktopHoverMenu ? (
         <div
@@ -625,11 +777,64 @@ function ChatBubbleShell({
           </div>
         </div>
       ) : null}
-      {children}
+
+      {mobileMenuOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end bg-slate-950/20 p-3 md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        >
+          <div
+            className="w-full rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onReply();
+              }}
+              className="block w-full rounded-xl px-3 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50"
+            >
+              Reply
+            </button>
+            {showEdit && (onEdit || onLongPressEdit) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  (onEdit ?? onLongPressEdit)?.();
+                }}
+                className="block w-full rounded-xl px-3 py-3 text-left text-sm font-medium text-violet-700 hover:bg-violet-50"
+              >
+                Edit
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="relative">
+        <div className="pointer-events-none absolute inset-y-0 left-2 z-0 flex items-center md:hidden">
+          <span
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-700"
+            style={{ opacity: Math.min(1, swipeOffset / 34) }}
+            aria-hidden
+          >
+            ↩
+          </span>
+        </div>
+        <div
+          className={`relative z-10 ${swipeReleasing ? "transition-transform duration-200 ease-out" : ""}`}
+          style={{ transform: `translateX(${swipeOffset}px)` }}
+        >
+          {children}
+        </div>
+      </div>
+
       <div
         className={`mt-1 flex flex-wrap gap-2 ${justify} transition-opacity ${
           desktopHoverMenu
-            ? "opacity-100 md:hidden"
+            ? "hidden"
             : showActionsAlways
               ? "opacity-100"
               : "opacity-100 sm:opacity-0 sm:group-hover/msg:opacity-100"
@@ -685,7 +890,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const searchParams = useSearchParams();
   const notifUrlHandledRef = useRef<string | null>(null);
   const shareBatchUrlHandledRef = useRef<string | null>(null);
-  const [reminders, setReminders] = usePersistentReminders(userId);
+  const [reminders, setReminders, remindersLoaded] = usePersistentReminders(userId);
   const [dueNotifPrefs, setDueNotifPrefs] = useState<DueNotificationPrefs>(() =>
     loadDueNotificationPrefs(),
   );
@@ -723,6 +928,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     useState<PendingCreateDraft | null>(null);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
+  const [tasksLoaded, setTasksLoaded] = useState(false);
   const [followUpQuestions, setFollowUpQuestions] = useState<
     FollowUpQuestion[]
   >([]);
@@ -735,6 +941,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
   const [sentToFilter, setSentToFilter] = useState<"all" | string>("all");
   const [isTasksOpen, setIsTasksOpen] = useState(false);
+  const [taskMode, setTaskMode] = useState<"browse" | "create">("browse");
   const [taskTab, setTaskTab] = useState<"missed" | "pending" | "done">(
     "pending",
   );
@@ -789,11 +996,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const briefingRanRef = useRef(false);
+  const openingSummaryAppliedRef = useRef(false);
   const resetTaskFormRef = useRef<() => void>(() => {});
   const briefingPlaybackActiveRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remindersRef = useRef(reminders);
   remindersRef.current = reminders;
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
   const listOpenRef = useRef(false);
   const [briefingStreaming, setBriefingStreaming] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -863,79 +1073,55 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     (recordAutoBriefing = false) => {
       if (!isHistoryLoaded || briefingPlaybackActiveRef.current) return;
       briefingPlaybackActiveRef.current = true;
+      setBriefingStreaming(true);
+      chatPinnedToBottomRef.current = true;
+
+      const taskBrief: TaskItemBrief[] = tasksRef.current.map((t) => ({
+        id: t.id,
+        title: t.title,
+        dueAt: t.dueAt,
+        status: t.status,
+        priority: t.priority,
+      }));
       const parts = buildBriefingParts(
         remindersRef.current,
         user?.firstName ?? null,
+        taskBrief,
       );
-      chatPinnedToBottomRef.current = true;
-      setBriefingStreaming(true);
 
       setMessages((prev) =>
         prev.filter((m) => m.id !== "starter" && m.meta?.kind !== "briefing"),
       );
 
-      let partIndex = 0;
-
-      const runPart = () => {
-        if (partIndex >= parts.length) {
-          briefingPlaybackActiveRef.current = false;
-          setBriefingStreaming(false);
-          if (recordAutoBriefing) {
-            try {
-              if (typeof localStorage !== "undefined") {
-                localStorage.setItem(
-                  `remindos:lastAutoBriefingAt:${userId}`,
-                  String(Date.now()),
-                );
-              }
-            } catch {
-              /* ignore */
-            }
-          }
-          return;
-        }
-        const slice = parts[partIndex];
-        if (!slice) {
-          briefingPlaybackActiveRef.current = false;
-          setBriefingStreaming(false);
-          return;
-        }
-        const { section, text } = slice;
-        const id = `briefing-${Date.now()}-${partIndex}-${Math.random().toString(36).slice(2, 9)}`;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id,
-            role: "assistant",
-            content: "",
-            createdAt: new Date().toISOString(),
-            meta: {
-              kind: "briefing",
-              briefingSection: section,
-              skipPersist: true,
-            },
+      setMessages((prev) => [
+        ...prev,
+        ...parts.map((part, index) => ({
+          id: `briefing-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 9)}`,
+          role: "assistant" as const,
+          content: part.text,
+          createdAt: new Date().toISOString(),
+          meta: {
+            kind: "briefing" as const,
+            briefingSection: part.section,
+            skipPersist: true,
           },
-        ]);
+        })),
+      ]);
 
-        let i = 0;
-        const step = () => {
-          i = Math.min(text.length, i + 2);
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === id ? { ...m, content: text.slice(0, i) } : m,
-            ),
-          );
-          if (i < text.length) {
-            window.setTimeout(step, 72);
-          } else {
-            partIndex += 1;
-            window.setTimeout(runPart, partIndex >= parts.length ? 0 : 120);
+      briefingPlaybackActiveRef.current = false;
+      setBriefingStreaming(false);
+      if (recordAutoBriefing) {
+        try {
+          if (typeof localStorage !== "undefined") {
+            localStorage.setItem(
+              `remindos:lastAutoBriefingAt:${userId}`,
+              String(Date.now()),
+            );
           }
-        };
-        window.setTimeout(step, partIndex === 0 ? 280 : 60);
-      };
-
-      window.setTimeout(runPart, 160);
+        } catch {
+          /* ignore */
+        }
+      }
     },
     [isHistoryLoaded, user?.firstName, userId],
   );
@@ -1116,12 +1302,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   refreshRemindersRef.current = refreshReminders;
 
   const refreshTasks = useCallback(async () => {
-    const response = await fetch("/api/tasks");
-    if (!response.ok) return;
-    const data = (await response.json()) as {
-      tasks?: Array<Record<string, unknown>>;
-    };
-    setTasks((data.tasks ?? []).map((item) => fromApiTask(item)));
+    try {
+      const response = await fetch("/api/tasks");
+      if (!response.ok) return;
+      const data = (await response.json()) as {
+        tasks?: Array<Record<string, unknown>>;
+      };
+      setTasks((data.tasks ?? []).map((item) => fromApiTask(item)));
+    } finally {
+      setTasksLoaded(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -1327,38 +1517,32 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   useEffect(() => {
     briefingRanRef.current = false;
+    openingSummaryAppliedRef.current = false;
+    setTasksLoaded(false);
   }, [userId]);
 
   useEffect(() => {
-    if (!isHistoryLoaded || briefingRanRef.current) return;
-
-    const storageKey = `remindos:lastAutoBriefingAt:${userId}`;
-    let eligible = true;
-    try {
-      if (typeof localStorage !== "undefined") {
-        const raw = localStorage.getItem(storageKey);
-        const last = raw ? Number.parseInt(raw, 10) : 0;
-        const oneHourMs = 60 * 60 * 1000;
-        eligible =
-          !Number.isFinite(last) || last <= 0 || Date.now() - last >= oneHourMs;
-      }
-    } catch {
-      eligible = true;
-    }
-
-    if (!eligible) {
-      briefingRanRef.current = true;
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      if (briefingRanRef.current) return;
-      briefingRanRef.current = true;
-      runBriefingStream(true);
-    }, 650);
-
-    return () => window.clearTimeout(timer);
-  }, [isHistoryLoaded, userId, runBriefingStream]);
+    if (!isHistoryLoaded || !remindersLoaded || !tasksLoaded) return;
+    if (openingSummaryAppliedRef.current) return;
+    const summary = buildOpeningSummaryMessage({
+      reminders,
+      tasks: tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        dueAt: task.dueAt,
+        status: task.status,
+        priority: task.priority,
+      })),
+      firstName: user?.firstName,
+    });
+    setMessages((prev) => [
+      summary,
+      ...prev.filter(
+        (message) => message.id !== "starter" && message.meta?.kind !== "opening_summary",
+      ),
+    ]);
+    openingSummaryAppliedRef.current = true;
+  }, [isHistoryLoaded, remindersLoaded, tasksLoaded, reminders, tasks, user?.firstName]);
 
   useEffect(() => {
     const container = chatScrollRef.current;
@@ -1372,12 +1556,30 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     return () => cancelAnimationFrame(id);
   }, [messages, isLoading, briefingStreaming]);
 
+  const cueInitRef = useRef(false);
+  const lastCueMessageIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isHistoryLoaded) return;
+    const latest = [...messages].reverse().find((m) => m.role !== "user");
+    if (!latest) return;
+    if (!cueInitRef.current) {
+      cueInitRef.current = true;
+      lastCueMessageIdRef.current = latest.id;
+      return;
+    }
+    if (lastCueMessageIdRef.current === latest.id) return;
+    lastCueMessageIdRef.current = latest.id;
+    void playUiCue(
+      latest.meta?.kind === "briefing" ? "briefing" : "notification",
+    );
+  }, [messages, isHistoryLoaded]);
+
   useEffect(() => {
     const textarea = composerTextareaRef.current;
     if (!textarea) return;
 
     textarea.style.height = "0px";
-    const maxHeight = Math.min(window.innerHeight * 0.46, 208);
+    const maxHeight = Math.min(window.innerHeight * 0.28, 144);
     const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
     textarea.style.height = `${Math.max(nextHeight, 44)}px`;
     textarea.style.overflowY =
@@ -1589,6 +1791,21 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     if (act !== "done" && act !== "snooze" && act !== "delete") return;
     notifUrlHandledRef.current = sig;
     void runReminderQuickAction(rid, act).finally(() => {
+      const reminderTitle = remindersRef.current.find((r) => r.id === rid)?.title ?? "Reminder";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "system",
+          content:
+            act === "done"
+              ? `Marked **${reminderTitle}** as done from notification.`
+              : act === "snooze"
+                ? `Snoozed **${reminderTitle}** for 1 hour from notification.`
+                : `Deleted **${reminderTitle}** from notification.`,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
       if (typeof window !== "undefined") {
         window.history.replaceState(window.history.state, "", "/dashboard");
       }
@@ -1615,7 +1832,26 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       const a = d.action ?? "open";
       if (a === "open") return;
       if (a === "done" || a === "snooze" || a === "delete") {
-        void runReminderQuickAction(d.reminderId, a);
+        void runReminderQuickAction(d.reminderId, a).then(() => {
+          const reminderTitle =
+            remindersRef.current.find((r) => r.id === d.reminderId)?.title ??
+            d.title ??
+            "Reminder";
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "system",
+              content:
+                a === "done"
+                  ? `Marked **${reminderTitle}** as done from notification.`
+                  : a === "snooze"
+                    ? `Snoozed **${reminderTitle}** for 1 hour from notification.`
+                    : `Deleted **${reminderTitle}** from notification.`,
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        });
       }
     };
     nav.addEventListener("message", handler);
@@ -1940,21 +2176,263 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     const prompt = input.trim();
     if (!prompt || isLoading) return;
 
+    const dispatchAssistantResponse = async (
+      messageText: string,
+      responseReplyPayload: ReplyContextPayload | undefined,
+      messagesSnapshot: ChatMessage[],
+    ) => {
+      try {
+        const inviteToken = extractInviteToken(messageText);
+        if (inviteToken) {
+          const res = await fetch(
+            `/api/reminders/share/${encodeURIComponent(inviteToken)}`,
+            {
+              method: "POST",
+            },
+          );
+          const data = (await res.json()) as { error?: string; title?: string };
+          if (!res.ok) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: data.error ?? "Could not accept that invite.",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
+          await refreshReminders();
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: data.title
+                ? `You're in on "${data.title}". It is now in your reminder list.`
+                : "Invite accepted.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+
+        const lastAssistant =
+          [...messagesSnapshot].reverse().find((item) => item.role === "assistant")
+            ?.content ?? "";
+
+        if (pendingCreateDraft && looksLikeYes(messageText)) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content:
+                "Please send date and time in one line, like: tomorrow at 8:00 PM. I will create it directly.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+
+        if (pendingCreateDraft && !hasDateOrTimeHint(messageText)) {
+          setPendingCreateDraft((prev) => ({
+            ...(prev ?? {}),
+            title: messageText.trim(),
+          }));
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content:
+                "Got it. Now send only date and time, for example: tomorrow at 8:00 PM.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+
+        if (pendingCreateDraft && hasDateOrTimeHint(messageText)) {
+          const rebuiltPrompt = `Create reminder ${pendingCreateDraft.title ?? "untitled"} ${messageText}`;
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: rebuiltPrompt,
+              reminders,
+              tasks: tasks.map((t) => ({
+                id: t.id,
+                title: t.title,
+                notes: t.notes,
+                dueAt: t.dueAt,
+                status: t.status,
+                priority: t.priority,
+                domain: t.domain,
+              })),
+              ...clientTimeZonePayload(),
+              ...(responseReplyPayload ? { replyContext: responseReplyPayload } : {}),
+            }),
+          });
+          const data = (await response.json()) as AgentResponse;
+          applyAction(data.action);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: data.reply || "Done.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+
+        if (/^\s*create(\s+a)?\s+reminder\s*$/i.test(messageText)) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content:
+                "Send everything in one line: title + date + time. Example: create reminder cli testing tomorrow at 8 PM.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+
+        if (
+          looksLikeYes(messageText) &&
+          /would you like to create one\?/i.test(lastAssistant)
+        ) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content:
+                "Great. Send it in one message with title + time, for example: create reminder cli testing tomorrow at 8 PM.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+
+        const listScope = inferListScopeFromMessage(messageText);
+        if (listScope && !isCompoundReminderQuestion(messageText)) {
+          const listReply = buildListRemindersReply(
+            reminders,
+            listScope,
+            new Date(),
+            5,
+            clientTimeZonePayload(),
+          );
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: listReply,
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          return;
+        }
+
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: messageText,
+            reminders,
+            tasks: tasks.map((t) => ({
+              id: t.id,
+              title: t.title,
+              notes: t.notes,
+              dueAt: t.dueAt,
+              status: t.status,
+              priority: t.priority,
+              domain: t.domain,
+            })),
+            ...clientTimeZonePayload(),
+            ...(responseReplyPayload ? { replyContext: responseReplyPayload } : {}),
+          }),
+        });
+
+        const data = (await response.json()) as AgentResponse;
+        applyAction(data.action);
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: data.reply || "Done.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      } catch {
+        const grounded = tryGroundedReminderAnswer(
+          messageText,
+          reminders,
+          new Date(),
+          clientTimeZonePayload(),
+        );
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content:
+              grounded ??
+              "I could not reach the assistant. Check your connection and try again.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
     if (editingMessageId) {
-      setMessages((prev) =>
-        prev.map((m) =>
+      const editedAt = new Date().toISOString();
+      const editingMessage = messagesRef.current.find(
+        (m) => m.id === editingMessageId,
+      );
+      const replyFromEditedMessage = editingMessage?.meta?.replyTo
+        ? {
+            id: editingMessage.meta.replyTo.id,
+            content: editingMessage.meta.replyTo.content,
+            role: editingMessage.meta.replyTo.role,
+          }
+        : undefined;
+
+      const nextMessages = (() => {
+        const index = messagesRef.current.findIndex(
+          (m) => m.id === editingMessageId,
+        );
+        if (index === -1) return messagesRef.current;
+        return messagesRef.current.slice(0, index + 1).map((m) =>
           m.id === editingMessageId && m.role === "user"
             ? {
                 ...m,
                 content: prompt,
-                meta: { ...m.meta, editedAt: new Date().toISOString() },
+                meta: { ...(m.meta ?? {}), editedAt },
               }
             : m,
-        ),
-      );
+        );
+      })();
+
+      setMessages(nextMessages);
       setInput("");
       setEditingMessageId(null);
       setReplyTarget(null);
+      chatPinnedToBottomRef.current = true;
+      setIsLoading(true);
+      setLoadingTextIndex(0);
+      void dispatchAssistantResponse(prompt, replyFromEditedMessage, nextMessages);
       return;
     }
 
@@ -1963,6 +2441,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     chatPinnedToBottomRef.current = true;
 
     const replySnapshot = replyTarget;
+    const replyPayload = toReplyContextPayload(replySnapshot);
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -1986,222 +2465,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setReplyTarget(null);
     setIsLoading(true);
     setLoadingTextIndex(0);
-
-    const replyPayload = toReplyContextPayload(replySnapshot);
-
-    try {
-      const inviteToken = extractInviteToken(prompt);
-      if (inviteToken) {
-        const res = await fetch(
-          `/api/reminders/share/${encodeURIComponent(inviteToken)}`,
-          {
-            method: "POST",
-          },
-        );
-        const data = (await res.json()) as { error?: string; title?: string };
-        if (!res.ok) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: data.error ?? "Could not accept that invite.",
-              createdAt: new Date().toISOString(),
-            },
-          ]);
-          return;
-        }
-        await refreshReminders();
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: data.title
-              ? `You're in on "${data.title}". It is now in your reminder list.`
-              : "Invite accepted.",
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        return;
-      }
-
-      const lastAssistant =
-        [...messages].reverse().find((item) => item.role === "assistant")
-          ?.content ?? "";
-
-      if (pendingCreateDraft && looksLikeYes(prompt)) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content:
-              "Please send date and time in one line, like: tomorrow at 8:00 PM. I will create it directly.",
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        return;
-      }
-
-      if (pendingCreateDraft && !hasDateOrTimeHint(prompt)) {
-        setPendingCreateDraft((prev) => ({
-          ...(prev ?? {}),
-          title: prompt.trim(),
-        }));
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content:
-              "Got it. Now send only date and time, for example: tomorrow at 8:00 PM.",
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        return;
-      }
-
-      if (pendingCreateDraft && hasDateOrTimeHint(prompt)) {
-        const rebuiltPrompt = `Create reminder ${pendingCreateDraft.title ?? "untitled"} ${prompt}`;
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message: rebuiltPrompt,
-            reminders,
-            tasks: tasks.map((t) => ({
-              id: t.id,
-              title: t.title,
-              notes: t.notes,
-              dueAt: t.dueAt,
-              status: t.status,
-              priority: t.priority,
-              domain: t.domain,
-            })),
-            ...clientTimeZonePayload(),
-            ...(replyPayload ? { replyContext: replyPayload } : {}),
-          }),
-        });
-        const data = (await response.json()) as AgentResponse;
-        applyAction(data.action);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: data.reply || "Done.",
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        return;
-      }
-
-      if (/^\s*create(\s+a)?\s+reminder\s*$/i.test(prompt)) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content:
-              "Send everything in one line: title + date + time. Example: create reminder cli testing tomorrow at 8 PM.",
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        return;
-      }
-
-      if (
-        looksLikeYes(prompt) &&
-        /would you like to create one\?/i.test(lastAssistant)
-      ) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content:
-              "Great. Send it in one message with title + time, for example: create reminder cli testing tomorrow at 8 PM.",
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        return;
-      }
-
-      const listScope = inferListScopeFromMessage(prompt);
-      if (listScope && !isCompoundReminderQuestion(prompt)) {
-        const listReply = buildListRemindersReply(
-          reminders,
-          listScope,
-          new Date(),
-          5,
-          clientTimeZonePayload(),
-        );
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: listReply,
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        return;
-      }
-
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: prompt,
-          reminders,
-          tasks: tasks.map((t) => ({
-            id: t.id,
-            title: t.title,
-            notes: t.notes,
-            dueAt: t.dueAt,
-            status: t.status,
-            priority: t.priority,
-            domain: t.domain,
-          })),
-          ...clientTimeZonePayload(),
-          ...(replyPayload ? { replyContext: replyPayload } : {}),
-        }),
-      });
-
-      const data = (await response.json()) as AgentResponse;
-      applyAction(data.action);
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: data.reply || "Done.",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    } catch {
-      const grounded = tryGroundedReminderAnswer(
-        prompt,
-        reminders,
-        new Date(),
-        clientTimeZonePayload(),
-      );
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content:
-            grounded ??
-            "I could not reach the assistant. Check your connection and try again.",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    } finally {
-      setIsLoading(false);
-    }
+    void dispatchAssistantResponse(prompt, replyPayload, messagesRef.current);
   };
 
   const resetReminderForm = useCallback(() => {
@@ -2316,6 +2580,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     );
   };
 
+  const resolveDueReminderById = (reminderId: string, line: string) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.meta?.kind === "due_reminder" && m.meta.reminderId === reminderId
+          ? { ...m, meta: undefined, content: line }
+          : m,
+      ),
+    );
+  };
+
   const handleDueReminderAction = async (
     messageId: string,
     reminderId: string,
@@ -2327,16 +2601,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       if (action === "delete") {
         await runReminderQuickAction(reminderId, "delete");
         resolveDueLine(messageId, `Deleted "${title}".`);
+        resolveDueReminderById(reminderId, `Deleted "${title}".`);
         return;
       }
       if (action === "done") {
         await runReminderQuickAction(reminderId, "done");
         resolveDueLine(messageId, `Marked "${title}" as done.`);
+        resolveDueReminderById(reminderId, `Marked "${title}" as done.`);
         return;
       }
       if (action === "snooze") {
         await runReminderQuickAction(reminderId, "snooze");
         resolveDueLine(messageId, `Snoozed "${title}" by one hour.`);
+        resolveDueReminderById(reminderId, `Snoozed "${title}" by one hour.`);
         return;
       }
       const raw =
@@ -2362,8 +2639,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         messageId,
         `Rescheduled "${title}" to ${new Date(dueMs).toLocaleString()}.`,
       );
+      resolveDueReminderById(
+        reminderId,
+        `Rescheduled "${title}" to ${new Date(dueMs).toLocaleString()}.`,
+      );
     } catch {
       resolveDueLine(messageId, `Something went wrong updating "${title}".`);
+      resolveDueReminderById(
+        reminderId,
+        `Something went wrong updating "${title}".`,
+      );
     }
   };
 
@@ -2536,6 +2821,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     (mode: "create" | "browse" = "browse") => {
       resetTaskForm();
       void refreshTasks();
+      setTaskMode(mode);
       if (mode === "create") {
         setTaskTab("pending");
       } else {
@@ -2557,6 +2843,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setIsBatchOpen(false);
     setIsImportOpen(false);
     setIsTasksOpen(false);
+    setTaskMode("browse");
     setIsCreateOpen(false);
     setIsListOpen(false);
     setIsSnapshotOpen(false);
@@ -2975,6 +3262,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, []);
 
   const openTaskEdit = (task: TaskRow) => {
+    setTaskMode("create");
     setEditingTaskId(task.id);
     setTaskFormTitle(task.title);
     setTaskFormNotes(task.notes ?? "");
@@ -2989,6 +3277,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     );
     setTaskFormDomain(task.domain ?? "");
     setTaskFormError(null);
+    setIsTasksOpen(true);
   };
 
   const handleTaskSave = async (event: FormEvent<HTMLFormElement>) => {
@@ -3309,7 +3598,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   disabled={
                     !isHistoryLoaded || briefingStreaming || isLoading
                   }
-                  className="inline-flex h-10 items-center justify-center rounded-full border border-violet-200 bg-violet-50 px-4 text-xs font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="inline-flex h-9 items-center justify-center rounded-full border border-violet-200 bg-violet-50 px-3 text-[11px] font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:px-4 sm:text-xs"
                 >
                   Briefing
                 </button>
@@ -3344,9 +3633,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           desktopHoverMenu
                         >
                           <div className="mx-auto min-w-0 max-w-[42rem] rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-3 text-center text-xs text-amber-900 shadow-sm">
-                            <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
-                              {message.content}
-                            </p>
+                            <StructuredMessage content={message.content} />
                             <p className="mt-1 text-[10px] text-amber-700/80">
                               {new Date(message.createdAt).toLocaleTimeString(
                                 [],
@@ -3369,27 +3656,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       message.role === "user" && !dueMeta?.reminderId;
                     const bubbleClass =
                       message.role === "user"
-                        ? `relative ml-auto min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-br-[12px] bg-[linear-gradient(135deg,#7c3aed_0%,#5b7bff_100%)] py-3 pl-4 text-sm text-white shadow-[0_24px_45px_-28px_rgba(91,123,255,0.9)] ${
-                            showUserEdit ? "pr-14" : "pr-4"
-                          }`
+                        ? "relative ml-auto min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-br-[12px] bg-[linear-gradient(135deg,#7c3aed_0%,#5b7bff_100%)] px-4 py-3 text-sm text-white shadow-[0_24px_45px_-28px_rgba(91,123,255,0.9)]"
                         : "min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-bl-[12px] border border-slate-200 bg-[#f6f7fb] px-4 py-3 text-sm text-slate-800 shadow-[0_20px_40px_-36px_rgba(15,23,42,0.55)]";
 
                     const inner = (
                       <div className={bubbleClass}>
-                        {showUserEdit ? (
-                          <button
-                            type="button"
-                            onClick={startEditUser}
-                            aria-label="Edit message"
-                            title="Edit message (or long-press on phone)"
-                            className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-full border border-white/35 bg-black/15 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-md backdrop-blur-[2px] hover:bg-black/25 active:scale-[0.97] md:hidden"
-                          >
-                            <span className="text-xs leading-none" aria-hidden>
-                              ✎
-                            </span>
-                            Edit
-                          </button>
-                        ) : null}
                         {replyQuote ? (
                           <div
                             className={`mb-2 rounded-2xl border-l-4 border-amber-400 pl-3 ${
@@ -3500,9 +3771,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                 )}
                               </p>
                             ) : null}
-                            <p className="min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">
-                              {message.content}
-                            </p>
+                            <StructuredMessage
+                              content={message.content}
+                              className="min-w-0 max-w-full leading-relaxed [overflow-wrap:anywhere]"
+                            />
                           </>
                         )}
                         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -3658,7 +3930,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     </div>
                   ) : null}
                   <div className="flex w-full min-w-0 items-end gap-3 rounded-[28px] border border-slate-200 bg-[#f5f6fa] px-3 py-2 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
-                    <div className="relative min-h-[2.75rem] min-w-0 flex-1">
+                    <div className="relative min-h-[2.4rem] min-w-0 flex-1">
                       <textarea
                         ref={composerTextareaRef}
                         rows={1}
@@ -3673,7 +3945,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         placeholder={
                           briefingComposerLocked && !editingMessageId
                             ? "Briefing in progress…"
-                            : "Ask about today, create a reminder, or reschedule something"
+                            : "Message"
                         }
                         readOnly={briefingComposerLocked && !editingMessageId}
                         aria-busy={briefingStreaming}
@@ -3682,7 +3954,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             ? "Message (wait for briefing to finish)"
                             : "Message"
                         }
-                        className={`scrollbar-none relative z-10 min-h-11 w-full resize-none overflow-y-hidden bg-transparent px-2 py-2 text-sm leading-relaxed text-slate-800 [overflow-wrap:anywhere] outline-none placeholder:text-slate-400 ${
+                        className={`scrollbar-none relative z-10 min-h-10 w-full resize-none overflow-y-hidden rounded-2xl bg-transparent px-2 py-1.5 text-sm leading-6 text-slate-800 [overflow-wrap:anywhere] outline-none placeholder:text-slate-400 ${
                           briefingComposerLocked && !editingMessageId
                             ? "cursor-wait caret-transparent"
                             : ""
@@ -3696,7 +3968,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         isLoading ||
                         (briefingStreaming && !editingMessageId)
                       }
-                      className="h-11 w-11 shrink-0 rounded-full bg-violet-600 text-base font-semibold text-white shadow-md transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="h-10 w-10 shrink-0 rounded-full bg-violet-600 text-base font-semibold text-white shadow-md transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                       aria-label="Send message"
                     >
                       {isLoading
@@ -4732,314 +5004,57 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         </div>
       )}
 
-      {isTasksOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4"
-          onClick={closeTasksOverlay}
-        >
-          <div
-            className="mt-auto flex max-h-[min(92vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:my-auto sm:rounded-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-              <h3 className="text-base font-semibold sm:text-lg">Tasks</h3>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={openReminderListFromTasksPanel}
-                  className="rounded-full border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-900 transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
-                >
-                  View reminders
-                </button>
-                <button
-                  type="button"
-                  onClick={closeTasksOverlay}
-                  className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-            <form
-              className="shrink-0 space-y-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800"
-              onSubmit={handleTaskSave}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                  {editingTaskId ? "Edit task" : "New task"}
-                </p>
-                {editingTaskId ? (
-                  <button
-                    type="button"
-                    className="text-xs font-semibold text-slate-500 underline hover:text-slate-700 dark:hover:text-slate-300"
-                    onClick={() => resetTaskForm()}
-                  >
-                    Cancel edit
-                  </button>
-                ) : null}
-              </div>
-              <input
-                value={taskFormTitle}
-                onChange={(e) => setTaskFormTitle(e.target.value)}
-                placeholder="Title"
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
-              />
-              <label className="grid gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
-                <span className="flex flex-wrap items-center justify-between gap-1">
-                  <span>Due date &amp; time (optional)</span>
-                  {!editingTaskId && !taskDueUserEdited ? (
-                    <span className="max-w-[14rem] text-right font-normal text-[10px] text-slate-400 dark:text-slate-500">
-                      Stays on “now”; updates every 30s until you adjust it
-                    </span>
-                  ) : null}
-                </span>
-                <input
-                  type="datetime-local"
-                  value={taskFormDue}
-                  onFocus={() => setTaskDueUserEdited(true)}
-                  onChange={(e) => {
-                    setTaskDueUserEdited(true);
-                    setTaskFormDue(e.target.value);
-                  }}
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
-                />
-              </label>
-              <textarea
-                value={taskFormNotes}
-                onChange={(e) => setTaskFormNotes(e.target.value)}
-                placeholder="Notes (optional)"
-                rows={2}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
-              />
-              <label className="grid gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
-                Domain (optional)
-                <select
-                  value={taskFormDomain}
-                  onChange={(e) =>
-                    setTaskFormDomain(e.target.value as "" | LifeDomain)
-                  }
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
-                >
-                  <option value="">No domain</option>
-                  {(
-                    ["health", "finance", "career", "hobby", "fun"] as const
-                  ).map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <StarRating
-                value={taskStars}
-                onChange={setTaskStars}
-                label="Priority (required)"
-              />
-              <button
-                type="button"
-                onClick={() => void startReminderForCurrentTask()}
-                className="w-full rounded-xl border border-violet-300 bg-violet-50/90 py-2 text-xs font-semibold text-violet-900 shadow-sm transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
-              >
-                + Add linked reminder
-              </button>
-              {taskFormError ? (
-                <p className="text-xs text-rose-600 dark:text-rose-400">
-                  {taskFormError}
-                </p>
-              ) : null}
-              <button
-                type="submit"
-                className="w-full rounded-full bg-teal-600 py-2 text-sm font-semibold text-white hover:bg-teal-500"
-              >
-                {editingTaskId ? "Save changes" : "Add task"}
-              </button>
-            </form>
-            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 px-2 py-2 dark:border-slate-800">
-              {(
-                [
-                  ["missed", "Missed"],
-                  ["pending", "Upcoming"],
-                  ["done", "Done"],
-                ] as const
-              ).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setTaskTab(key)}
-                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                    taskTab === key
-                      ? "bg-teal-600 text-white"
-                      : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                  }`}
-                >
-                  {label}{" "}
-                  <span className="opacity-80">
-                    (
-                    {key === "missed"
-                      ? tasksGrouped.missed.length
-                      : key === "pending"
-                        ? tasksGrouped.pending.length
-                        : tasksGrouped.done.length}
-                    )
-                  </span>
-                </button>
-              ))}
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <div className="grid gap-3">
-                {(taskTab === "missed"
-                  ? tasksGrouped.missed
-                  : taskTab === "pending"
-                    ? tasksGrouped.pending
-                    : tasksGrouped.done
-                ).length === 0 ? (
-                  <p className="text-sm text-slate-500">No tasks here.</p>
-                ) : (
-                  (taskTab === "missed"
-                    ? tasksGrouped.missed
-                    : taskTab === "pending"
-                      ? tasksGrouped.pending
-                      : tasksGrouped.done
-                  ).map((task) => (
-                    <article
-                      key={task.id}
-                      className="rounded-xl border border-slate-200 p-3 dark:border-slate-700"
-                    >
-                      <p className="font-semibold">
-                        {task.title}
-                        <span className="text-amber-500">
-                          {priorityStarsLabel(task.priority)}
-                        </span>
-                        {task.domain ? (
-                          <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100">
-                            {task.domain}
-                          </span>
-                        ) : null}
-                      </p>
-                      {task.dueAt ? (
-                        <p className="text-sm text-slate-500">
-                          {taskTab === "missed" ? "Was due: " : "Due: "}
-                          {new Date(task.dueAt).toLocaleString()}
-                        </p>
-                      ) : (
-                        <p className="text-sm text-slate-500">No due date</p>
-                      )}
-                      {task.notes ? (
-                        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                          {task.notes}
-                        </p>
-                      ) : null}
-                      {(() => {
-                        const linkedAll = reminders.filter(
-                          (r) => r.linkedTaskId === task.id,
-                        );
-                        if (linkedAll.length === 0) return null;
-                        const linkedPending = linkedAll.filter(
-                          (r) => r.status === "pending",
-                        );
-                        const linkedDone = linkedAll.filter(
-                          (r) => r.status === "done" || r.status === "archived",
-                        );
-                        return (
-                          <div className="mt-2 space-y-2">
-                            {linkedPending.length > 0 ? (
-                              <div className="rounded-xl border border-violet-200/90 bg-gradient-to-b from-violet-50/95 to-white px-2.5 py-2 dark:border-violet-800/80 dark:from-violet-950/50 dark:to-slate-900/90">
-                                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
-                                  Linked reminders
-                                </p>
-                                <ul className="space-y-1.5">
-                                  {linkedPending.map((r) => (
-                                    <li
-                                      key={r.id}
-                                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/90"
-                                    >
-                                      <span className="min-w-0 font-medium text-slate-900 dark:text-slate-100">
-                                        {r.title}
-                                      </span>
-                                      <span className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
-                                        {new Date(r.dueAt).toLocaleString(
-                                          undefined,
-                                          {
-                                            month: "short",
-                                            day: "numeric",
-                                            hour: "numeric",
-                                            minute: "2-digit",
-                                          },
-                                        )}
-                                      </span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            ) : null}
-                            {linkedDone.length > 0 ? (
-                              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                                <span className="font-medium text-slate-600 dark:text-slate-300">
-                                  Completed on this task:
-                                </span>{" "}
-                                {linkedDone.map((r) => r.title).join(" · ")}
-                              </p>
-                            ) : null}
-                          </div>
-                        );
-                      })()}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openTaskEdit(task)}
-                          className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
-                        >
-                          Edit
-                        </button>
-                        {task.status === "pending" ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void fetch(`/api/tasks/${task.id}`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ status: "done" }),
-                              }).then(() => void refreshTasks());
-                            }}
-                            className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
-                          >
-                            Mark done
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void fetch(`/api/tasks/${task.id}`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ status: "pending" }),
-                              }).then(() => void refreshTasks());
-                            }}
-                            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
-                          >
-                            Reopen
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void fetch(`/api/tasks/${task.id}`, {
-                              method: "DELETE",
-                            }).then(() => void refreshTasks());
-                          }}
-                          className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </article>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <TaskListOverlay
+        open={isTasksOpen && taskMode === "browse"}
+        taskTab={taskTab}
+        setTaskTab={setTaskTab}
+        tasksGrouped={tasksGrouped}
+        reminders={reminders}
+        onClose={closeTasksOverlay}
+        onViewReminders={openReminderListFromTasksPanel}
+        onCreateTask={() => {
+          setTaskMode("create");
+          showTasksOverlay("create");
+        }}
+        onEditTask={openTaskEdit}
+        onToggleStatus={(task) => {
+          void fetch(`/api/tasks/${task.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              status: task.status === "done" ? "pending" : "done",
+            }),
+          }).then(() => void refreshTasks());
+        }}
+        onDeleteTask={(task) => {
+          void fetch(`/api/tasks/${task.id}`, {
+            method: "DELETE",
+          }).then(() => void refreshTasks());
+        }}
+      />
+
+      <TaskFormOverlay
+        open={isTasksOpen && taskMode === "create"}
+        editingTaskId={editingTaskId}
+        taskFormTitle={taskFormTitle}
+        setTaskFormTitle={setTaskFormTitle}
+        taskFormDue={taskFormDue}
+        setTaskFormDue={setTaskFormDue}
+        taskFormNotes={taskFormNotes}
+        setTaskFormNotes={setTaskFormNotes}
+        taskFormDomain={taskFormDomain}
+        setTaskFormDomain={setTaskFormDomain}
+        taskStars={taskStars}
+        setTaskStars={setTaskStars}
+        taskFormError={taskFormError}
+        taskDueUserEdited={taskDueUserEdited}
+        setTaskDueUserEdited={setTaskDueUserEdited}
+        onSubmit={handleTaskSave}
+        onCancelEdit={resetTaskForm}
+        onClose={closeTasksOverlay}
+        onViewReminders={openReminderListFromTasksPanel}
+        onCreateLinkedReminder={() => void startReminderForCurrentTask()}
+      />
 
       {isImportOpen && (
         <div

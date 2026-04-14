@@ -68,6 +68,26 @@ function starSuffix(p?: number): string {
   return ` ${"★".repeat(n)}`;
 }
 
+function taskPriority(task: TaskItemBrief): number {
+  return typeof task.priority === "number" && Number.isFinite(task.priority)
+    ? task.priority
+    : 0;
+}
+
+function formatTaskDue(iso?: string): string {
+  if (!iso) return "no due date";
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
 /** Light, varied pat-on-the-back for the COMPLETED slice (deterministic-ish by day + count). */
 function completedRewardHumor(completedCount: number, now: Date): string {
   if (completedCount <= 0) {
@@ -93,6 +113,7 @@ export type BriefingSection =
   | "today"
   | "tomorrow"
   | "later"
+  | "tasks"
   | "closing";
 
 export interface BriefingMessagePart {
@@ -107,12 +128,13 @@ export interface BriefingMessagePart {
 export function buildBriefingParts(
   reminders: ReminderItem[],
   firstName?: string | null,
+  tasks: TaskItemBrief[] = [],
   now = new Date()
 ): BriefingMessagePart[] {
   const name = firstName?.trim();
   const greet = name
-    ? `Hello, ${name} — this is your briefing.`
-    : "Hello — this is your briefing.";
+    ? `**Hello, ${name}** — this is your *briefing*.`
+    : `**Hello** — this is your *briefing*.`;
 
   const active = reminders.filter((r) => r.status !== "done" && r.status !== "archived");
   const completed = reminders
@@ -132,49 +154,63 @@ export function buildBriefingParts(
     .filter((r) => bucketOf(r, now) === "upcoming")
     .sort(sortByPriorityThenDue);
 
-  const completedLines: string[] = [`COMPLETED (${completed.length})`];
+  const completedLines: string[] = [`## Completed (${completed.length})`];
   if (completed.length === 0) {
-    completedLines.push("• None yet.");
+    completedLines.push("- None yet.");
   } else {
     for (const r of completed) {
-      completedLines.push(`• ${r.title}${starSuffix(r.priority)} — completed ${fmtUpdated(r.updatedAt)}`);
+      completedLines.push(`- **${r.title}**${starSuffix(r.priority)} — completed ${fmtUpdated(r.updatedAt)}`);
     }
   }
-  completedLines.push("", completedRewardHumor(completed.length, now));
+  completedLines.push("", `*${completedRewardHumor(completed.length, now)}*`);
 
-  const missedLines: string[] = [`OVERDUE / MISSED (${missed.length})`];
+  const missedLines: string[] = [`## Overdue / missed (${missed.length})`];
   if (missed.length === 0) {
-    missedLines.push("• None — you're caught up on overdue items.");
+    missedLines.push("- None — you're caught up on overdue items.");
   } else {
     for (const m of missed) {
-      missedLines.push(`• ${m.title}${starSuffix(m.priority)} — was due ${fmtTime(m.dueAt)}`);
+      missedLines.push(`- **${m.title}**${starSuffix(m.priority)} — was due ${fmtTime(m.dueAt)}`);
     }
   }
 
-  const todayLines: string[] = [`TODAY (${today.length})`];
+  const todayLines: string[] = [`## Today (${today.length})`];
   if (today.length === 0) {
-    todayLines.push("• Nothing else scheduled for today.");
+    todayLines.push("- Nothing else scheduled for today.");
   } else {
     for (const r of today) {
-      todayLines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
+      todayLines.push(`- **${r.title}**${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
     }
   }
 
-  const tomorrowLines: string[] = [`TOMORROW (${tomorrow.length})`];
+  const tomorrowLines: string[] = [`## Tomorrow (${tomorrow.length})`];
   if (tomorrow.length === 0) {
-    tomorrowLines.push("• Nothing scheduled for tomorrow yet.");
+    tomorrowLines.push("- Nothing scheduled for tomorrow yet.");
   } else {
     for (const r of tomorrow) {
-      tomorrowLines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
+      tomorrowLines.push(`- **${r.title}**${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
     }
   }
 
-  const laterLines: string[] = [`COMING UP LATER (${later.length})`];
+  const laterLines: string[] = [`## Coming up later (${later.length})`];
   if (later.length === 0) {
-    laterLines.push("• Nothing further out on the calendar.");
+    laterLines.push("- Nothing further out on the calendar.");
   } else {
     for (const r of later) {
-      laterLines.push(`• ${r.title}${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
+      laterLines.push(`- **${r.title}**${starSuffix(r.priority)} — ${fmtTime(r.dueAt)}`);
+    }
+  }
+
+  const taskEntries = tasks
+    .slice()
+    .sort((a, b) => taskPriority(b) - taskPriority(a) || ((a.dueAt ? new Date(a.dueAt).getTime() : Number.MAX_SAFE_INTEGER) - (b.dueAt ? new Date(b.dueAt).getTime() : Number.MAX_SAFE_INTEGER)));
+  const taskLines: string[] = [`## Tasks by priority (${taskEntries.length})`];
+  if (taskEntries.length === 0) {
+    taskLines.push("- No pending tasks.");
+  } else {
+    for (const t of taskEntries) {
+      taskLines.push(
+        `- **${t.title}**${starSuffix(t.priority)} — ${formatTaskDue(t.dueAt)}`,
+      );
     }
   }
 
@@ -185,9 +221,10 @@ export function buildBriefingParts(
     { section: "today", text: todayLines.join("\n") },
     { section: "tomorrow", text: tomorrowLines.join("\n") },
     { section: "later", text: laterLines.join("\n") },
+    { section: "tasks", text: taskLines.join("\n") },
     {
       section: "closing",
-      text: "Ask me anything about these, or tell me what to reschedule.",
+      text: "*Ask me anything about these, or tell me what to reschedule.*",
     },
   ];
 }
@@ -198,9 +235,10 @@ export function buildBriefingParts(
 export function buildBriefingNarrative(
   reminders: ReminderItem[],
   firstName?: string | null,
+  tasks: TaskItemBrief[] = [],
   now = new Date()
 ): string {
-  return buildBriefingParts(reminders, firstName, now)
+  return buildBriefingParts(reminders, firstName, tasks, now)
     .map((p) => p.text)
     .join("\n\n");
 }

@@ -218,15 +218,108 @@ function parseTimeFromInput(input: string) {
   return null;
 }
 
-function parseDateTimeFromInput(input: string) {
+function getCalendarDateInTimeZone(date: Date, timeZone?: string) {
+  if (!timeZone) {
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+    };
+  }
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  ) as Record<string, string>;
+
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+  };
+}
+
+function addDaysToCalendarDate(
+  value: { year: number; month: number; day: number },
+  days: number,
+) {
+  const utc = new Date(Date.UTC(value.year, value.month - 1, value.day));
+  utc.setUTCDate(utc.getUTCDate() + days);
+  return {
+    year: utc.getUTCFullYear(),
+    month: utc.getUTCMonth() + 1,
+    day: utc.getUTCDate(),
+  };
+}
+
+function getTimeZoneOffsetMinutes(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  ) as Record<string, string>;
+  const zonedAsUtc = Date.UTC(
+    Number(values.year),
+    Number(values.month) - 1,
+    Number(values.day),
+    Number(values.hour),
+    Number(values.minute),
+    Number(values.second),
+  );
+  return (zonedAsUtc - date.getTime()) / 60000;
+}
+
+function calendarDateTimeToIso(
+  calendar: { year: number; month: number; day: number },
+  time: { hour: number; minute: number },
+  timeZone?: string,
+) {
+  if (!timeZone) {
+    const date = new Date();
+    date.setHours(time.hour, time.minute, 0, 0);
+    date.setFullYear(calendar.year, calendar.month - 1, calendar.day);
+    return date.toISOString();
+  }
+
+  const utcGuess = Date.UTC(
+    calendar.year,
+    calendar.month - 1,
+    calendar.day,
+    time.hour,
+    time.minute,
+    0,
+    0,
+  );
+  const firstOffset = getTimeZoneOffsetMinutes(new Date(utcGuess), timeZone);
+  let utcInstant = utcGuess - firstOffset * 60_000;
+  const secondOffset = getTimeZoneOffsetMinutes(new Date(utcInstant), timeZone);
+  if (secondOffset !== firstOffset) {
+    utcInstant = utcGuess - secondOffset * 60_000;
+  }
+  return new Date(utcInstant).toISOString();
+}
+
+function parseDateTimeFromInput(input: string, timeZone?: string) {
   const now = new Date();
-  const day = new Date(now);
-  day.setSeconds(0, 0);
+  let day = getCalendarDateInTimeZone(now, timeZone);
 
   if (hasDayAfterTomorrowHint(input)) {
-    day.setDate(day.getDate() + 2);
+    day = addDaysToCalendarDate(day, 2);
   } else if (hasTomorrowHint(input)) {
-    day.setDate(day.getDate() + 1);
+    day = addDaysToCalendarDate(day, 1);
   } else if (hasTodayHint(input)) {
     // no change
   } else {
@@ -236,8 +329,7 @@ function parseDateTimeFromInput(input: string) {
   const time = parseTimeFromInput(input);
   if (!time) return null;
 
-  day.setHours(time.hour, time.minute, 0, 0);
-  return day.toISOString();
+  return calendarDateTimeToIso(day, time, timeZone);
 }
 
 function isValidFutureIsoDate(value: string) {
@@ -424,7 +516,7 @@ export async function POST(request: Request) {
   // Deterministic path first: create reminder with explicit date/time should not rely on LLM.
   if (looksLikeCreateIntent(effectiveMessage)) {
     const title = extractTitleFromCreateInput(effectiveMessage);
-    const dueAt = parseDateTimeFromInput(effectiveMessage);
+    const dueAt = parseDateTimeFromInput(effectiveMessage, timeZone);
 
     if (!title) {
       return NextResponse.json({
@@ -543,7 +635,7 @@ export async function POST(request: Request) {
     }
 
     if (parsed.action.type === "create_reminder") {
-      const deterministicDueAt = parseDateTimeFromInput(effectiveMessage);
+      const deterministicDueAt = parseDateTimeFromInput(effectiveMessage, timeZone);
       if (deterministicDueAt) {
         parsed.action.dueAt = deterministicDueAt;
       }

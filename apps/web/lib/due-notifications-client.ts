@@ -1,4 +1,5 @@
 import type { ReminderItem } from "@repo/reminder";
+import { playUiCue } from "./ui-sound";
 
 /**
  * Shows a system notification for a due reminder (requires active service worker + permission).
@@ -6,6 +7,7 @@ import type { ReminderItem } from "@repo/reminder";
  */
 export async function showDueReminderSystemNotification(reminder: ReminderItem, tagKey: string) {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+  void playUiCue("notification");
   if (typeof navigator !== "undefined" && "vibrate" in navigator) {
     navigator.vibrate?.([120, 40, 120]);
   }
