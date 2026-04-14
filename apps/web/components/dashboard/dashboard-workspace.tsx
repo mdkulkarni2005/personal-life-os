@@ -1840,9 +1840,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       const a = d.action ?? "open";
       if (a === "open") return;
       if (a === "done" || a === "snooze" || a === "delete") {
-        void runReminderQuickAction(d.reminderId, a).then(() => {
+        const reminderId = d.reminderId;
+        void runReminderQuickAction(reminderId, a).then(() => {
           const reminderTitle =
-            remindersRef.current.find((r) => r.id === d.reminderId)?.title ??
+            remindersRef.current.find((r) => r.id === reminderId)?.title ??
             d.title ??
             "Reminder";
           const resolutionLine =
@@ -1851,7 +1852,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               : a === "snooze"
                 ? `Snoozed "${reminderTitle}" by one hour.`
                 : `Deleted "${reminderTitle}".`;
-          resolveDueReminderById(d.reminderId, resolutionLine);
+          resolveDueReminderById(reminderId, resolutionLine);
           setMessages((prev) => [
             ...prev,
             {
