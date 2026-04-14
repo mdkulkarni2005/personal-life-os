@@ -1821,6 +1821,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         action?: string;
         reminderId?: string;
         batchKey?: string;
+        title?: string;
       };
       if (d?.type === "SHARE_INVITE_NOTIF" && d.batchKey) {
         const a = d.action ?? "open";
