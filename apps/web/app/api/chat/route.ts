@@ -176,32 +176,42 @@ function fallbackDeterministicReply(message: string, reminders: ReminderItem[], 
 }
 
 function hasExplicitTime(input: string) {
-  const normalized = input.replace(/\b([ap])\.\s?m\.\b/gi, "$1m");
-  return /\b(\d{1,2})(:\d{2})?\s?(am|pm)\b/i.test(normalized)
-    || /\b\d{1,2}:\d{2}\b/.test(input)
+  const normalized = input
+    .replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)))
+    .replace(/\b([ap])\.\s?m\.\b/gi, "$1m");
+  return /\b(\d{1,2})(?:[:.]\d{2})?\s?(am|pm)\b/i.test(normalized)
+    || /\b\d{1,2}[:.]\d{2}\b/.test(input)
+    || /(?:^|\s)\d{1,2}\s*(?:बजे|वाजता|वाजले)(?=\s|$|[,.!?])/i.test(normalized)
+    || /(?:^|\s)(सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)(?=\s|$|[,.!?])/i.test(normalized)
     || /\b(noon|midnight)\b/i.test(input);
 }
 
 function hasTodayHint(input: string) {
-  return /\btoday\b/i.test(input);
+  return /\btoday\b/i.test(input) || /(^|\s)आज(?=\s|$|[,.!?])/i.test(input);
 }
 
 function hasTomorrowHint(input: string) {
-  return /\b(tomorrow|tomorow|tommarow|tmrw)\b/i.test(input);
+  return /\b(tomorrow|tomorow|tommarow|tmrw)\b/i.test(input)
+    || /(^|\s)(कल|उद्या)(?=\s|$|[,.!?])/i.test(input);
 }
 
 function hasDayAfterTomorrowHint(input: string) {
-  return /\b(day after tomorrow|after tomorrow)\b/i.test(input);
+  return /\b(day after tomorrow|after tomorrow)\b/i.test(input)
+    || /(^|\s)(परसों|परवा)(?=\s|$|[,.!?])/i.test(input);
 }
 
 function parseTimeFromInput(input: string) {
-  const normalized = input.replace(/\b([ap])\.\s?m\.\b/gi, "$1m");
+  const normalized = input
+    .replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)))
+    .replace(/\b([ap])\.\s?m\.\b/gi, "$1m");
   
   // Match times with meridiem (am/pm): 11:23 am, 11.23 pm, 11 am, etc.
   const meridiemMatch = normalized.match(/\b(\d{1,2})(?:[:.]\s*(\d{2}))?\s?(am|pm)\b/i);
   if (meridiemMatch) {
     const rawHour = Number.parseInt(meridiemMatch[1] ?? "0", 10);
     const minute = Number.parseInt(meridiemMatch[2] ?? "0", 10);
+    if (!Number.isFinite(rawHour) || rawHour < 1 || rawHour > 12) return null;
+    if (!Number.isFinite(minute) || minute < 0 || minute > 59) return null;
     const meridiem = (meridiemMatch[3] ?? "am").toLowerCase();
     let hour = rawHour % 12;
     if (meridiem === "pm") hour += 12;
@@ -211,14 +221,47 @@ function parseTimeFromInput(input: string) {
   // Match 24-hour clock format: 11:23 or 11.23
   const clockMatch = input.match(/\b(\d{1,2})[:.]\s*(\d{2})\b/);
   if (clockMatch) {
+    const hour = Number.parseInt(clockMatch[1] ?? "0", 10);
+    const minute = Number.parseInt(clockMatch[2] ?? "0", 10);
+    if (!Number.isFinite(hour) || hour < 0 || hour > 23) return null;
+    if (!Number.isFinite(minute) || minute < 0 || minute > 59) return null;
     return {
-      hour: Number.parseInt(clockMatch[1] ?? "0", 10),
-      minute: Number.parseInt(clockMatch[2] ?? "0", 10),
+      hour,
+      minute,
     };
+  }
+
+  const regionalMatch = normalized.match(
+    /(?:^|\s)(\d{1,2})(?:[:.]\s*(\d{2}))?\s*(?:बजे|वाजता|वाजले)?\s*(सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)?(?=\s|$|[,.!?])/i,
+  );
+  if (regionalMatch) {
+    const rawHour = Number.parseInt(regionalMatch[1] ?? "-1", 10);
+    const minute = Number.parseInt(regionalMatch[2] ?? "0", 10);
+    if (!Number.isFinite(rawHour) || rawHour < 0 || rawHour > 23) return null;
+    if (!Number.isFinite(minute) || minute < 0 || minute > 59) return null;
+
+    const part = (regionalMatch[3] ?? "").toLowerCase();
+    if (!part && !/(?:बजे|वाजता|वाजले)/i.test(normalized)) {
+      return null;
+    }
+
+    let hour = rawHour;
+    if (part) {
+      if (/सुबह|सकाळी/i.test(part)) {
+        if (hour === 12) hour = 0;
+      } else if (/दोपहर|दुपारी/i.test(part)) {
+        if (hour >= 1 && hour <= 11) hour += 12;
+      } else if (/शाम|सायंकाळी|रात/i.test(part)) {
+        if (hour >= 1 && hour <= 11) hour += 12;
+      }
+    }
+    return { hour, minute };
   }
 
   if (/\bnoon\b/i.test(input)) return { hour: 12, minute: 0 };
   if (/\bmidnight\b/i.test(input)) return { hour: 0, minute: 0 };
+  if (/(?:^|\s)(दोपहर|दुपारी)(?=\s|$|[,.!?])/i.test(normalized)) return { hour: 12, minute: 0 };
+  if (/(?:^|\s)(आधी रात|मध्यरात्र)(?=\s|$|[,.!?])/i.test(normalized)) return { hour: 0, minute: 0 };
   return null;
 }
 
@@ -349,15 +392,15 @@ function extractTitleFromCreateInput(input: string) {
   }
 
   const normalized = working
-    .replace(/\b(create|add|set|make|schedule)\b/gi, " ")
-    .replace(/\b(reminder|remind me|remind)\b/gi, " ")
-    .replace(/\b(for|about)\b/gi, " ")
+    .replace(/\b(create|add|set|make|schedule|बनाओ|तैयार करो|set karo|करो)\b/gi, " ")
+    .replace(/\b(reminder|remind me|remind|रिमाइंडर|स्मरणपत्र)\b/gi, " ")
+    .replace(/\b(for|about|के लिए|साठी)\b/gi, " ")
     .replace(
-      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|at|on|by|noon|midnight)\b/gi,
+      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)\b/gi,
       " "
     )
-    .replace(/\b\d{1,2}(:\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")
-    .replace(/\b\d{1,2}:\d{2}\b/g, " ")
+    .replace(/\b\d{1,2}(?:[:.]\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")
+    .replace(/\b\d{1,2}[:.]\d{2}\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 

@@ -69,7 +69,7 @@ function TaskHeader({
   onClose,
 }: {
   title: string;
-  description: string;
+  description?: string;
   onViewReminders: () => void;
   onClose: () => void;
 }) {
@@ -77,9 +77,11 @@ function TaskHeader({
     <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
       <div>
         <h3 className="text-base font-semibold sm:text-lg">{title}</h3>
-        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          {description}
-        </p>
+        {description ? (
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {description}
+          </p>
+        ) : null}
       </div>
       <div className="flex items-center gap-2">
         <button
@@ -256,7 +258,6 @@ export function TaskListOverlay({
       >
         <TaskHeader
           title="Tasks"
-          description="Browse your task list without the editor getting in the way."
           onViewReminders={onViewReminders}
           onClose={onClose}
         />
@@ -363,7 +364,6 @@ export function TaskFormOverlay({
       >
         <TaskHeader
           title={editingTaskId ? "Edit task" : "Create task"}
-          description="Add the task details and keep reminders linked to it."
           onViewReminders={onViewReminders}
           onClose={onClose}
         />
@@ -390,14 +390,7 @@ export function TaskFormOverlay({
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
             />
             <label className="grid gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
-              <span className="flex flex-wrap items-center justify-between gap-1">
-                <span>Due date &amp; time (optional)</span>
-                {!editingTaskId && !taskDueUserEdited ? (
-                  <span className="max-w-[14rem] text-right font-normal text-[10px] text-slate-400 dark:text-slate-500">
-                    Stays on “now”; updates every 30s until you adjust it
-                  </span>
-                ) : null}
-              </span>
+              <span>Due date &amp; time (optional)</span>
               <input
                 type="datetime-local"
                 min={new Date().toISOString().slice(0, 16)}

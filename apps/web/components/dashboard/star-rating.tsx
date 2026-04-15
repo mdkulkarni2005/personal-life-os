@@ -13,9 +13,9 @@ export function StarRating({
   label?: string;
 }) {
   return (
-    <div className="grid gap-1.5">
+    <div className="flex flex-wrap items-center gap-3">
       <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
-      <div className="flex flex-wrap items-center gap-0.5" role="group" aria-label={label}>
+      <div className="flex items-center gap-0.5" role="group" aria-label={label}>
         {[1, 2, 3, 4, 5].map((n) => (
           <button
             key={n}
@@ -23,7 +23,7 @@ export function StarRating({
             disabled={disabled}
             aria-label={`${n} star${n > 1 ? "s" : ""}`}
             aria-pressed={value >= n}
-            className={`rounded p-0.5 text-2xl leading-none transition disabled:opacity-40 ${
+            className={`rounded p-0.5 text-xl leading-none transition disabled:opacity-40 ${
               value >= n ? "text-amber-400" : "text-slate-300 dark:text-slate-600"
             } hover:text-amber-300`}
             onClick={() => onChange(n)}
@@ -31,7 +31,7 @@ export function StarRating({
             ★
           </button>
         ))}
-        <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+        <span className="text-xs text-slate-500 dark:text-slate-400">
           {value > 0 ? `${value}/5` : "Required"}
         </span>
       </div>

@@ -41,7 +41,14 @@ function mapApiReminderItems(items: Array<Record<string, unknown>>): ReminderBad
 }
 
 function countMissedReminders(items: ReminderBadgeItem[], nowMs: number) {
-  return items.filter((item) => item.status === "pending" && new Date(item.dueAt).getTime() < nowMs).length;
+  const startToday = new Date(nowMs);
+  startToday.setHours(0, 0, 0, 0);
+  const startTodayMs = startToday.getTime();
+  return items.filter((item) => {
+    if (item.status !== "pending") return false;
+    const dueMs = new Date(item.dueAt).getTime();
+    return Number.isFinite(dueMs) && dueMs >= startTodayMs && dueMs < nowMs;
+  }).length;
 }
 
 export function OpenRemindersButton() {

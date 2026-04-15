@@ -5,7 +5,6 @@ import {
   buildFollowUpQuestions,
   replaceFollowUpSlot,
   buildListRemindersReply,
-  buildReminderSnapshot,
   getReminderBucket,
   inferListScopeFromMessage,
   isAdhocReminder,
@@ -96,6 +95,8 @@ interface AgentAction {
   title?: string;
   dueAt?: string;
   notes?: string;
+  linkedTaskId?: string;
+  priority?: number;
   targetTitle?: string;
   targetId?: string;
   scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all";
@@ -106,8 +107,13 @@ interface AgentResponse {
   action: AgentAction;
 }
 interface PendingCreateDraft {
+  step: "title" | "date" | "time" | "task" | "priority";
   title?: string;
   notes?: string;
+  dateIso?: string;
+  dueAt?: string;
+  linkedTaskId?: string;
+  priority?: number;
 }
 
 interface WorkspaceProps {
@@ -210,66 +216,66 @@ function buildOpeningSummaryMessage(input: {
   now?: Date;
 }): ChatMessage {
   const now = input.now ?? new Date();
-  const end = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+  const startToday = new Date(now);
+  startToday.setHours(0, 0, 0, 0);
+  const next2h = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
-  const completedItems = [
-    ...input.reminders.filter((item) => item.status === "done"),
-    ...input.tasks.filter((item) => item.status === "done"),
-  ];
-  const completedToday = completedItems.filter((item) => {
-    const updatedAt = "updatedAt" in item ? item.updatedAt : undefined;
-    if (!updatedAt) return false;
-    return new Date(updatedAt).toDateString() === now.toDateString();
-  }).length;
-  const highPriorityWins = completedItems.filter(
-    (item) => (item.priority ?? 0) >= 4,
-  ).length;
+  const overdueToday: ReminderItem[] = [];
+  const nextTwoHours: ReminderItem[] = [];
+  const upcomingLater: ReminderItem[] = [];
 
-  const upcoming = [
-    ...input.reminders
-      .filter((item) => item.status !== "done" && item.status !== "archived")
-      .filter((item) => {
-        const due = new Date(item.dueAt).getTime();
-        return due >= now.getTime() && due < end.getTime();
-      })
-      .map((item) => ({
-        kind: "reminder" as const,
-        dueAt: item.dueAt,
-        title: item.title,
-        priority: item.priority ?? 0,
-      })),
-    ...input.tasks
-      .filter((item) => item.status === "pending" && item.dueAt)
-      .filter((item) => {
-        const due = new Date(item.dueAt!).getTime();
-        return due >= now.getTime() && due < end.getTime();
-      })
-      .map((item) => ({
-        kind: "task" as const,
-        dueAt: item.dueAt!,
-        title: item.title,
-        priority: item.priority ?? 0,
-      })),
-  ].sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+  for (const reminder of input.reminders) {
+    if (reminder.status === "done" || reminder.status === "archived") continue;
+    const dueMs = new Date(reminder.dueAt).getTime();
+    if (!Number.isFinite(dueMs)) continue;
 
-  const firstItem = upcoming[0];
+    if (dueMs >= startToday.getTime() && dueMs < now.getTime()) {
+      overdueToday.push(reminder);
+      continue;
+    }
+    if (dueMs >= now.getTime() && dueMs < next2h.getTime()) {
+      nextTwoHours.push(reminder);
+      continue;
+    }
+    if (dueMs >= next2h.getTime()) {
+      upcomingLater.push(reminder);
+    }
+  }
+
+  overdueToday.sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+  nextTwoHours.sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+  upcomingLater.sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+
   const name = input.firstName?.trim();
   const lines = [
-    `🏆 Rewards: ${completedItems.length} completed item${completedItems.length === 1 ? "" : "s"}${completedItems.length > 0 ? `, ${highPriorityWins} high-priority win${highPriorityWins === 1 ? "" : "s"}` : ""}.`,
-    `🌟 Achievements: ${completedToday} finish${completedToday === 1 ? "" : "es"} logged today${name ? `, ${name}` : ""}.`,
-    firstItem
-      ? `✨ Momentum: next up is **${firstItem.title}** at ${formatSummaryTime(firstItem.dueAt)}.`
-      : "✨ Momentum: nothing urgent is due in the next two hours.",
-    "⏰ Next two hours:",
+    name ? `Good ${now.getHours() < 12 ? "morning" : now.getHours() < 18 ? "afternoon" : "evening"}, ${name}.` : "Here is your reminder overview:",
+    "",
+    `### 1) Today's overdue reminders (${overdueToday.length})`,
   ];
 
-  if (upcoming.length === 0) {
-    lines.push("- Clear window.");
+  if (overdueToday.length === 0) {
+    lines.push("- None");
   } else {
-    for (const item of upcoming.slice(0, 6)) {
-      lines.push(
-        `- ${formatSummaryTime(item.dueAt)} — **${item.title}**${item.kind === "task" ? " *(task)*" : ""}${item.priority >= 4 ? ` ${"★".repeat(Math.min(5, item.priority))}` : ""}`,
-      );
+    for (const item of overdueToday) {
+      lines.push(`- ${formatSummaryTime(item.dueAt)} — **${item.title}**`);
+    }
+  }
+
+  lines.push("", `### 2) Next 2 hours reminders (${nextTwoHours.length})`);
+  if (nextTwoHours.length === 0) {
+    lines.push("- None");
+  } else {
+    for (const item of nextTwoHours) {
+      lines.push(`- ${formatSummaryTime(item.dueAt)} — **${item.title}**`);
+    }
+  }
+
+  lines.push("", `### 3) Remaining upcoming reminders (${upcomingLater.length})`);
+  if (upcomingLater.length === 0) {
+    lines.push("- None");
+  } else {
+    for (const item of upcomingLater.slice(0, 12)) {
+      lines.push(`- ${new Date(item.dueAt).toLocaleDateString()} ${formatSummaryTime(item.dueAt)} — **${item.title}**`);
     }
   }
 
@@ -539,6 +545,17 @@ function isDueThisMinute(dueAtIso: string, now: Date) {
     d.getHours() === now.getHours() &&
     d.getMinutes() === now.getMinutes()
   );
+}
+
+function isOverdueTodayReminder(reminder: ReminderItem, now = new Date()) {
+  if (reminder.status === "done" || reminder.status === "archived") return false;
+  const dueMs = new Date(reminder.dueAt).getTime();
+  if (!Number.isFinite(dueMs)) return false;
+  const startToday = new Date(now);
+  startToday.setHours(0, 0, 0, 0);
+  const startTodayMs = startToday.getTime();
+  const nowMs = now.getTime();
+  return dueMs >= startTodayMs && dueMs < nowMs;
 }
 
 function readDueShown(): Set<string> {
@@ -927,6 +944,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [pendingCreateDraft, setPendingCreateDraft] =
     useState<PendingCreateDraft | null>(null);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
+  const [showReminderSuccess, setShowReminderSuccess] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [followUpQuestions, setFollowUpQuestions] = useState<
@@ -969,6 +987,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     useState(false);
   const [shareToast, setShareToast] = useState<string | null>(null);
   const shareToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reminderSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [shareReminderIds, setShareReminderIds] = useState<string[]>([]);
   const [directoryUsers, setDirectoryUsers] = useState<DirectoryUser[]>([]);
@@ -1009,6 +1030,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [briefingStreaming, setBriefingStreaming] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatFormRef = useRef<HTMLFormElement>(null);
+  const quickSubmitTextRef = useRef<string | null>(null);
   /** When false, do not auto-scroll on new/streaming content so the user can read history. */
   const chatPinnedToBottomRef = useRef(true);
   /** After clear chat, ignore poll merges briefly so in-flight GETs cannot restore deleted history. */
@@ -1145,6 +1168,27 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       setShareToast(null);
       shareToastTimerRef.current = null;
     }, 3400);
+  }, []);
+
+  const refreshAfterReminderMutation = useCallback(
+    async (responsePromise: Promise<Response>) => {
+      const response = await responsePromise;
+      if (!response.ok) {
+        throw new Error("Reminder update failed");
+      }
+      await refreshReminders();
+    },
+    [refreshReminders],
+  );
+
+  const playReminderSuccessAnimation = useCallback(() => {
+    setShowReminderSuccess(true);
+    if (reminderSuccessTimerRef.current)
+      clearTimeout(reminderSuccessTimerRef.current);
+    reminderSuccessTimerRef.current = setTimeout(() => {
+      setShowReminderSuccess(false);
+      reminderSuccessTimerRef.current = null;
+    }, 900);
   }, []);
 
   const loadShareInbox = useCallback(async () => {
@@ -1335,23 +1379,28 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const runReminderQuickAction = useCallback(
     async (reminderId: string, action: "delete" | "done" | "snooze") => {
       if (action === "delete") {
-        await fetch(`/api/reminders/${reminderId}`, { method: "DELETE" });
+        await refreshAfterReminderMutation(
+          fetch(`/api/reminders/${reminderId}`, { method: "DELETE" }),
+        );
       } else if (action === "done") {
-        await fetch(`/api/reminders/${reminderId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "done" }),
-        });
+        await refreshAfterReminderMutation(
+          fetch(`/api/reminders/${reminderId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "done" }),
+          }),
+        );
       } else {
-        await fetch(`/api/reminders/${reminderId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dueAt: Date.now() + 60 * 60 * 1000 }),
-        });
+        await refreshAfterReminderMutation(
+          fetch(`/api/reminders/${reminderId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dueAt: Date.now() + 60 * 60 * 1000 }),
+          }),
+        );
       }
-      await refreshReminders();
     },
-    [refreshReminders],
+    [refreshAfterReminderMutation],
   );
 
   useEffect(() => {
@@ -1513,6 +1562,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   useEffect(() => {
     return () => {
       if (shareToastTimerRef.current) clearTimeout(shareToastTimerRef.current);
+      if (reminderSuccessTimerRef.current)
+        clearTimeout(reminderSuccessTimerRef.current);
     };
   }, []);
 
@@ -1550,35 +1601,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     if (!isHistoryLoaded || !remindersLoaded || !tasksLoaded) return;
     if (missedRemindersAppliedRef.current) return;
     if (!openingSummaryAppliedRef.current) return;
-
-    const missed = reminders.filter(
-      (r) => r.status !== "done" && r.status !== "archived" && new Date(r.dueAt).getTime() < Date.now(),
-    );
-
-    if (missed.length === 0) {
-      missedRemindersAppliedRef.current = true;
-      return;
-    }
-
-    const missedBubbles: ChatMessage[] = missed
-      .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())
-      .map((reminder) => ({
-        id: `due-reminder-${reminder.id}-${Date.now()}`,
-        role: "assistant" as const,
-        content: `**Reminder due**\n\n${reminder.title}\n\n${new Date(reminder.dueAt).toLocaleString()}${
-          reminder.notes ? `\n\n${reminder.notes}` : ""
-        }`,
-        createdAt: new Date().toISOString(),
-        meta: {
-          kind: "due_reminder" as const,
-          reminderId: reminder.id,
-          dueAt: new Date(reminder.dueAt).getTime(),
-          title: reminder.title,
-          notes: reminder.notes,
-        },
-      }));
-
-    setMessages((prev) => [...prev, ...missedBubbles]);
+    // Opening summary already contains ordered sections including overdue today.
+    // Prevent duplicate missed reminder bubbles on refresh/reopen.
     missedRemindersAppliedRef.current = true;
   }, [isHistoryLoaded, remindersLoaded, tasksLoaded, reminders]);
 
@@ -1985,17 +2009,48 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     return () => window.clearInterval(id);
   }, [reminders, isHistoryLoaded, dueNotifPrefs, notifUiTick]);
 
-  const snapshot = useMemo(() => buildReminderSnapshot(reminders), [reminders]);
-
   const grouped = useMemo(() => {
+    const now = new Date();
+    const next = {
+      missed: [] as ReminderItem[],
+      today: [] as ReminderItem[],
+      tomorrow: [] as ReminderItem[],
+      upcoming: [] as ReminderItem[],
+      done: [] as ReminderItem[],
+    };
+
+    for (const reminder of reminders) {
+      if (isOverdueTodayReminder(reminder, now)) {
+        next.missed.push(reminder);
+        continue;
+      }
+
+      const bucket = getReminderBucket(reminder, now);
+      if (bucket === "today") next.today.push(reminder);
+      else if (bucket === "tomorrow") next.tomorrow.push(reminder);
+      else if (bucket === "upcoming") next.upcoming.push(reminder);
+      else if (bucket === "done") next.done.push(reminder);
+    }
+
     return {
-      missed: reminders.filter((r) => getReminderBucket(r) === "missed"),
-      today: reminders.filter((r) => getReminderBucket(r) === "today"),
-      tomorrow: reminders.filter((r) => getReminderBucket(r) === "tomorrow"),
-      upcoming: reminders.filter((r) => getReminderBucket(r) === "upcoming"),
-      done: reminders.filter((r) => getReminderBucket(r) === "done"),
+      missed: next.missed,
+      today: next.today,
+      tomorrow: next.tomorrow,
+      upcoming: next.upcoming,
+      done: next.done,
     };
   }, [reminders]);
+
+  const snapshot = useMemo(
+    () => ({
+      pending: reminders.filter((r) => r.status !== "done").length,
+      done: reminders.filter((r) => r.status === "done").length,
+      missed: grouped.missed.length,
+      today: grouped.today.length,
+      tomorrow: grouped.tomorrow.length,
+    }),
+    [grouped.missed.length, grouped.today.length, grouped.tomorrow.length, reminders],
+  );
 
   useEffect(() => {
     if (isListOpen && !listOpenRef.current) {
@@ -2154,19 +2209,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             dueAt: new Date(dueAt).getTime(),
             notes: action.notes?.trim() ? action.notes : undefined,
             recurrence: "none",
-            priority: 3,
+            priority:
+              typeof action.priority === "number" && action.priority >= 1 && action.priority <= 5
+                ? action.priority
+                : 3,
+            linkedTaskId: action.linkedTaskId?.trim() ? action.linkedTaskId : undefined,
           }),
         });
         const data = (await res.json().catch(() => ({}))) as {
           created?: boolean;
-          reminder?: { _id?: string };
         };
         if (res.ok) {
           await refreshReminders();
-          if (data.created !== false && data.reminder?._id) {
-            showReminderListOverlay(false);
-            showShareOverlay([String(data.reminder._id)], false);
-          }
+          playReminderSuccessAnimation();
+          if (data.created === false) return;
         }
       })();
       return;
@@ -2177,11 +2233,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         matchesReminder(r, action.targetId, action.targetTitle),
       );
       if (!target) return;
-      void fetch(`/api/reminders/${target.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "done" }),
-      }).then(() => void refreshReminders());
+      void refreshAfterReminderMutation(
+        fetch(`/api/reminders/${target.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "done" }),
+        }),
+      ).catch(() => showShareToast("Could not update reminder. Try again."));
       return;
     }
 
@@ -2190,9 +2248,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         matchesReminder(r, action.targetId, action.targetTitle),
       );
       if (!target) return;
-      void fetch(`/api/reminders/${target.id}`, { method: "DELETE" }).then(
-        () => void refreshReminders(),
-      );
+      void refreshAfterReminderMutation(
+        fetch(`/api/reminders/${target.id}`, { method: "DELETE" }),
+      ).catch(() => showShareToast("Could not delete reminder. Try again."));
       return;
     }
 
@@ -2201,33 +2259,142 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         matchesReminder(r, action.targetId, action.targetTitle),
       );
       if (!target) return;
-      void fetch(`/api/reminders/${target.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dueAt: new Date(action.dueAt).getTime() }),
-      }).then(() => void refreshReminders());
+      void refreshAfterReminderMutation(
+        fetch(`/api/reminders/${target.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dueAt: new Date(action.dueAt).getTime() }),
+        }),
+      ).catch(() => showShareToast("Could not reschedule reminder. Try again."));
     }
 
     if (action.type === "clarify") {
       setPendingCreateDraft({
+        step: action.title ? "date" : "title",
         title: action.title,
         notes: action.notes,
       });
     }
   };
 
-  const looksLikeYes = (value: string) =>
-    /^(yes|yup|yeah|ok|okay|sure|haan|han)$/i.test(value.trim());
-  const hasDateOrTimeHint = (value: string) =>
-    /\b(today|tomorrow|tmrw|tomorow|tommarow|day after tomorrow|after tomorrow|noon|midnight)\b/i.test(
-      value,
-    ) ||
-    /\b\d{1,2}(:\d{2})?\s?([ap]\.?m\.?)\b/i.test(value) ||
-    /\b\d{1,2}:\d{2}\b/.test(value);
+  const extractCreateTitle = (value: string) =>
+    value
+      .replace(/^\s*create(\s+a)?\s+reminder\s*/i, "")
+      .replace(/^\s*(for|about)\s+/i, "")
+      .trim();
+
+  const parseDateInput = (value: string, now: Date) => {
+    const text = value
+      .trim()
+      .toLowerCase()
+      .replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)));
+    const base = new Date(now);
+    base.setHours(0, 0, 0, 0);
+
+    if (/^(today|आज)$/.test(text)) return base.toISOString().slice(0, 10);
+    if (/^(tomorrow|tmrw|tomorow|tommarow|कल|उद्या)$/.test(text)) {
+      const d = new Date(base);
+      d.setDate(d.getDate() + 1);
+      return d.toISOString().slice(0, 10);
+    }
+    if (/^(day after tomorrow|after tomorrow|परसों|परवा)$/.test(text)) {
+      const d = new Date(base);
+      d.setDate(d.getDate() + 2);
+      return d.toISOString().slice(0, 10);
+    }
+
+    const m = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const parsed = new Date(y, mo - 1, d);
+    if (
+      parsed.getFullYear() !== y ||
+      parsed.getMonth() !== mo - 1 ||
+      parsed.getDate() !== d
+    ) {
+      return null;
+    }
+    return `${y.toString().padStart(4, "0")}-${mo.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+  };
+
+  const parseTimeInput = (value: string) => {
+    const text = value
+      .trim()
+      .toLowerCase()
+      .replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)))
+      .replace(/\b([ap])\.\s?m\.\b/g, "$1m");
+    if (text === "noon") return "12:00";
+    if (text === "midnight") return "00:00";
+    if (/^(दोपहर|दुपारी)$/.test(text)) return "12:00";
+    if (/^(आधी रात|मध्यरात्र)$/.test(text)) return "00:00";
+
+    const meridiem = text.match(/\b(\d{1,2})(?:[:.]\s*(\d{2}))?\s?(am|pm)\b/i);
+    if (meridiem) {
+      const hourRaw = Number(meridiem[1] ?? "0");
+      const minute = Number(meridiem[2] ?? "0");
+      if (!Number.isFinite(hourRaw) || hourRaw < 1 || hourRaw > 12) return null;
+      if (!Number.isFinite(minute) || minute < 0 || minute > 59) return null;
+      let hour = hourRaw % 12;
+      if ((meridiem[3] ?? "am").toLowerCase() === "pm") hour += 12;
+      return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+    }
+
+    const clock = text.match(/^\s*(\d{1,2})[:.]\s*(\d{2})\s*$/);
+    if (clock) {
+      const hour = Number(clock[1] ?? "-1");
+      const minute = Number(clock[2] ?? "-1");
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+      return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+    }
+
+    const regional = text.match(
+      /^\s*(\d{1,2})(?:[:.]\s*(\d{2}))?\s*(?:बजे|वाजता|वाजले)?\s*(सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)?\s*$/,
+    );
+    if (!regional) return null;
+    const rawHour = Number(regional[1] ?? "-1");
+    const minute = Number(regional[2] ?? "0");
+    if (rawHour < 0 || rawHour > 23 || minute < 0 || minute > 59) return null;
+    const part = (regional[3] ?? "").toLowerCase();
+    if (!part && !/(?:बजे|वाजता|वाजले)/i.test(text)) return null;
+
+    let hour = rawHour;
+    if (/सुबह|सकाळी/i.test(part)) {
+      if (hour === 12) hour = 0;
+    } else if (/दोपहर|दुपारी|शाम|सायंकाळी|रात/i.test(part)) {
+      if (hour >= 1 && hour <= 11) hour += 12;
+    }
+    return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+  };
+
+  const pendingTaskChoices = () =>
+    tasks.filter((t) => t.status === "pending").slice(0, 8);
+
+  const taskChoicePrompt = (choices: TaskRow[]) => {
+    if (choices.length === 0) {
+      return "Step 3/4: Should this reminder be linked to a task? Reply " +
+        '"no" for standalone.';
+    }
+    return [
+      "Step 3/4: Which task is this reminder related to?",
+      ...choices.map((t, idx) => `${idx + 1}. ${t.title}`),
+      'Reply with number/name, or "no" for standalone.',
+    ].join("\n");
+  };
+
+  const taskLinkQuickReplies = useMemo(
+    () =>
+      pendingCreateDraft?.step === "task"
+        ? tasks.filter((t) => t.status === "pending").slice(0, 8)
+        : [],
+    [pendingCreateDraft?.step, tasks],
+  );
 
   const handleChatSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const prompt = input.trim();
+    const prompt = (quickSubmitTextRef.current ?? input).trim();
+    quickSubmitTextRef.current = null;
     if (!prompt || isLoading) return;
 
     const dispatchAssistantResponse = async (
@@ -2272,102 +2439,258 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           return;
         }
 
-        const lastAssistant =
-          [...messagesSnapshot].reverse().find((item) => item.role === "assistant")
-            ?.content ?? "";
+        if (pendingCreateDraft) {
+          const text = messageText.trim();
 
-        if (pendingCreateDraft && looksLikeYes(messageText)) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content:
-                "Please send date and time in one line, like: tomorrow at 8:00 PM. I will create it directly.",
-              createdAt: new Date().toISOString(),
-            },
-          ]);
-          return;
+          if (pendingCreateDraft.step === "title") {
+            if (!text) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: "What should the reminder title be?",
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+              return;
+            }
+            setPendingCreateDraft((prev) => ({
+              ...(prev ?? { step: "date" as const }),
+              step: "date",
+              title: text,
+            }));
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "Step 1/4: What date should I set? (today / tomorrow / YYYY-MM-DD)",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
+
+          if (pendingCreateDraft.step === "date") {
+            const dateIso = parseDateInput(text, new Date());
+            if (!dateIso) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: "Please share a valid date: today, tomorrow, or YYYY-MM-DD.",
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+              return;
+            }
+            setPendingCreateDraft((prev) => ({
+              ...(prev ?? { step: "time" as const }),
+              step: "time",
+              dateIso,
+            }));
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "Step 2/4: What time? (e.g. 8:30 PM or 20:30)",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
+
+          if (pendingCreateDraft.step === "time") {
+            const time24 = parseTimeInput(text);
+            if (!time24 || !pendingCreateDraft.dateIso) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: "Please share a valid time, like 8:30 PM or 20:30.",
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+              return;
+            }
+            const dueAt = new Date(`${pendingCreateDraft.dateIso}T${time24}:00`).toISOString();
+            if (!Number.isFinite(new Date(dueAt).getTime()) || new Date(dueAt).getTime() <= Date.now()) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: "That date/time is in the past. Please send a future time.",
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+              return;
+            }
+            const choices = pendingTaskChoices();
+            setPendingCreateDraft((prev) => ({
+              ...(prev ?? { step: "task" as const }),
+              step: "task",
+              dueAt,
+            }));
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: taskChoicePrompt(choices),
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
+
+          if (pendingCreateDraft.step === "task") {
+            const choices = pendingTaskChoices();
+            let linkedTaskId = "";
+            if (!/^(no|none|standalone|skip)$/i.test(text)) {
+              const byIndex = Number(text);
+              if (Number.isFinite(byIndex) && byIndex >= 1 && byIndex <= choices.length) {
+                linkedTaskId = choices[byIndex - 1]?.id ?? "";
+              } else {
+                const byName = choices.find((t) => t.title.toLowerCase().includes(text.toLowerCase()));
+                if (!byName) {
+                  setMessages((prev) => [
+                    ...prev,
+                    {
+                      id: crypto.randomUUID(),
+                      role: "assistant",
+                      content: taskChoicePrompt(choices),
+                      createdAt: new Date().toISOString(),
+                    },
+                  ]);
+                  return;
+                }
+                linkedTaskId = byName.id;
+              }
+            }
+            setPendingCreateDraft((prev) => ({
+              ...(prev ?? { step: "priority" as const }),
+              step: "priority",
+              linkedTaskId,
+            }));
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "Step 4/4: Set priority (1 to 5 stars).",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
+
+          if (pendingCreateDraft.step === "priority") {
+            const mapWord: Record<string, number> = {
+              one: 1,
+              two: 2,
+              three: 3,
+              four: 4,
+              five: 5,
+            };
+            const parsedNum = Number(text);
+            const priority = Number.isFinite(parsedNum)
+              ? Math.trunc(parsedNum)
+              : mapWord[text.toLowerCase()] ?? 0;
+            if (priority < 1 || priority > 5) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: "Please choose a priority between 1 and 5.",
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+              return;
+            }
+
+            const title = pendingCreateDraft.title?.trim();
+            const dueAt = pendingCreateDraft.dueAt;
+            if (!title || !dueAt) {
+              setPendingCreateDraft(null);
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: "I lost context for this draft. Please say 'create reminder' again.",
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+              return;
+            }
+
+            const res = await fetch("/api/reminders", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                title,
+                dueAt: new Date(dueAt).getTime(),
+                recurrence: "none",
+                priority,
+                linkedTaskId: pendingCreateDraft.linkedTaskId || undefined,
+              }),
+            });
+            if (!res.ok) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: "I couldn’t create the reminder. Please try once more.",
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+              return;
+            }
+            await refreshReminders();
+            playReminderSuccessAnimation();
+            setPendingCreateDraft(null);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `Done — reminder created for ${new Date(dueAt).toLocaleString()}.`,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
         }
 
-        if (pendingCreateDraft && !hasDateOrTimeHint(messageText)) {
-          setPendingCreateDraft((prev) => ({
-            ...(prev ?? {}),
-            title: messageText.trim(),
-          }));
+        if (/^\s*create(\s+a)?\s+reminder\b/i.test(messageText)) {
+          const extractedTitle = extractCreateTitle(messageText);
+          if (!extractedTitle) {
+            setPendingCreateDraft({ step: "title" });
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "Sure — what should the reminder title be?",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
+          setPendingCreateDraft({ step: "date", title: extractedTitle });
           setMessages((prev) => [
             ...prev,
             {
               id: crypto.randomUUID(),
               role: "assistant",
-              content:
-                "Got it. Now send only date and time, for example: tomorrow at 8:00 PM.",
-              createdAt: new Date().toISOString(),
-            },
-          ]);
-          return;
-        }
-
-        if (pendingCreateDraft && hasDateOrTimeHint(messageText)) {
-          const rebuiltPrompt = `Create reminder ${pendingCreateDraft.title ?? "untitled"} ${messageText}`;
-          const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              message: rebuiltPrompt,
-              reminders,
-              tasks: tasks.map((t) => ({
-                id: t.id,
-                title: t.title,
-                notes: t.notes,
-                dueAt: t.dueAt,
-                status: t.status,
-                priority: t.priority,
-                domain: t.domain,
-              })),
-              ...clientTimeZonePayload(),
-              ...(responseReplyPayload ? { replyContext: responseReplyPayload } : {}),
-            }),
-          });
-          const data = (await response.json()) as AgentResponse;
-          applyAction(data.action);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: data.reply || "Done.",
-              createdAt: new Date().toISOString(),
-            },
-          ]);
-          return;
-        }
-
-        if (/^\s*create(\s+a)?\s+reminder\s*$/i.test(messageText)) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content:
-                "Send everything in one line: title + date + time. Example: create reminder cli testing tomorrow at 8 PM.",
-              createdAt: new Date().toISOString(),
-            },
-          ]);
-          return;
-        }
-
-        if (
-          looksLikeYes(messageText) &&
-          /would you like to create one\?/i.test(lastAssistant)
-        ) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content:
-                "Great. Send it in one message with title + time, for example: create reminder cli testing tomorrow at 8 PM.",
+              content: "Step 1/4: What date should I set? (today / tomorrow / YYYY-MM-DD)",
               createdAt: new Date().toISOString(),
             },
           ]);
@@ -2688,12 +3011,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         resolveDueLine(messageId, `Could not parse that time for "${title}".`);
         return;
       }
-      await fetch(`/api/reminders/${reminderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dueAt: dueMs }),
-      });
-      await refreshReminders();
+      await refreshAfterReminderMutation(
+        fetch(`/api/reminders/${reminderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dueAt: dueMs }),
+        }),
+      );
       resolveDueLine(
         messageId,
         `Rescheduled "${title}" to ${new Date(dueMs).toLocaleString()}.`,
@@ -3270,20 +3594,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         const data = (await res.json().catch(() => ({}))) as {
           error?: string;
           created?: boolean;
-          reminder?: { _id?: string };
         };
         if (!res.ok) {
           setCreateFormError(data.error ?? "Could not save reminder.");
           return;
         }
         await refreshReminders();
+        playReminderSuccessAnimation();
         resetReminderForm();
         setCreateFormError(null);
         closeCreateOverlay();
-        if (data.created !== false && data.reminder?._id) {
-          showReminderListOverlay(false);
-          showShareOverlay([String(data.reminder._id)], false);
-        }
+        if (data.created === false) return;
         return;
       } catch {
         setCreateFormError("Network error. Try again.");
@@ -3970,12 +4291,51 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               ) : null}
 
               <form
+                ref={chatFormRef}
                 onSubmit={handleChatSubmit}
                 className={`shrink-0 border-t border-slate-100 bg-white px-4 pb-4 pt-3 sm:px-6 ${
                   briefingComposerLocked ? "opacity-90" : ""
                 }`}
               >
                 <div className="mx-auto max-w-4xl">
+                  {pendingCreateDraft?.step === "task" ? (
+                    <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/60">
+                      <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                        Select task
+                      </p>
+                      <div className="flex gap-2 overflow-x-auto scroll-smooth pb-1">
+                        <button
+                          type="button"
+                          disabled={isLoading || (briefingStreaming && !editingMessageId)}
+                          onClick={() => {
+                            quickSubmitTextRef.current = "no";
+                            requestAnimationFrame(() => {
+                              chatFormRef.current?.requestSubmit();
+                            });
+                          }}
+                          className="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          Standalone
+                        </button>
+                        {taskLinkQuickReplies.map((task) => (
+                          <button
+                            key={`task-link-chip-${task.id}`}
+                            type="button"
+                            disabled={isLoading || (briefingStreaming && !editingMessageId)}
+                            onClick={() => {
+                              quickSubmitTextRef.current = task.title;
+                              requestAnimationFrame(() => {
+                                chatFormRef.current?.requestSubmit();
+                              });
+                            }}
+                            className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-700 dark:bg-slate-950 dark:text-violet-200 dark:hover:bg-violet-900/30"
+                          >
+                            {task.title}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   {editingMessageId ? (
                     <div className="mb-3 flex items-center justify-between gap-2 rounded-[22px] border border-violet-200 bg-violet-50 px-4 py-3 text-xs text-violet-700">
                       <span className="font-medium">Editing your message</span>
@@ -4321,9 +4681,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <h3 className="text-lg font-semibold">
                   {editingReminderId ? "Edit reminder" : "Create reminder"}
                 </h3>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  Add details, schedule, and recurrence.
-                </p>
               </div>
               <button
                 type="button"
@@ -4637,11 +4994,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   Invites you joined appear here; pending invites stay above.
                 </span>
               )}
-              <p className="max-w-[14rem] text-[10px] leading-snug text-slate-500 dark:text-slate-400 sm:max-w-none">
-                {reminderListTab === "shared"
-                  ? "Reminders others shared and you accepted."
-                  : "Tip: long-press a reminder to select (mobile). Use checkboxes when Select is on."}
-              </p>
             </div>
             {shareInbox.length > 0 ? (
               <div className="max-h-48 shrink-0 space-y-2 overflow-y-auto border-b border-violet-200/50 bg-violet-50/60 px-4 py-2 dark:border-violet-900/50 dark:bg-violet-950/35">
@@ -4930,13 +5282,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                   reminder.status === "done"
                                     ? "pending"
                                     : "done";
-                                void fetch(`/api/reminders/${reminder.id}`, {
-                                  method: "PATCH",
-                                  headers: {
-                                    "Content-Type": "application/json",
-                                  },
-                                  body: JSON.stringify({ status: nextStatus }),
-                                }).then(() => void refreshReminders());
+                                void refreshAfterReminderMutation(
+                                  fetch(`/api/reminders/${reminder.id}`, {
+                                    method: "PATCH",
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                    },
+                                    body: JSON.stringify({ status: nextStatus }),
+                                  }),
+                                ).catch(() =>
+                                  showShareToast(
+                                    "Could not update reminder. Try again.",
+                                  ),
+                                );
                               }}
                               className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
                             >
@@ -4947,9 +5305,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             <button
                               type="button"
                               onClick={() => {
-                                void fetch(`/api/reminders/${reminder.id}`, {
-                                  method: "DELETE",
-                                }).then(() => void refreshReminders());
+                                void refreshAfterReminderMutation(
+                                  fetch(`/api/reminders/${reminder.id}`, {
+                                    method: "DELETE",
+                                  }),
+                                ).catch(() =>
+                                  showShareToast(
+                                    "Could not delete reminder. Try again.",
+                                  ),
+                                );
                               }}
                               className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
                             >
@@ -5204,6 +5568,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           aria-live="polite"
         >
           {shareToast}
+        </div>
+      ) : null}
+
+      {showReminderSuccess ? (
+        <div className="pointer-events-none fixed inset-0 z-[65] flex items-center justify-center">
+          <div className="relative">
+            <span className="absolute inset-0 rounded-full bg-emerald-400/35 animate-ping" />
+            <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-3xl text-white shadow-2xl ring-4 ring-emerald-200 dark:ring-emerald-900 animate-pulse">
+              ✓
+            </div>
+          </div>
         </div>
       ) : null}
 
