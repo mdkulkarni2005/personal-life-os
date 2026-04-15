@@ -985,6 +985,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [reminderInlineTaskDue, setReminderInlineTaskDue] = useState("");
   const [reminderInlineTaskSaving, setReminderInlineTaskSaving] =
     useState(false);
+  const [rescheduleReminder, setRescheduleReminder] = useState<{
+    messageId: string;
+    reminderId: string;
+    title: string;
+    value: string;
+    error: string | null;
+  } | null>(null);
   const [shareToast, setShareToast] = useState<string | null>(null);
   const shareToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reminderSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -2998,34 +3005,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         resolveDueReminderById(reminderId, `Snoozed "${title}" by one hour.`);
         return;
       }
-      const raw =
-        typeof window !== "undefined"
-          ? window.prompt("New date and time (e.g. 2026-04-12T17:00)", "")
-          : "";
-      if (raw == null || !raw.trim()) return;
-      let dueMs = Date.parse(raw.trim());
-      if (Number.isNaN(dueMs)) {
-        dueMs = Date.parse(`${new Date().toDateString()} ${raw.trim()}`);
-      }
-      if (Number.isNaN(dueMs)) {
-        resolveDueLine(messageId, `Could not parse that time for "${title}".`);
-        return;
-      }
-      await refreshAfterReminderMutation(
-        fetch(`/api/reminders/${reminderId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dueAt: dueMs }),
-        }),
-      );
-      resolveDueLine(
+      const reminder = reminders.find((x) => x.id === reminderId);
+      setRescheduleReminder({
         messageId,
-        `Rescheduled "${title}" to ${new Date(dueMs).toLocaleString()}.`,
-      );
-      resolveDueReminderById(
         reminderId,
-        `Rescheduled "${title}" to ${new Date(dueMs).toLocaleString()}.`,
-      );
+        title,
+        value: toDateTimeLocalValue(reminder?.dueAt ?? new Date().toISOString()) || currentDateTimeLocalValue(),
+        error: null,
+      });
     } catch {
       resolveDueLine(messageId, `Something went wrong updating "${title}".`);
       resolveDueReminderById(
@@ -3065,6 +3052,45 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
   };
+
+  const commitRescheduleReminder = useCallback(async () => {
+    if (!rescheduleReminder) return;
+    const dueMs = Date.parse(rescheduleReminder.value);
+    if (!Number.isFinite(dueMs)) {
+      setRescheduleReminder((prev) =>
+        prev ? { ...prev, error: "Choose a valid date and time." } : prev,
+      );
+      return;
+    }
+    if (dueMs <= Date.now()) {
+      setRescheduleReminder((prev) =>
+        prev ? { ...prev, error: "Choose a future date and time." } : prev,
+      );
+      return;
+    }
+
+    const { messageId, reminderId, title } = rescheduleReminder;
+    try {
+      await refreshAfterReminderMutation(
+        fetch(`/api/reminders/${reminderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dueAt: dueMs }),
+        }),
+      );
+      resolveDueLine(
+        messageId,
+        `Rescheduled "${title}" to ${new Date(dueMs).toLocaleString()}.`,
+      );
+      resolveDueReminderById(
+        reminderId,
+        `Rescheduled "${title}" to ${new Date(dueMs).toLocaleString()}.`,
+      );
+      setRescheduleReminder(null);
+    } catch {
+      showShareToast("Could not reschedule reminder. Try again.");
+    }
+  }, [refreshAfterReminderMutation, rescheduleReminder, showShareToast]);
 
   const parseBatchQuestions = (payload: unknown): string[] => {
     if (Array.isArray(payload)) {
@@ -3201,8 +3227,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
 
   const openTasksPanel = useCallback(
-    (mode: "create" | "browse" = "browse") => {
-      resetTaskForm();
+    (mode: "create" | "browse" = "browse", preserveState = false) => {
+      if (!preserveState) {
+        resetTaskForm();
+      }
       void refreshTasks();
       setTaskMode(mode);
       if (mode === "create") {
@@ -3285,8 +3313,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
 
   const showCreateOverlay = useCallback(
-    (opts?: { linkedTaskId?: string }, pushHistory = true) => {
-      closeAllDashboardOverlays();
+    (
+      opts?: { linkedTaskId?: string },
+      pushHistory = true,
+      preserveCurrent = false,
+    ) => {
+      if (!preserveCurrent) {
+        closeAllDashboardOverlays();
+      }
       openCreateModal(opts);
       if (pushHistory) pushDashboardOverlay({ overlay: "create" });
     },
@@ -3294,9 +3328,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
 
   const showTasksOverlay = useCallback(
-    (mode: "create" | "browse" = "browse", pushHistory = true) => {
+    (
+      mode: "create" | "browse" = "browse",
+      pushHistory = true,
+      preserveState = false,
+    ) => {
       closeAllDashboardOverlays();
-      openTasksPanel(mode);
+      openTasksPanel(mode, preserveState);
       if (pushHistory)
         pushDashboardOverlay({ overlay: "tasks", taskMode: mode });
     },
@@ -3392,7 +3430,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           showCreateOverlay(undefined, false);
           break;
         case "tasks":
-          showTasksOverlay(state.taskMode ?? "browse", false);
+          showTasksOverlay(state.taskMode ?? "browse", false, true);
           break;
         case "share":
           showShareOverlay(state.shareReminderIds ?? [], false);
@@ -3831,7 +3869,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         setEditingTaskId(taskId);
         await refreshTasks();
       }
-      showCreateOverlay({ linkedTaskId: taskId });
+      showCreateOverlay({ linkedTaskId: taskId }, true, true);
     } catch {
       setTaskFormError("Network error. Try again.");
     }
@@ -5148,6 +5186,18 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       </span>
                       Task
                     </button>
+                    <button
+                      type="button"
+                      onClick={openAllTasksFromSnapshot}
+                      className="inline-flex items-center gap-1 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-900 dark:border-teal-700 dark:bg-teal-950/50 dark:text-teal-100"
+                      title="All tasks"
+                      aria-label="All tasks"
+                    >
+                      <span aria-hidden className="text-base leading-none">
+                        ≣
+                      </span>
+                      Tasks
+                    </button>
                   </div>
                 </div>
               </div>
@@ -5568,6 +5618,89 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           aria-live="polite"
         >
           {shareToast}
+        </div>
+      ) : null}
+
+      {rescheduleReminder ? (
+        <div
+          className="fixed inset-0 z-[66] flex items-end justify-center bg-black/45 p-3 sm:items-center sm:p-4"
+          onClick={() => setRescheduleReminder(null)}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-violet-600 dark:text-violet-300">
+                Reschedule reminder
+              </p>
+              <h3 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
+                {rescheduleReminder.title}
+              </h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Choose a new date and time.
+              </p>
+            </div>
+            <div className="grid gap-4 px-5 py-5">
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: "+15m", minutes: 15 },
+                  { label: "+1h", minutes: 60 },
+                  { label: "Tomorrow", minutes: 24 * 60 },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
+                    onClick={() => {
+                      const next = new Date();
+                      next.setMinutes(next.getMinutes() + preset.minutes);
+                      setRescheduleReminder((prev) =>
+                        prev ? { ...prev, value: toDateTimeLocalValue(next.toISOString()), error: null } : prev,
+                      );
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <label className="grid gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                Date &amp; time
+                <input
+                  type="datetime-local"
+                  min={currentDateTimeLocalValue()}
+                  value={rescheduleReminder.value}
+                  onChange={(event) =>
+                    setRescheduleReminder((prev) =>
+                      prev ? { ...prev, value: event.target.value, error: null } : prev,
+                    )
+                  }
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                />
+              </label>
+              {rescheduleReminder.error ? (
+                <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
+                  {rescheduleReminder.error}
+                </p>
+              ) : null}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void commitRescheduleReminder()}
+                  className="flex-1 rounded-full bg-violet-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-violet-500"
+                >
+                  Save new time
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRescheduleReminder(null)}
+                  className="rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       ) : null}
 
