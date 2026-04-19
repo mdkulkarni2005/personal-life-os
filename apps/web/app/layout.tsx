@@ -6,10 +6,9 @@ import Image from "next/image";
 import localFont from "next/font/local";
 import { InstallAppBanner } from "../components/pwa/install-app-banner";
 import { RegisterServiceWorker } from "../components/pwa/register-sw";
-import { CreateReminderTrigger } from "../components/dashboard/create-reminder-trigger";
 import { OpenRemindersButton } from "../components/dashboard/open-reminders-button";
-import { SnapshotNavTrigger } from "../components/dashboard/snapshot-nav-trigger";
-import { UserMenu } from "../components/auth/user-menu";
+import { AppDrawer } from "../components/layout/app-drawer";
+import { DrawerTrigger } from "../components/layout/drawer-trigger";
 import { ThemeProvider } from "../components/theme/theme-provider";
 import "./globals.css";
 
@@ -68,7 +67,7 @@ export default async function RootLayout({
                     )}
                   </span>
                 </Link>
-                <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
+                <div className="flex shrink-0 items-center gap-2">
                   <Show when="signed-out">
                     <Link
                       href="/sign-in"
@@ -80,21 +79,18 @@ export default async function RootLayout({
                       href="/sign-up"
                       className="rounded-full bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-500"
                     >
-                      Sign up
+                      Get started
                     </Link>
                   </Show>
                   <Show when="signed-in">
                     <OpenRemindersButton />
-                    <SnapshotNavTrigger />
-                    <CreateReminderTrigger />
-                    <div className="[&_.cl-avatarBox]:h-9 [&_.cl-avatarBox]:w-9 sm:[&_.cl-avatarBox]:h-10 sm:[&_.cl-avatarBox]:w-10 [&_.cl-userButtonTrigger]:h-9 [&_.cl-userButtonTrigger]:w-9 sm:[&_.cl-userButtonTrigger]:h-10 sm:[&_.cl-userButtonTrigger]:w-10">
-                      <UserMenu />
-                    </div>
+                    <DrawerTrigger />
                   </Show>
                 </div>
               </div>
             </header>
             {children}
+            <AppDrawer />
             <InstallAppBanner />
             <RegisterServiceWorker />
           </ThemeProvider>

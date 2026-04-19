@@ -4029,6 +4029,62 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 </button>
               </div>
 
+              {/* Urgency strip — shows overdue / today / tomorrow chips */}
+              {(snapshot.missed > 0 ||
+                snapshot.today > 0 ||
+                snapshot.tomorrow > 0) && (
+                <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-slate-100 bg-slate-50/70 px-4 py-2 scrollbar-none">
+                  {snapshot.missed > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReminderListTab("missed");
+                        showReminderListOverlay();
+                      }}
+                      className="flex shrink-0 items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                      Overdue
+                      <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] leading-none text-white">
+                        {snapshot.missed}
+                      </span>
+                    </button>
+                  )}
+                  {snapshot.today > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReminderListTab("today");
+                        showReminderListOverlay();
+                      }}
+                      className="flex shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                      Today
+                      <span className="rounded-full bg-amber-600 px-1.5 py-0.5 text-[10px] leading-none text-white">
+                        {snapshot.today}
+                      </span>
+                    </button>
+                  )}
+                  {snapshot.tomorrow > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReminderListTab("tomorrow");
+                        showReminderListOverlay();
+                      }}
+                      className="flex shrink-0 items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-700 transition hover:bg-teal-100"
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-teal-500" />
+                      Tomorrow
+                      <span className="rounded-full bg-teal-600 px-1.5 py-0.5 text-[10px] leading-none text-white">
+                        {snapshot.tomorrow}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div
                 ref={chatScrollRef}
                 onScroll={onChatScroll}
