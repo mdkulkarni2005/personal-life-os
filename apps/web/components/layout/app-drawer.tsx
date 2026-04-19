@@ -2,30 +2,49 @@
 
 import { useUser, useClerk } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export function AppDrawer() {
-  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { user } = useUser();
   const { signOut } = useClerk();
   const router = useRouter();
 
+  const open = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    setMounted(true);
+    // Small rAF delay so the mount triggers the CSS transition
+    requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
+  };
+
+  const close = () => {
+    setVisible(false);
+    closeTimerRef.current = setTimeout(() => setMounted(false), 300);
+  };
+
   useEffect(() => {
-    const onOpen = () => setOpen(true);
-    window.addEventListener("dashboard:open-drawer", onOpen);
-    return () => window.removeEventListener("dashboard:open-drawer", onOpen);
+    window.addEventListener("dashboard:open-drawer", open);
+    return () => window.removeEventListener("dashboard:open-drawer", open);
   }, []);
 
   useEffect(() => {
-    if (!open) return;
+    if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") close();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [visible]);
 
-  if (!open) return null;
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
+  if (!mounted) return null;
 
   const initial =
     user?.firstName?.[0]?.toUpperCase() ??
@@ -53,36 +72,41 @@ export function AppDrawer() {
       action: () =>
         window.dispatchEvent(new CustomEvent("dashboard:open-tasks")),
     },
-  ];
-
-  const secondaryItems = [
     {
-      icon: "🚪",
-      label: "Sign out",
-      action: () => void signOut(() => router.push("/")),
+      icon: "✦",
+      label: "Briefing",
+      action: () =>
+        window.dispatchEvent(new CustomEvent("dashboard:run-briefing")),
     },
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex">
+    <div
+      className="fixed inset-0 z-50 flex"
+      style={{ pointerEvents: visible ? "auto" : "none" }}
+    >
       {/* Backdrop */}
       <div
-        className="flex-1 bg-black/40 backdrop-blur-[1px]"
-        onClick={() => setOpen(false)}
+        className="flex-1 bg-black/40 transition-opacity duration-300"
+        style={{ opacity: visible ? 1 : 0 }}
+        onClick={close}
         aria-hidden="true"
       />
 
       {/* Drawer panel */}
-      <div className="flex w-72 flex-col bg-white shadow-2xl dark:bg-slate-900">
-        {/* Drawer header */}
+      <div
+        className="flex w-[min(18rem,88vw)] translate-x-0 flex-col bg-white shadow-2xl transition-transform duration-300 dark:bg-slate-900"
+        style={{ transform: visible ? "translateX(0)" : "translateX(100%)" }}
+      >
+        {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <span className="text-base font-semibold text-slate-900 dark:text-slate-100">
             Menu
           </span>
           <button
             type="button"
-            onClick={() => setOpen(false)}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+            onClick={close}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
             aria-label="Close menu"
           >
             ✕
@@ -90,9 +114,9 @@ export function AppDrawer() {
         </div>
 
         {/* User card */}
-        <div className="mx-4 my-3 rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 dark:border-violet-900/50 dark:bg-violet-950/30">
+        <div className="mx-4 my-3 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 dark:border-violet-900/40 dark:bg-violet-950/30">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 text-sm font-bold text-white">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-sm font-bold text-white">
               {initial}
             </div>
             <div className="min-w-0">
@@ -115,10 +139,11 @@ export function AppDrawer() {
               key={item.label}
               type="button"
               onClick={() => {
-                setOpen(false);
-                item.action();
+                close();
+                // Small delay so the close animation can start first
+                setTimeout(() => item.action(), 150);
               }}
-              className="flex items-center gap-3 border-b border-slate-100 px-5 py-3.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-800"
+              className="flex min-h-[3.25rem] items-center gap-3 border-b border-slate-100 px-5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 active:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-800"
             >
               <span className="text-lg leading-none">{item.icon}</span>
               {item.label}
@@ -128,23 +153,18 @@ export function AppDrawer() {
 
         <div className="my-1 h-px bg-slate-100 dark:bg-slate-800" />
 
-        {/* Secondary nav */}
-        <div className="flex flex-col">
-          {secondaryItems.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                item.action();
-              }}
-              className="flex items-center gap-3 px-5 py-3 text-left text-sm text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800"
-            >
-              <span className="text-lg leading-none">{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
-        </div>
+        {/* Sign out */}
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            setTimeout(() => void signOut(() => router.push("/")), 200);
+          }}
+          className="flex min-h-[3.25rem] items-center gap-3 px-5 text-left text-sm text-slate-500 hover:bg-slate-50 active:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <span className="text-lg leading-none">🚪</span>
+          Sign out
+        </button>
       </div>
     </div>
   );

@@ -3479,13 +3479,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   useEffect(() => {
     const openR = () => showReminderListOverlay();
     const openT = () => showTasksOverlay("create");
+    const runB = () => runBriefingStream();
     window.addEventListener("dashboard:open-reminders", openR);
     window.addEventListener("dashboard:open-tasks", openT);
+    window.addEventListener("dashboard:run-briefing", runB);
     return () => {
       window.removeEventListener("dashboard:open-reminders", openR);
       window.removeEventListener("dashboard:open-tasks", openT);
+      window.removeEventListener("dashboard:run-briefing", runB);
     };
-  }, [showReminderListOverlay, showTasksOverlay]);
+  }, [showReminderListOverlay, showTasksOverlay, runBriefingStream]);
 
   useEffect(() => {
     const openSnapshot = () => showSnapshotOverlay();
@@ -3886,7 +3889,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   return (
     <>
-      <section className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-transparent px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pt-4">
+      <section className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-transparent px-0 pb-0 pt-0 sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-4">
         <div className="pointer-events-none absolute inset-x-8 top-0 -z-10 h-48 rounded-full bg-[radial-gradient(circle_at_center,rgba(109,94,252,0.12),transparent_68%)] blur-3xl" />
         <div className="mx-auto flex min-h-0 w-full max-w-[88rem] flex-1 gap-3 lg:gap-6">
           <aside className="hidden w-20 shrink-0 lg:flex lg:flex-col lg:items-center lg:gap-3 lg:pt-6">
@@ -3965,11 +3968,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             </button>
           </aside>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <div className="flex min-h-0 flex-1 flex-col gap-0 sm:gap-3">
             {typeof Notification !== "undefined" &&
             Notification.permission === "default" &&
             !dueNotifBannerDismissed ? (
-              <div className="flex flex-col gap-2 rounded-[24px] border border-violet-200 bg-white px-4 py-3 text-xs text-slate-600 shadow-sm lg:hidden">
+              <div className="flex flex-col gap-2 rounded-none border-b border-violet-200 bg-white px-4 py-3 text-xs text-slate-600 shadow-sm sm:rounded-[24px] sm:border lg:hidden">
                 <p className="leading-snug text-slate-600">
                   Allow notifications to get an instant alert when a reminder is
                   due, then act from the alert with Done, Snooze, or Delete.
@@ -3993,9 +3996,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </div>
             ) : null}
 
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[32px] border border-slate-200/80 bg-white shadow-[0_32px_90px_-56px_rgba(15,23,42,0.35)]">
-              <div className="flex shrink-0 items-center justify-end gap-2 border-b border-slate-100 px-4 py-4 sm:px-6">
-                <div className="hidden items-center gap-2 sm:flex">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-slate-200/80 bg-white sm:rounded-[32px] sm:border sm:shadow-[0_32px_90px_-56px_rgba(15,23,42,0.35)]">
+              {/* Inner toolbar — hidden on mobile to save vertical space; shown sm+ */}
+              <div className="hidden shrink-0 items-center justify-end gap-2 border-b border-slate-100 px-4 py-3 sm:flex sm:px-6">
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => showReminderListOverlay()}
@@ -4370,7 +4374,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                               }),
                             );
                           }}
-                          className={`rounded-full border px-3 py-2 text-left text-xs font-medium leading-snug transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 ${
+                          className={`min-h-[2.75rem] rounded-full border px-4 py-2 text-left text-xs font-medium leading-snug transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:px-3 sm:py-2 ${
                             q.kind === "action"
                               ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
                               : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
@@ -4387,7 +4391,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               <form
                 ref={chatFormRef}
                 onSubmit={handleChatSubmit}
-                className={`shrink-0 border-t border-slate-100 bg-white px-4 pb-4 pt-3 sm:px-6 ${
+                className={`shrink-0 border-t border-slate-100 bg-white px-3 pb-[max(0.875rem,env(safe-area-inset-bottom))] pt-3 sm:px-6 sm:pb-4 ${
                   briefingComposerLocked ? "opacity-90" : ""
                 }`}
               >
@@ -4465,7 +4469,18 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       </button>
                     </div>
                   ) : null}
-                  <div className="flex w-full min-w-0 items-end gap-3 rounded-[28px] border border-slate-200 bg-[#f5f6fa] px-3 py-2 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
+                  <div className="flex w-full min-w-0 items-end gap-2 rounded-[28px] border border-slate-200 bg-[#f5f6fa] py-2 pl-2 pr-2 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
+                    {/* + Create reminder — visible on mobile, hidden on sm+ */}
+                    <button
+                      type="button"
+                      onClick={() => showCreateOverlay()}
+                      disabled={briefingComposerLocked}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-xl font-semibold text-white shadow-sm transition hover:bg-violet-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 sm:hidden"
+                      aria-label="Create reminder"
+                      title="Create reminder"
+                    >
+                      +
+                    </button>
                     <div className="relative min-h-[2.4rem] min-w-0 flex-1">
                       <textarea
                         ref={composerTextareaRef}
@@ -4481,7 +4496,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         placeholder={
                           briefingComposerLocked && !editingMessageId
                             ? "Briefing in progress…"
-                            : "Message"
+                            : "Ask or add a reminder…"
                         }
                         readOnly={briefingComposerLocked && !editingMessageId}
                         aria-busy={briefingStreaming}
@@ -4504,14 +4519,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         isLoading ||
                         (briefingStreaming && !editingMessageId)
                       }
-                      className="h-10 w-10 shrink-0 rounded-full bg-violet-600 text-base font-semibold text-white shadow-md transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-base font-semibold text-white shadow-md transition hover:bg-violet-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                       aria-label="Send message"
                     >
-                      {isLoading
-                        ? "…"
-                        : briefingStreaming && !editingMessageId
-                          ? "…"
-                          : "➤"}
+                      {isLoading || (briefingStreaming && !editingMessageId) ? (
+                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"/>
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden>
+                          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                        </svg>
+                      )}
                     </button>
                   </div>
                 </div>
