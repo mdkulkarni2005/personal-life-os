@@ -3897,8 +3897,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               type="button"
               onClick={() => showReminderListOverlay()}
               className="relative flex h-14 w-14 items-center justify-center rounded-[22px] bg-[linear-gradient(135deg,#79d8c2_0%,#7568ff_100%)] text-white shadow-[0_24px_45px_-22px_rgba(117,104,255,0.75)] transition hover:-translate-y-0.5"
-              aria-label="Open reminders"
-              title="Open reminders"
+              aria-label="All reminders"
+              title="All reminders"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -3919,6 +3919,31 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   {snapshot.missed > 99 ? "99+" : snapshot.missed}
                 </span>
               ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={openAllTasksFromSnapshot}
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-teal-200 bg-teal-50 text-teal-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-teal-100"
+              aria-label="All tasks"
+              title="All tasks"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4"
+                aria-hidden="true"
+              >
+                <path d="M9 6h11" />
+                <path d="M9 12h11" />
+                <path d="M9 18h11" />
+                <path d="M4.5 6h.01" />
+                <path d="M4.5 12h.01" />
+                <path d="M4.5 18h.01" />
+              </svg>
             </button>
             <button
               type="button"
@@ -4011,7 +4036,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     >
                       ☰
                     </span>
-                    Reminders
+                    All reminders
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openAllTasksFromSnapshot}
+                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 text-xs font-semibold text-teal-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-100 sm:inline-flex lg:hidden"
+                  >
+                    <span
+                      aria-hidden
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-teal-700"
+                    >
+                      ≣
+                    </span>
+                    All tasks
                   </button>
                   <button
                     type="button"
@@ -4469,6 +4507,22 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       </button>
                     </div>
                   ) : null}
+                  <div className="mb-2 flex items-center gap-2 sm:hidden">
+                    <button
+                      type="button"
+                      onClick={() => showReminderListOverlay()}
+                      className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700"
+                    >
+                      ☰ All reminders
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openAllTasksFromSnapshot}
+                      className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-[11px] font-semibold text-teal-700"
+                    >
+                      ≣ All tasks
+                    </button>
+                  </div>
                   <div className="flex w-full min-w-0 items-end gap-2 rounded-[28px] border border-slate-200 bg-[#f5f6fa] py-2 pl-2 pr-2 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
                     {/* + Create reminder — visible on mobile, hidden on sm+ */}
                     <button
