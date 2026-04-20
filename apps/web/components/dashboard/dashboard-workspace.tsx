@@ -1126,62 +1126,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     );
   }, [reminders]);
 
-  useEffect(() => {
-    if (!userId || !user) return;
-    if (typeof window === "undefined") return;
-    if (walkthroughLoadingRef.current) return;
-    walkthroughLoadingRef.current = true;
-
-    const storageKey = walkthroughStorageKey(userId);
-    const createdAt = Number(user.createdAt ?? 0);
-    const eligible = Number.isFinite(createdAt) && createdAt >= WALKTHROUGH_RELEASE_AT;
-
-    if (!eligible) {
-      walkthroughLoadingRef.current = false;
-      return;
-    }
-
-    if (window.localStorage.getItem(storageKey) === "1") {
-      walkthroughLoadingRef.current = false;
-      return;
-    }
-
-    let active = true;
-    const loadWalkthrough = async () => {
-      try {
-        const response = await fetch("/api/onboarding/walkthrough", {
-          method: "GET",
-          cache: "no-store",
-        });
-        if (!response.ok) return;
-        const data = (await response.json()) as {
-          show?: boolean;
-          completed?: boolean;
-          eligible?: boolean;
-        };
-        if (!active) return;
-        if (data.completed || data.show === false) {
-          window.localStorage.setItem(storageKey, "1");
-          return;
-        }
-
-        closeAllDashboardOverlays();
-        setWalkthroughStepIndex(0);
-        setWalkthroughOpen(true);
-      } catch {
-        /* ignore */
-      } finally {
-        if (active) walkthroughLoadingRef.current = false;
-      }
-    };
-
-    void loadWalkthrough();
-
-    return () => {
-      active = false;
-    };
-  }, [closeAllDashboardOverlays, user, userId]);
-
   /** Persists latest messages; uses sendBeacon/keepalive so a refresh does not drop unsaved debounced writes. */
   const flushChatHistoryToServer = useCallback(() => {
     if (!isHistoryLoadedRef.current) return;
@@ -3379,6 +3323,62 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setIsListOpen(false);
     setIsSnapshotOpen(false);
   }, []);
+
+  useEffect(() => {
+    if (!userId || !user) return;
+    if (typeof window === "undefined") return;
+    if (walkthroughLoadingRef.current) return;
+    walkthroughLoadingRef.current = true;
+
+    const storageKey = walkthroughStorageKey(userId);
+    const createdAt = Number(user.createdAt ?? 0);
+    const eligible = Number.isFinite(createdAt) && createdAt >= WALKTHROUGH_RELEASE_AT;
+
+    if (!eligible) {
+      walkthroughLoadingRef.current = false;
+      return;
+    }
+
+    if (window.localStorage.getItem(storageKey) === "1") {
+      walkthroughLoadingRef.current = false;
+      return;
+    }
+
+    let active = true;
+    const loadWalkthrough = async () => {
+      try {
+        const response = await fetch("/api/onboarding/walkthrough", {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          show?: boolean;
+          completed?: boolean;
+          eligible?: boolean;
+        };
+        if (!active) return;
+        if (data.completed || data.show === false) {
+          window.localStorage.setItem(storageKey, "1");
+          return;
+        }
+
+        closeAllDashboardOverlays();
+        setWalkthroughStepIndex(0);
+        setWalkthroughOpen(true);
+      } catch {
+        /* ignore */
+      } finally {
+        if (active) walkthroughLoadingRef.current = false;
+      }
+    };
+
+    void loadWalkthrough();
+
+    return () => {
+      active = false;
+    };
+  }, [closeAllDashboardOverlays, user, userId]);
 
   const readDashboardOverlayFromHistory =
     useCallback((): DashboardOverlayState | null => {
