@@ -35,6 +35,7 @@ import {
   TaskListOverlay,
   type TaskRow,
 } from "./task-panels";
+import { WalkthroughOverlay, type WalkthroughStep } from "./walkthrough-overlay";
 import { showDueReminderSystemNotification } from "../../lib/due-notifications-client";
 import {
   showCollaborationNotification,
@@ -381,6 +382,65 @@ function mergeRemoteChat(
 }
 
 const CHAT_THREAD_BACKUP_PREFIX = "remindos:chatThread:";
+const WALKTHROUGH_RELEASE_AT = Date.parse("2026-04-20T00:00:00.000Z");
+const WALKTHROUGH_STORAGE_PREFIX = "remindos:walkthrough-completed:";
+
+const WALKTHROUGH_STEPS: WalkthroughStep[] = [
+  {
+    eyebrow: "Welcome",
+    title: "This is your planning home.",
+    body: [
+      "Use this space to keep reminders, tasks, and follow-ups in one place.",
+      "The dashboard stays light and mobile-friendly, so the important stuff stays easy to find.",
+    ],
+    nextLabel: "Next: See reminders",
+    accent: "violet",
+  },
+  {
+    eyebrow: "Reminders",
+    title: "Capture what matters in a few taps.",
+    body: [
+      "Open Create reminder to add a due time, priority, and notes without leaving the dashboard.",
+      "If a reminder belongs to a task, link it so both stay connected.",
+    ],
+    nextLabel: "Next: Open tasks",
+    accent: "teal",
+  },
+  {
+    eyebrow: "Tasks",
+    title: "Track work with a simple task board.",
+    body: [
+      "Use All tasks to review pending work, mark items done, or start a new task.",
+      "Tasks can also create a related reminder when something needs a time.",
+    ],
+    nextLabel: "Next: Check the snapshot",
+    accent: "amber",
+  },
+  {
+    eyebrow: "Daily snapshot",
+    title: "Start with what is urgent.",
+    body: [
+      "The summary cards highlight what is due today, what is late, and what needs attention next.",
+      "That means you can open the app and know where to begin in seconds.",
+    ],
+    nextLabel: "Next: Use chat",
+    accent: "rose",
+  },
+  {
+    eyebrow: "Chat and sharing",
+    title: "Ask in plain language and keep others in the loop.",
+    body: [
+      "The chat composer can create, update, and organize reminders for you step by step.",
+      "When needed, share reminders with other users and keep the conversation attached to the work.",
+    ],
+    nextLabel: "Finish tour",
+    accent: "violet",
+  },
+];
+
+function walkthroughStorageKey(userId: string) {
+  return `${WALKTHROUGH_STORAGE_PREFIX}${userId}`;
+}
 
 function chatThreadBackupKey(userId: string) {
   return `${CHAT_THREAD_BACKUP_PREFIX}${userId}`;
@@ -1011,6 +1071,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     () => new Set(),
   );
   const [shareInbox, setShareInbox] = useState<ShareInboxRow[]>([]);
+  const [walkthroughOpen, setWalkthroughOpen] = useState(false);
+  const [walkthroughStepIndex, setWalkthroughStepIndex] = useState(0);
+  const walkthroughLoadingRef = useRef(false);
   const isAnyOverlayOpen =
     isSnapshotOpen ||
     isCreateOpen ||
@@ -1062,6 +1125,62 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       }),
     );
   }, [reminders]);
+
+  useEffect(() => {
+    if (!userId || !user) return;
+    if (typeof window === "undefined") return;
+    if (walkthroughLoadingRef.current) return;
+    walkthroughLoadingRef.current = true;
+
+    const storageKey = walkthroughStorageKey(userId);
+    const createdAt = Number(user.createdAt ?? 0);
+    const eligible = Number.isFinite(createdAt) && createdAt >= WALKTHROUGH_RELEASE_AT;
+
+    if (!eligible) {
+      walkthroughLoadingRef.current = false;
+      return;
+    }
+
+    if (window.localStorage.getItem(storageKey) === "1") {
+      walkthroughLoadingRef.current = false;
+      return;
+    }
+
+    let active = true;
+    const loadWalkthrough = async () => {
+      try {
+        const response = await fetch("/api/onboarding/walkthrough", {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          show?: boolean;
+          completed?: boolean;
+          eligible?: boolean;
+        };
+        if (!active) return;
+        if (data.completed || data.show === false) {
+          window.localStorage.setItem(storageKey, "1");
+          return;
+        }
+
+        closeAllDashboardOverlays();
+        setWalkthroughStepIndex(0);
+        setWalkthroughOpen(true);
+      } catch {
+        /* ignore */
+      } finally {
+        if (active) walkthroughLoadingRef.current = false;
+      }
+    };
+
+    void loadWalkthrough();
+
+    return () => {
+      active = false;
+    };
+  }, [closeAllDashboardOverlays, user, userId]);
 
   /** Persists latest messages; uses sendBeacon/keepalive so a refresh does not drop unsaved debounced writes. */
   const flushChatHistoryToServer = useCallback(() => {
@@ -2858,13 +2977,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   };
 
   const resetReminderForm = useCallback(() => {
+    const localNow = currentDateTimeLocalValue();
     setNewTitle("");
-    setNewDate("");
-    setNewTime("");
+    setNewDate(localNow.slice(0, 10));
+    setNewTime(localNow.slice(11, 16));
     setNewRecurrence("none");
     setNewNotes("");
     setEditingReminderId(null);
-    setReminderStars(0);
+    setReminderStars(3);
     setReminderLinkedTaskId("");
     setReminderDomain("");
   }, []);
@@ -2873,7 +2993,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setTaskFormTitle("");
     setTaskFormDue(currentDateTimeLocalValue());
     setTaskFormNotes("");
-    setTaskStars(0);
+    setTaskStars(3);
     setEditingTaskId(null);
     setTaskFormError(null);
     setTaskFormDomain("");
@@ -3273,13 +3393,24 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const pushDashboardOverlay = useCallback((state: DashboardOverlayState) => {
     if (typeof window === "undefined") return;
+    const hasExistingOverlay = Boolean(
+      (
+        window.history.state as {
+          dashboardOverlay?: DashboardOverlayState;
+        } | null
+      )?.dashboardOverlay?.overlay,
+    );
     const nextState = {
       ...(window.history.state && typeof window.history.state === "object"
         ? window.history.state
         : {}),
       dashboardOverlay: state,
     };
-    window.history.pushState(nextState, "", window.location.href);
+    if (hasExistingOverlay) {
+      window.history.replaceState(nextState, "", window.location.href);
+    } else {
+      window.history.pushState(nextState, "", window.location.href);
+    }
   }, []);
 
   const dismissDashboardOverlay = useCallback(
@@ -3313,14 +3444,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
 
   const showCreateOverlay = useCallback(
-    (
-      opts?: { linkedTaskId?: string },
-      pushHistory = true,
-      preserveCurrent = false,
-    ) => {
-      if (!preserveCurrent) {
-        closeAllDashboardOverlays();
-      }
+    (opts?: { linkedTaskId?: string }, pushHistory = true) => {
+      closeAllDashboardOverlays();
       openCreateModal(opts);
       if (pushHistory) pushDashboardOverlay({ overlay: "create" });
     },
@@ -3360,6 +3485,41 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     },
     [closeAllDashboardOverlays, pushDashboardOverlay],
   );
+
+  const markWalkthroughComplete = useCallback(async () => {
+    if (!userId || typeof window === "undefined") {
+      setWalkthroughOpen(false);
+      setWalkthroughStepIndex(0);
+      return;
+    }
+
+    try {
+      await fetch("/api/onboarding/walkthrough", {
+        method: "POST",
+      });
+      window.localStorage.setItem(walkthroughStorageKey(userId), "1");
+    } catch {
+      /* ignore */
+    } finally {
+      setWalkthroughOpen(false);
+      setWalkthroughStepIndex(0);
+    }
+  }, [userId]);
+
+  const advanceWalkthrough = useCallback(() => {
+    setWalkthroughStepIndex((current) => {
+      const next = current + 1;
+      if (next >= WALKTHROUGH_STEPS.length) {
+        void markWalkthroughComplete();
+        return current;
+      }
+      return next;
+    });
+  }, [markWalkthroughComplete]);
+
+  const closeWalkthrough = useCallback(() => {
+    void markWalkthroughComplete();
+  }, [markWalkthroughComplete]);
 
   const showShareOverlay = useCallback(
     (ids: string[], pushHistory = true) => {
@@ -3872,7 +4032,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         setEditingTaskId(taskId);
         await refreshTasks();
       }
-      showCreateOverlay({ linkedTaskId: taskId }, true, true);
+      showCreateOverlay({ linkedTaskId: taskId });
     } catch {
       setTaskFormError("Network error. Try again.");
     }
@@ -4894,6 +5054,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     />
                   </label>
                 </div>
+                <StarRating
+                  value={reminderStars}
+                  onChange={setReminderStars}
+                  label="Priority (required)"
+                />
                 <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
                   Repeat
                   <select
@@ -5031,11 +5196,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     </>
                   );
                 })()}
-                <StarRating
-                  value={reminderStars}
-                  onChange={setReminderStars}
-                  label="Priority (required)"
-                />
                 {createFormError ? (
                   <p
                     className="text-sm text-rose-600 dark:text-rose-400"
@@ -5844,6 +6004,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </div>
         </div>
       ) : null}
+
+      <WalkthroughOverlay
+        open={walkthroughOpen}
+        step={WALKTHROUGH_STEPS[walkthroughStepIndex] ?? WALKTHROUGH_STEPS[0]!}
+        stepIndex={walkthroughStepIndex}
+        stepCount={WALKTHROUGH_STEPS.length}
+        onNext={advanceWalkthrough}
+        onClose={closeWalkthrough}
+      />
 
       {isBatchOpen && (
         <div

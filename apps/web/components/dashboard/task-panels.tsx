@@ -389,6 +389,11 @@ export function TaskFormOverlay({
               placeholder="Title"
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
             />
+            <StarRating
+              value={taskStars}
+              onChange={setTaskStars}
+              label="Priority (required)"
+            />
             <label className="grid gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
               <span>Due date &amp; time (optional)</span>
               <input
@@ -427,11 +432,6 @@ export function TaskFormOverlay({
                 )}
               </select>
             </label>
-            <StarRating
-              value={taskStars}
-              onChange={setTaskStars}
-              label="Priority (required)"
-            />
             <button
               type="button"
               onClick={onCreateLinkedReminder}
