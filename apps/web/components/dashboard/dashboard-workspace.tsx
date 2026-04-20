@@ -4880,7 +4880,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       min={getMinDate()}
                       value={newDate}
                       onChange={(e) => setNewDate(e.target.value)}
-                      className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                      className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:[color-scheme:dark]"
                     />
                   </label>
                   <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -4890,7 +4890,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       min={newDate === getMinDate() ? new Date().toTimeString().slice(0, 5) : undefined}
                       value={newTime}
                       onChange={(e) => setNewTime(e.target.value)}
-                      className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                      className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:[color-scheme:dark]"
                     />
                   </label>
                 </div>
@@ -5805,7 +5805,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       prev ? { ...prev, value: event.target.value, error: null } : prev,
                     )
                   }
-                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:[color-scheme:dark]"
                 />
               </label>
               {rescheduleReminder.error ? (

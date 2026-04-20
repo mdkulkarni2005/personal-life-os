@@ -400,7 +400,7 @@ export function TaskFormOverlay({
                   setTaskDueUserEdited(true);
                   setTaskFormDue(e.target.value);
                 }}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950 dark:[color-scheme:dark]"
               />
             </label>
             <textarea
