@@ -1,13 +1,13 @@
 "use client";
 
-export type WalkthroughAccent = "violet" | "teal" | "amber" | "rose";
+import { useEffect, useMemo, useState } from "react";
 
 export interface WalkthroughStep {
-  eyebrow: string;
-  title: string;
-  body: string[];
+  id: string;
+  line1: string;
+  line2: string;
+  targetSelectors: string[];
   nextLabel: string;
-  accent: WalkthroughAccent;
 }
 
 interface WalkthroughOverlayProps {
@@ -19,17 +19,6 @@ interface WalkthroughOverlayProps {
   onClose: () => void;
 }
 
-const accentClasses: Record<WalkthroughAccent, string> = {
-  violet:
-    "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/60 dark:bg-violet-950/30 dark:text-violet-200",
-  teal:
-    "border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-900/60 dark:bg-teal-950/30 dark:text-teal-200",
-  amber:
-    "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200",
-  rose:
-    "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200",
-};
-
 export function WalkthroughOverlay({
   open,
   step,
@@ -40,89 +29,128 @@ export function WalkthroughOverlay({
 }: WalkthroughOverlayProps) {
   if (!open) return null;
 
+  const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
+
+  useEffect(() => {
+    const resolveTarget = () => {
+      let target: HTMLElement | null = null;
+      for (const selector of step.targetSelectors) {
+        const found = document.querySelector<HTMLElement>(selector);
+        if (found) {
+          target = found;
+          break;
+        }
+      }
+      setTargetRect(target ? target.getBoundingClientRect() : null);
+    };
+
+    resolveTarget();
+    const raf = window.requestAnimationFrame(resolveTarget);
+    window.addEventListener("resize", resolveTarget);
+    window.addEventListener("scroll", resolveTarget, true);
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resolveTarget);
+      window.removeEventListener("scroll", resolveTarget, true);
+    };
+  }, [step]);
+
   const isLastStep = stepIndex >= stepCount - 1;
+  const cardWidth = 260;
+
+  const layout = useMemo(() => {
+    if (!targetRect) {
+      return {
+        cardLeft: "50%",
+        cardTop: "50%",
+        cardTransform: "translate(-50%, -50%)",
+        arrowLeft: "50%",
+        arrowTop: "100%",
+        arrowRotate: "45deg",
+      };
+    }
+
+    const viewportW = window.innerWidth;
+    const desiredLeft = targetRect.left + targetRect.width / 2 - cardWidth / 2;
+    const cardLeft = Math.max(10, Math.min(desiredLeft, viewportW - cardWidth - 10));
+    const showAbove = targetRect.top > 120;
+
+    return {
+      cardLeft: `${cardLeft}px`,
+      cardTop: showAbove ? `${targetRect.top - 12}px` : `${targetRect.bottom + 12}px`,
+      cardTransform: showAbove ? "translateY(-100%)" : "none",
+      arrowLeft: `${targetRect.left + targetRect.width / 2 - cardLeft}px`,
+      arrowTop: showAbove ? "100%" : "-6px",
+      arrowRotate: "45deg",
+    };
+  }, [targetRect]);
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/65 px-4 py-6 backdrop-blur-sm">
+    <div className="pointer-events-none fixed inset-0 z-[70]">
+      {targetRect ? (
+        <div
+          className="fixed rounded-xl border-2 border-violet-400/90 shadow-[0_0_0_4px_rgba(139,92,246,0.22)]"
+          style={{
+            left: targetRect.left - 4,
+            top: targetRect.top - 4,
+            width: targetRect.width + 8,
+            height: targetRect.height + 8,
+          }}
+        />
+      ) : null}
+
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby="walkthrough-title"
-        className="relative w-full max-w-xl overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_30px_90px_-50px_rgba(15,23,42,0.6)] dark:border-slate-800 dark:bg-slate-950"
+        aria-labelledby="walkthrough-tip"
+        className="pointer-events-auto fixed w-[260px] rounded-xl border border-slate-200 bg-white p-3 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+        style={{
+          left: layout.cardLeft,
+          top: layout.cardTop,
+          transform: layout.cardTransform,
+        }}
       >
+        <span
+          aria-hidden
+          className="absolute h-3 w-3 border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+          style={{
+            left: layout.arrowLeft,
+            top: layout.arrowTop,
+            transform: `translateX(-50%) rotate(${layout.arrowRotate})`,
+          }}
+        />
+
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-lg leading-none text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+          className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-sm leading-none text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
           aria-label="Skip walkthrough"
-          title="Skip walkthrough"
         >
           ×
         </button>
 
-        <div className="p-5 sm:p-6">
-          <div className="flex items-center gap-3 pr-10">
-            <span
-              className={`inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] ${accentClasses[step.accent]}`}
+        <div className="space-y-2 pr-7">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-600 dark:text-violet-300">
+            Step {stepIndex + 1} / {stepCount}
+          </p>
+          <p id="walkthrough-tip" className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {step.line1}
+          </p>
+          <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+            {step.line2}
+          </p>
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">
+              Quick guide
+            </span>
+            <button
+              type="button"
+              onClick={onNext}
+              className="rounded-full bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-500"
             >
-              Step {stepIndex + 1} of {stepCount}
-            </span>
-            <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
-              New user walkthrough
-            </span>
-          </div>
-
-          <div className="mt-5 space-y-4">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
-                {step.eyebrow}
-              </p>
-              <h2
-                id="walkthrough-title"
-                className="mt-2 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-[2rem]"
-              >
-                {step.title}
-              </h2>
-            </div>
-
-            <div className="space-y-2 text-sm leading-7 text-slate-600 dark:text-slate-300 sm:text-[0.98rem]">
-              {step.body.map((line) => (
-                <p key={line}>{line}</p>
-              ))}
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-200">
-              <span className="font-semibold text-slate-900 dark:text-slate-100">
-                Next:
-              </span>{" "}
-              {step.nextLabel}
-            </div>
-          </div>
-
-          <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              You can skip anytime with the cross button.
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-              >
-                Skip
-              </button>
-              <button
-                type="button"
-                onClick={onNext}
-                className={`rounded-full px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99] ${
-                  isLastStep
-                    ? "bg-emerald-600 hover:bg-emerald-500"
-                    : "bg-violet-600 hover:bg-violet-500"
-                }`}
-              >
-                {step.nextLabel}
-              </button>
-            </div>
+              {isLastStep ? "Done" : step.nextLabel}
+            </button>
           </div>
         </div>
       </div>

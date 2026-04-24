@@ -396,54 +396,45 @@ const WALKTHROUGH_STORAGE_PREFIX = "remindos:walkthrough-completed:";
 
 const WALKTHROUGH_STEPS: WalkthroughStep[] = [
   {
-    eyebrow: "Welcome",
-    title: "This is your planning home.",
-    body: [
-      "Use this space to keep reminders, tasks, and follow-ups in one place.",
-      "The dashboard stays light and mobile-friendly, so the important stuff stays easy to find.",
+    id: "all-tasks",
+    line1: "This is All tasks.",
+    line2: "Open it to view, edit, and track all tasks quickly.",
+    targetSelectors: [
+      '[data-walkthrough="all-tasks-trigger"]',
+      '[aria-label="All tasks"]',
     ],
-    nextLabel: "Next: See reminders",
-    accent: "violet",
+    nextLabel: "Next",
   },
   {
-    eyebrow: "Reminders",
-    title: "Capture what matters in a few taps.",
-    body: [
-      "Open Create reminder to add a due time, priority, and notes without leaving the dashboard.",
-      "If a reminder belongs to a task, link it so both stay connected.",
+    id: "briefing",
+    line1: "This is Briefing.",
+    line2: "Tap it for a quick summary of what needs attention now.",
+    targetSelectors: [
+      '[data-walkthrough="briefing-trigger"]',
+      '[aria-label="Run briefing"]',
     ],
-    nextLabel: "Next: Open tasks",
-    accent: "teal",
+    nextLabel: "Next",
   },
   {
-    eyebrow: "Tasks",
-    title: "Track work with a simple task board.",
-    body: [
-      "Use All tasks to review pending work, mark items done, or start a new task.",
-      "Tasks can also create a related reminder when something needs a time.",
+    id: "create-reminder",
+    line1: "This is Create reminder.",
+    line2: "Add a reminder in seconds with date, priority, and notes.",
+    targetSelectors: [
+      '[data-walkthrough="create-reminder-trigger"]',
+      '[data-testid="chat-mobile-create-reminder"]',
+      '[aria-label="Create reminder"]',
     ],
-    nextLabel: "Next: Check the snapshot",
-    accent: "amber",
+    nextLabel: "Next",
   },
   {
-    eyebrow: "Daily snapshot",
-    title: "Start with what is urgent.",
-    body: [
-      "The summary cards highlight what is due today, what is late, and what needs attention next.",
-      "That means you can open the app and know where to begin in seconds.",
+    id: "menu",
+    line1: "This is your workspace menu.",
+    line2: "Use it to open snapshot and other quick actions.",
+    targetSelectors: [
+      '[data-walkthrough="snapshot-trigger"]',
+      '[aria-label="Open workspace menu"]',
     ],
-    nextLabel: "Next: Use chat",
-    accent: "rose",
-  },
-  {
-    eyebrow: "Chat and sharing",
-    title: "Ask in plain language and keep others in the loop.",
-    body: [
-      "The chat composer can create, update, and organize reminders for you step by step.",
-      "When needed, share reminders with other users and keep the conversation attached to the work.",
-    ],
-    nextLabel: "Finish tour",
-    accent: "violet",
+    nextLabel: "Finish",
   },
 ];
 
@@ -3633,6 +3624,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     void markWalkthroughComplete();
   }, [markWalkthroughComplete]);
 
+  useEffect(() => {
+    if (!walkthroughOpen) return;
+    closeAllDashboardOverlays();
+  }, [walkthroughOpen, walkthroughStepIndex, closeAllDashboardOverlays]);
+
   const showShareOverlay = useCallback(
     (ids: string[], pushHistory = true) => {
       openShareModal(ids);
@@ -4219,6 +4215,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             <button
               type="button"
               onClick={openAllTasksFromSnapshot}
+              data-walkthrough="all-tasks-trigger"
               className="flex h-11 w-11 items-center justify-center rounded-full border border-teal-200 bg-teal-50 text-teal-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-teal-100"
               aria-label="All tasks"
               title="All tasks"
@@ -4244,6 +4241,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             <button
               type="button"
               onClick={() => showSnapshotOverlay()}
+              data-walkthrough="snapshot-trigger"
               className="relative flex h-14 w-14 items-center justify-center rounded-[22px] bg-violet-600 text-white shadow-[0_24px_45px_-22px_rgba(124,58,237,0.7)] transition hover:-translate-y-0.5"
               aria-label="Open workspace menu"
               title="Open workspace menu"
@@ -4268,6 +4266,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             <button
               type="button"
               onClick={() => runBriefingStream()}
+              data-walkthrough="briefing-trigger"
               disabled={!isHistoryLoaded || briefingStreaming || isLoading}
               className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Run briefing"
@@ -4337,6 +4336,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   <button
                     type="button"
                     onClick={openAllTasksFromSnapshot}
+                    data-walkthrough="all-tasks-trigger"
                     className="hidden h-10 items-center justify-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 text-xs font-semibold text-teal-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-100 sm:inline-flex lg:hidden"
                   >
                     <span
@@ -4358,6 +4358,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <button
                   type="button"
                   onClick={() => runBriefingStream()}
+                  data-walkthrough="briefing-trigger"
                   disabled={
                     !isHistoryLoaded || briefingStreaming || isLoading
                   }
@@ -4823,6 +4824,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <button
                       type="button"
                       onClick={openAllTasksFromSnapshot}
+                      data-walkthrough="all-tasks-trigger"
                       className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-[11px] font-semibold text-teal-700"
                     >
                       ≣ All tasks
@@ -4834,6 +4836,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       type="button"
                       onClick={() => showCreateOverlay()}
                       disabled={briefingComposerLocked}
+                      data-walkthrough="create-reminder-trigger"
                       data-testid="chat-mobile-create-reminder"
                       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-xl font-semibold text-white shadow-sm transition hover:bg-violet-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 sm:hidden"
                       aria-label="Create reminder"
@@ -5211,33 +5214,33 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   onChange={setReminderStars}
                   label="Priority (required)"
                 />
-                <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Repeat
-                  <select
-                    value={newRecurrence}
-                    onChange={(e) =>
-                      setNewRecurrence(e.target.value as ReminderRecurrence)
-                    }
-                    data-testid="reminder-recurrence-select"
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                <button
+                  type="submit"
+                  data-testid="reminder-save-button"
+                  className="w-full rounded-full bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white"
+                >
+                  {editingReminderId ? "Update" : "Save"}
+                </button>
+                <div className="-mt-1 flex gap-2">
+                  <button
+                    type="submit"
+                    className="flex-1 rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white"
                   >
-                    <option value="none">Does not repeat</option>
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                  </select>
-                </label>
-                <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Notes
-                  <textarea
-                    rows={3}
-                    value={newNotes}
-                    onChange={(e) => setNewNotes(e.target.value)}
-                    placeholder="Optional notes"
-                    data-testid="reminder-notes-input"
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
-                  />
-                </label>
+                    {editingReminderId ? "Update" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetReminderForm();
+                      setCreateFormError(null);
+                      closeCreateOverlay();
+                    }}
+                    data-testid="reminder-cancel-button"
+                    className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold"
+                  >
+                    Cancel
+                  </button>
+                </div>
                 {(() => {
                   const editingRem = editingReminderId
                     ? reminders.find((r) => r.id === editingReminderId)
@@ -5246,6 +5249,33 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     !editingRem || editingRem.access !== "shared";
                   return (
                     <>
+                      <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Repeat (optional)
+                        <select
+                          value={newRecurrence}
+                          onChange={(e) =>
+                            setNewRecurrence(e.target.value as ReminderRecurrence)
+                          }
+                          data-testid="reminder-recurrence-select"
+                          className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                        >
+                          <option value="none">Does not repeat</option>
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="monthly">Monthly</option>
+                        </select>
+                      </label>
+                      <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Notes (optional)
+                        <textarea
+                          rows={3}
+                          value={newNotes}
+                          onChange={(e) => setNewNotes(e.target.value)}
+                          placeholder="Optional notes"
+                          data-testid="reminder-notes-input"
+                          className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                        />
+                      </label>
                       <label
                         className={`grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 ${
                           !canEditLinks ? "opacity-60" : ""
@@ -5365,27 +5395,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     {createFormError}
                   </p>
                 ) : null}
-                <div className="mt-1 flex gap-2">
-                  <button
-                    type="submit"
-                    data-testid="reminder-save-button"
-                    className="rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white"
-                  >
-                    {editingReminderId ? "Update" : "Save"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      resetReminderForm();
-                      setCreateFormError(null);
-                      closeCreateOverlay();
-                    }}
-                    data-testid="reminder-cancel-button"
-                    className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold"
-                  >
-                    Cancel
-                  </button>
-                </div>
               </div>
             </form>
           </div>
