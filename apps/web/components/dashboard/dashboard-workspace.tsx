@@ -1018,17 +1018,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   >([]);
   const [showSuggestedQuestions, setShowSuggestedQuestions] = useState(true);
   const [reminderListTab, setReminderListTab] = useState<
-    "missed" | "today" | "tomorrow" | "upcoming" | "done" | "shared" | "sent"
+    "missed" | "today" | "tomorrow" | "upcoming" | "all" | "done" | "shared" | "sent"
   >("missed");
+  const [reminderSearchQuery, setReminderSearchQuery] = useState("");
   const [sharedFromFilter, setSharedFromFilter] = useState<"all" | string>(
     "all",
   );
   const [sentToFilter, setSentToFilter] = useState<"all" | string>("all");
   const [isTasksOpen, setIsTasksOpen] = useState(false);
   const [taskMode, setTaskMode] = useState<"browse" | "create">("browse");
-  const [taskTab, setTaskTab] = useState<"missed" | "pending" | "done">(
+  const [taskTab, setTaskTab] = useState<"missed" | "pending" | "done" | "all">(
     "pending",
   );
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
   const [taskFormTitle, setTaskFormTitle] = useState("");
   const [taskFormDue, setTaskFormDue] = useState(() =>
     currentDateTimeLocalValue(),
@@ -2232,6 +2234,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         "today",
         "tomorrow",
         "upcoming",
+        "all",
         "shared",
         "sent",
         "done",
@@ -2242,6 +2245,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       ).length;
       const hit =
         order.find((k) => {
+          if (k === "all") return reminders.length > 0;
           if (k === "shared") return sharedCount > 0;
           if (k === "sent") return sentCount > 0;
           return grouped[k].length > 0;
@@ -2288,7 +2292,39 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     [tasks],
   );
 
+  const matchesReminderSearch = useCallback(
+    (reminder: ReminderItem, query: string) => {
+      const q = query.trim().toLowerCase();
+      if (!q) return true;
+      const linkedTaskTitle = reminder.linkedTaskId
+        ? taskTitleById[reminder.linkedTaskId] ?? ""
+        : "";
+      const hay = [
+        reminder.title,
+        reminder.notes ?? "",
+        reminder.recurrence ?? "",
+        reminder.domain ?? "",
+        linkedTaskTitle,
+        reminder.status,
+        reminder.access ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    },
+    [taskTitleById],
+  );
+
   const reminderListRows = useMemo(() => {
+    if (reminderListTab === "all") {
+      let rows = reminders;
+      if (reminderTaskFilter === "adhoc") {
+        rows = rows.filter((r) => isAdhocReminder(r));
+      } else if (reminderTaskFilter !== "all") {
+        rows = rows.filter((r) => r.linkedTaskId === reminderTaskFilter);
+      }
+      return rows.filter((r) => matchesReminderSearch(r, reminderSearchQuery));
+    }
     if (reminderListTab === "shared") {
       let rows = reminders.filter((r) => r.access === "shared");
       if (sharedFromFilter !== "all") {
@@ -2327,8 +2363,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     reminderListTab,
     reminderTaskFilter,
     reminders,
+    reminderSearchQuery,
     sharedFromFilter,
     sentToFilter,
+    matchesReminderSearch,
   ]);
 
   const sharedTabCount = useMemo(
@@ -5429,12 +5467,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   ["today", "Today"],
                   ["tomorrow", "Tomorrow"],
                   ["upcoming", "Later"],
+                  ["all", "All"],
                   ["shared", "Shared"],
                   ["sent", "Sent"],
                   ["done", "Done"],
                 ] as const
               ).map(([key, label]) => {
                 const count =
+                  key === "all"
+                    ? reminders.length
+                    :
                   key === "shared"
                     ? sharedTabCount
                     : key === "sent"
@@ -5568,6 +5610,18 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                    {reminderListTab === "all" ? (
+                      <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                        <span className="font-medium">Search</span>
+                        <input
+                          value={reminderSearchQuery}
+                          onChange={(e) => setReminderSearchQuery(e.target.value)}
+                          placeholder="Search reminders..."
+                          data-testid="reminder-search-input"
+                          className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                        />
+                      </label>
+                    ) : null}
                     <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
                       <span className="font-medium">Filter</span>
                       <select
@@ -5692,8 +5746,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       onTouchStart={() => {
                         if (
                           reminder.access === "shared" ||
-                          reminderListTab === "done" ||
-                          reminderListTab === "shared"
+                          reminder.status === "done" ||
+                          reminder.status === "archived"
                         ) {
                           return;
                         }
@@ -5728,9 +5782,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       }}
                     >
                       {reminderSelectionMode &&
-                      reminderListTab !== "shared" &&
                       reminder.access !== "shared" &&
-                      reminderListTab !== "done" ? (
+                      reminder.status !== "done" &&
+                      reminder.status !== "archived" ? (
                         <div className="flex shrink-0 items-start pt-0.5">
                           <input
                             type="checkbox"
@@ -5800,7 +5854,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             {reminder.notes}
                           </p>
                         ) : null}
-                        {reminderListTab === "done" ? null : (
+                        {reminder.status === "done" || reminder.status === "archived" ? null : (
                           <div className="mt-3 flex flex-wrap gap-2">
                             {reminder.access !== "shared" ? (
                               <button
@@ -5823,17 +5877,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             <button
                               type="button"
                               onClick={() => {
-                                const nextStatus =
-                                  reminder.status === "done"
-                                    ? "pending"
-                                    : "done";
                                 void refreshAfterReminderMutation(
                                   fetch(`/api/reminders/${reminder.id}`, {
                                     method: "PATCH",
                                     headers: {
                                       "Content-Type": "application/json",
                                     },
-                                    body: JSON.stringify({ status: nextStatus }),
+                                    body: JSON.stringify({ status: "done" }),
                                   }),
                                 ).catch(() =>
                                   showShareToast(
@@ -5844,9 +5894,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                               data-testid="reminder-status-button"
                               className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
                             >
-                              {reminder.status === "done"
-                                ? "Mark pending"
-                                : "Mark done"}
+                              Mark done
                             </button>
                             <button
                               type="button"
@@ -6065,6 +6113,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         open={isTasksOpen && taskMode === "browse"}
         taskTab={taskTab}
         setTaskTab={setTaskTab}
+        taskSearchQuery={taskSearchQuery}
+        setTaskSearchQuery={setTaskSearchQuery}
         tasksGrouped={tasksGrouped}
         reminders={reminders}
         onClose={closeTasksOverlay}

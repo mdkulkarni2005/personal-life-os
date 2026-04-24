@@ -22,8 +22,10 @@ export interface TaskGroups {
 
 interface TaskListOverlayProps {
   open: boolean;
-  taskTab: "missed" | "pending" | "done";
-  setTaskTab: (tab: "missed" | "pending" | "done") => void;
+  taskTab: "missed" | "pending" | "done" | "all";
+  setTaskTab: (tab: "missed" | "pending" | "done" | "all") => void;
+  taskSearchQuery: string;
+  setTaskSearchQuery: (value: string) => void;
   tasksGrouped: TaskGroups;
   reminders: ReminderItem[];
   onClose: () => void;
@@ -284,6 +286,8 @@ export function TaskListOverlay({
   open,
   taskTab,
   setTaskTab,
+  taskSearchQuery,
+  setTaskSearchQuery,
   tasksGrouped,
   reminders,
   onClose,
@@ -299,12 +303,30 @@ export function TaskListOverlay({
 }: TaskListOverlayProps) {
   if (!open) return null;
 
-  const activeTasks =
+  const baseTasks =
     taskTab === "missed"
       ? tasksGrouped.missed
       : taskTab === "pending"
         ? tasksGrouped.pending
-        : tasksGrouped.done;
+        : taskTab === "done"
+          ? tasksGrouped.done
+          : [...tasksGrouped.missed, ...tasksGrouped.pending, ...tasksGrouped.done];
+
+  const q = taskSearchQuery.trim().toLowerCase();
+  const activeTasks =
+    taskTab === "all" && q
+      ? baseTasks.filter((task) => {
+          const hay = [
+            task.title,
+            task.notes ?? "",
+            task.domain ?? "",
+            task.status,
+          ]
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        })
+      : baseTasks;
 
   return (
     <div
@@ -330,6 +352,7 @@ export function TaskListOverlay({
               [
                 ["missed", "Missed"],
                 ["pending", "Upcoming"],
+                ["all", "All"],
                 ["done", "Done"],
               ] as const
             ).map(([key, label]) => (
@@ -351,6 +374,10 @@ export function TaskListOverlay({
                     ? tasksGrouped.missed.length
                     : key === "pending"
                       ? tasksGrouped.pending.length
+                      : key === "all"
+                        ? tasksGrouped.missed.length +
+                          tasksGrouped.pending.length +
+                          tasksGrouped.done.length
                       : tasksGrouped.done.length}
                   )
                 </span>
@@ -366,6 +393,20 @@ export function TaskListOverlay({
             + Task
           </button>
         </div>
+        {taskTab === "all" ? (
+          <div className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
+            <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+              <span className="font-medium">Search</span>
+              <input
+                value={taskSearchQuery}
+                onChange={(e) => setTaskSearchQuery(e.target.value)}
+                data-testid="task-search-input"
+                placeholder="Search tasks..."
+                className="w-full max-w-xs rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+              />
+            </label>
+          </div>
+        ) : null}
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <div className="grid gap-3">
             {activeTasks.length === 0 ? (
