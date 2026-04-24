@@ -50,6 +50,7 @@ interface ReminderAgentResponse {
 
 const NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_MODEL = "meta/llama-3.1-70b-instruct";
+const DEFAULT_CHAT_REMINDER_TITLE = "Reminder";
 const systemPrompt = `You are the RemindOS assistant for Personal Life OS. You help with the user's reminders and tasks (orchestration layer).
 
 DATA RULES (critical):
@@ -389,12 +390,18 @@ function extractTitleFromCreateInput(input: string) {
   const remindGlobal = /\bremind me to\s+/i.exec(working);
   if (remindGlobal && remindGlobal.index !== undefined) {
     working = working.slice(remindGlobal.index + remindGlobal[0].length);
+  } else {
+    working = working
+      .replace(
+        /^(?:please\s+)?(?:create|add|set|make|schedule|बनाओ|तैयार करो|set karo|करो)\s+(?:(?:a|an)\s+)?(?:reminder|रिमाइंडर|स्मरणपत्र)?\s*/i,
+        "",
+      )
+      .trim();
   }
 
   const normalized = working
-    .replace(/\b(create|add|set|make|schedule|बनाओ|तैयार करो|set karo|करो)\b/gi, " ")
-    .replace(/\b(reminder|remind me|remind|रिमाइंडर|स्मरणपत्र)\b/gi, " ")
-    .replace(/\b(for|about|के लिए|साठी)\b/gi, " ")
+    .replace(/^(?:called|named|titled)\s+/i, "")
+    .replace(/\b(for|about|called|named|titled|के लिए|साठी)\b/gi, " ")
     .replace(
       /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)\b/gi,
       " "
@@ -564,24 +571,18 @@ export async function POST(request: Request) {
   if (looksLikeCreateIntent(effectiveMessage)) {
     const title = extractTitleFromCreateInput(effectiveMessage);
     const dueAt = parseDateTimeFromInput(effectiveMessage, timeZone);
-
-    if (!title) {
-      return NextResponse.json({
-        reply: "Got it. What is the reminder title?",
-        action: { type: "clarify" },
-      } satisfies ReminderAgentResponse);
-    }
+    const resolvedTitle = title || DEFAULT_CHAT_REMINDER_TITLE;
 
     if (dueAt && isValidFutureIsoDate(dueAt)) {
       return NextResponse.json({
-        reply: `Reminder created for ${formatDueInUserZone(dueAt, timeZone)}.`,
-        action: { type: "create_reminder", title, dueAt },
+        reply: `Reminder "${resolvedTitle}" created for ${formatDueInUserZone(dueAt, timeZone)}.`,
+        action: { type: "create_reminder", title: resolvedTitle, dueAt },
       } satisfies ReminderAgentResponse);
     }
 
     return NextResponse.json({
       reply: "I can create it. Please share date and exact time, like: tomorrow at 8:00 PM.",
-      action: { type: "clarify", title },
+      action: { type: "clarify", title: resolvedTitle },
     } satisfies ReminderAgentResponse);
   }
 

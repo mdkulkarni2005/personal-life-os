@@ -32,6 +32,10 @@ interface TaskListOverlayProps {
   onEditTask: (task: TaskRow) => void;
   onToggleStatus: (task: TaskRow) => void;
   onDeleteTask: (task: TaskRow) => void;
+  onReminderMarkDone: (reminder: ReminderItem) => void;
+  onReminderEdit: (reminder: ReminderItem) => void;
+  onReminderReschedule: (reminder: ReminderItem) => void;
+  onReminderDelete: (reminder: ReminderItem) => void;
 }
 
 interface TaskFormOverlayProps {
@@ -87,6 +91,7 @@ function TaskHeader({
         <button
           type="button"
           onClick={onViewReminders}
+          data-testid="task-panel-view-reminders"
           className="rounded-full border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-900 transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
         >
           View reminders
@@ -94,6 +99,7 @@ function TaskHeader({
         <button
           type="button"
           onClick={onClose}
+          data-testid="task-panel-close"
           className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
         >
           Close
@@ -109,12 +115,20 @@ function TaskListCard({
   onEditTask,
   onToggleStatus,
   onDeleteTask,
+  onReminderMarkDone,
+  onReminderEdit,
+  onReminderReschedule,
+  onReminderDelete,
 }: {
   task: TaskRow;
   reminders: ReminderItem[];
   onEditTask: (task: TaskRow) => void;
   onToggleStatus: (task: TaskRow) => void;
   onDeleteTask: (task: TaskRow) => void;
+  onReminderMarkDone: (reminder: ReminderItem) => void;
+  onReminderEdit: (reminder: ReminderItem) => void;
+  onReminderReschedule: (reminder: ReminderItem) => void;
+  onReminderDelete: (reminder: ReminderItem) => void;
 }) {
   const linkedAll = reminders.filter((r) => r.linkedTaskId === task.id);
   const linkedPending = linkedAll.filter((r) => r.status === "pending");
@@ -123,7 +137,11 @@ function TaskListCard({
   );
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+    <article
+      className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+      data-testid="task-card"
+      data-task-id={task.id}
+    >
       <p className="font-semibold text-slate-950 dark:text-slate-100">
         {task.title}
         <span className="text-amber-500">{priorityStarsLabel(task.priority)}</span>
@@ -157,19 +175,55 @@ function TaskListCard({
                 {linkedPending.map((r) => (
                   <li
                     key={r.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/90"
+                    className="rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/90"
                   >
-                    <span className="min-w-0 font-medium text-slate-900 dark:text-slate-100">
-                      {r.title}
-                    </span>
-                    <span className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
-                      {new Date(r.dueAt).toLocaleString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="min-w-0 font-medium text-slate-900 dark:text-slate-100">
+                        {r.title}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
+                        {new Date(r.dueAt).toLocaleString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onReminderMarkDone(r)}
+                        data-testid={`task-reminder-done-${r.id}`}
+                        className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold text-white"
+                      >
+                        Mark done
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onReminderEdit(r)}
+                        data-testid={`task-reminder-edit-${r.id}`}
+                        className="rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-semibold text-white"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onReminderReschedule(r)}
+                        data-testid={`task-reminder-reschedule-${r.id}`}
+                        className="rounded-full border border-sky-300 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100"
+                      >
+                        Reschedule
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onReminderDelete(r)}
+                        data-testid={`task-reminder-delete-${r.id}`}
+                        className="rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-semibold text-white"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -189,6 +243,7 @@ function TaskListCard({
         <button
           type="button"
           onClick={() => onEditTask(task)}
+          data-testid="task-edit-button"
           className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
         >
           Edit
@@ -197,6 +252,7 @@ function TaskListCard({
           <button
             type="button"
             onClick={() => onToggleStatus(task)}
+            data-testid="task-status-button"
             className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
           >
             Mark done
@@ -205,6 +261,7 @@ function TaskListCard({
           <button
             type="button"
             onClick={() => onToggleStatus(task)}
+            data-testid="task-status-button"
             className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
           >
             Reopen
@@ -213,6 +270,7 @@ function TaskListCard({
         <button
           type="button"
           onClick={() => onDeleteTask(task)}
+          data-testid="task-delete-button"
           className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
         >
           Delete
@@ -234,6 +292,10 @@ export function TaskListOverlay({
   onEditTask,
   onToggleStatus,
   onDeleteTask,
+  onReminderMarkDone,
+  onReminderEdit,
+  onReminderReschedule,
+  onReminderDelete,
 }: TaskListOverlayProps) {
   if (!open) return null;
 
@@ -246,6 +308,7 @@ export function TaskListOverlay({
 
   return (
     <div
+      data-testid="task-list-overlay"
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4"
       onClick={onClose}
     >
@@ -274,6 +337,7 @@ export function TaskListOverlay({
                 key={key}
                 type="button"
                 onClick={() => setTaskTab(key)}
+                data-testid={`task-tab-${key}`}
                 className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
                   taskTab === key
                     ? "bg-teal-600 text-white"
@@ -296,6 +360,7 @@ export function TaskListOverlay({
           <button
             type="button"
             onClick={onCreateTask}
+            data-testid="task-create-button"
             className="rounded-full border border-teal-300 bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-800 transition hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/50 dark:text-teal-100 dark:hover:bg-teal-900/40"
           >
             + Task
@@ -316,6 +381,10 @@ export function TaskListOverlay({
                   onEditTask={onEditTask}
                   onToggleStatus={onToggleStatus}
                   onDeleteTask={onDeleteTask}
+                  onReminderMarkDone={onReminderMarkDone}
+                  onReminderEdit={onReminderEdit}
+                  onReminderReschedule={onReminderReschedule}
+                  onReminderDelete={onReminderDelete}
                 />
               ))
             )}
@@ -340,7 +409,6 @@ export function TaskFormOverlay({
   taskStars,
   setTaskStars,
   taskFormError,
-  taskDueUserEdited,
   setTaskDueUserEdited,
   onSubmit,
   onCancelEdit,
@@ -352,6 +420,7 @@ export function TaskFormOverlay({
 
   return (
     <div
+      data-testid="task-form-overlay"
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4"
       onClick={onClose}
     >
@@ -378,6 +447,7 @@ export function TaskFormOverlay({
                   type="button"
                   className="text-xs font-semibold text-slate-500 underline hover:text-slate-700 dark:hover:text-slate-300"
                   onClick={onCancelEdit}
+                  data-testid="task-cancel-edit-button"
                 >
                   Cancel edit
                 </button>
@@ -387,6 +457,7 @@ export function TaskFormOverlay({
               value={taskFormTitle}
               onChange={(e) => setTaskFormTitle(e.target.value)}
               placeholder="Title"
+              data-testid="task-title-input"
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
             />
             <StarRating
@@ -405,6 +476,7 @@ export function TaskFormOverlay({
                   setTaskDueUserEdited(true);
                   setTaskFormDue(e.target.value);
                 }}
+                data-testid="task-due-input"
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950 dark:[color-scheme:dark]"
               />
             </label>
@@ -413,6 +485,7 @@ export function TaskFormOverlay({
               onChange={(e) => setTaskFormNotes(e.target.value)}
               placeholder="Notes (optional)"
               rows={2}
+              data-testid="task-notes-input"
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
             />
             <label className="grid gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
@@ -420,6 +493,7 @@ export function TaskFormOverlay({
               <select
                 value={taskFormDomain}
                 onChange={(e) => setTaskFormDomain(e.target.value as "" | LifeDomain)}
+                data-testid="task-domain-select"
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
               >
                 <option value="">No domain</option>
@@ -435,17 +509,22 @@ export function TaskFormOverlay({
             <button
               type="button"
               onClick={onCreateLinkedReminder}
+              data-testid="task-create-linked-reminder-button"
               className="w-full rounded-xl border border-violet-300 bg-violet-50/90 py-2 text-xs font-semibold text-violet-900 shadow-sm transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
             >
               + Add linked reminder
             </button>
             {taskFormError ? (
-              <p className="text-xs text-rose-600 dark:text-rose-400">
+              <p
+                className="text-xs text-rose-600 dark:text-rose-400"
+                data-testid="task-form-error"
+              >
                 {taskFormError}
               </p>
             ) : null}
             <button
               type="submit"
+              data-testid="task-save-button"
               className="w-full rounded-full bg-teal-600 py-2 text-sm font-semibold text-white hover:bg-teal-500"
             >
               {editingTaskId ? "Save changes" : "Add task"}

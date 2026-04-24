@@ -16,6 +16,7 @@ export function CreateReminderTrigger() {
           router.push("/dashboard?open=create");
         }
       }}
+      data-testid="global-create-reminder"
       className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 hover:text-slate-950 sm:h-10 sm:w-10"
       aria-label="Create reminder"
       title="Create reminder"

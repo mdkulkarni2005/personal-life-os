@@ -8,7 +8,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint --max-warnings 0",
-    "check-types": "next typegen && tsc --noEmit"
+    "check-types": "next typegen && tsc --noEmit",
+    "test:e2e": "playwright test -c playwright.config.ts",
+    "test:e2e:headed": "playwright test -c playwright.config.ts --headed",
+    "test:e2e:debug": "playwright test -c playwright.config.ts --debug",
+    "test:e2e:report": "playwright show-report playwright-report",
+    "test:e2e:ci": "playwright test -c playwright.config.ts --reporter=line,junit,html"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.0.12",
@@ -26,6 +31,7 @@
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
+    "@playwright/test": "^1.55.1",
     "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "^22.15.3",
     "@types/react": "19.2.2",

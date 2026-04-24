@@ -98,7 +98,11 @@ export async function DELETE(
       taskId: parseTaskId(id),
     });
     if (!result.ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      unlinkedReminderCount:
+        typeof result.unlinkedReminderCount === "number" ? result.unlinkedReminderCount : 0,
+    });
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
   }

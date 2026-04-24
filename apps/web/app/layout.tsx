@@ -71,12 +71,14 @@ export default async function RootLayout({
                   <Show when="signed-out">
                     <Link
                       href="/sign-in"
+                      data-testid="header-sign-in"
                       className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900"
                     >
                       Sign in
                     </Link>
                     <Link
                       href="/sign-up"
+                      data-testid="header-sign-up"
                       className="rounded-full bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-500"
                     >
                       Get started

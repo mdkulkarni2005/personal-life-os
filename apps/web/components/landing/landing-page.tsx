@@ -118,12 +118,14 @@ export function LandingPage() {
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
                 href="/sign-up"
+                data-testid="landing-start-free"
                 className="lp-cta-main rounded-full bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-[0_16px_28px_-18px_rgba(124,58,237,1)] transition hover:translate-y-[-1px] hover:bg-violet-500"
               >
                 Start free
               </Link>
               <Link
                 href="/sign-in"
+                data-testid="landing-sign-in"
                 className="rounded-full border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 I already have an account

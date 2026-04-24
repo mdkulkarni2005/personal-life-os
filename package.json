@@ -8,6 +8,10 @@
     "dev": "turbo run dev",
     "dev:apps": "concurrently -n web -c cyan \"pnpm --filter web dev\"",
     "lint": "turbo run lint",
+    "predeploy:check": "pnpm test:e2e:ci",
+    "test:e2e": "pnpm --filter web test:e2e",
+    "test:e2e:headed": "pnpm --filter web test:e2e:headed",
+    "test:e2e:ci": "pnpm --filter web test:e2e:ci",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types"
   },

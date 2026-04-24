@@ -158,6 +158,14 @@ interface ShareInboxRow {
   shareBatchId?: string;
 }
 
+type TaskWarningAction = "delete" | "complete";
+
+interface TaskActionWarning {
+  task: TaskRow;
+  action: TaskWarningAction;
+  pendingReminderCount: number;
+}
+
 
 function groupShareInboxRows(
   rows: ShareInboxRow[],
@@ -293,6 +301,7 @@ function buildOpeningSummaryMessage(input: {
 }
 
 const SHOW_SUGGESTED_QUESTIONS_KEY = "remindos:showSuggestedQuestions";
+const DEFAULT_CHAT_REMINDER_TITLE = "Reminder";
 
 function usePersistentReminders(userId: string) {
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
@@ -616,6 +625,12 @@ function isOverdueTodayReminder(reminder: ReminderItem, now = new Date()) {
   const startTodayMs = startToday.getTime();
   const nowMs = now.getTime();
   return dueMs >= startTodayMs && dueMs < nowMs;
+}
+
+function reminderStateLabel(reminder: ReminderItem, now = new Date()) {
+  if (reminder.status === "done" || reminder.status === "archived") return "Done";
+  if (isOverdueTodayReminder(reminder, now)) return "Missed";
+  return "Upcoming";
 }
 
 function readDueShown(): Set<string> {
@@ -1032,6 +1047,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [reminderStars, setReminderStars] = useState(0);
   const [taskStars, setTaskStars] = useState(0);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [taskActionWarning, setTaskActionWarning] =
+    useState<TaskActionWarning | null>(null);
   const [reminderLinkedTaskId, setReminderLinkedTaskId] = useState("");
   const [reminderDomain, setReminderDomain] = useState<"" | LifeDomain>("");
   const [reminderTaskFilter, setReminderTaskFilter] = useState<
@@ -1433,6 +1450,101 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     void refreshTasks();
   }, [userId, refreshTasks]);
 
+  const getPendingLinkedReminderCount = useCallback(
+    (taskId: string) =>
+      reminders.filter(
+        (reminder) =>
+          reminder.linkedTaskId === taskId && reminder.status === "pending",
+      ).length,
+    [reminders],
+  );
+
+  const executeTaskStatusToggle = useCallback(
+    async (task: TaskRow) => {
+      try {
+        await fetch(`/api/tasks/${task.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: task.status === "done" ? "pending" : "done",
+          }),
+        });
+        await refreshTasks();
+      } catch {
+        setTaskFormError("Could not update task. Try again.");
+      }
+    },
+    [refreshTasks],
+  );
+
+  const executeTaskDelete = useCallback(
+    async (task: TaskRow) => {
+      try {
+        const response = await fetch(`/api/tasks/${task.id}`, {
+          method: "DELETE",
+        });
+        const data = (await response.json().catch(() => ({}))) as {
+          unlinkedReminderCount?: number;
+        };
+        await refreshTasks();
+        await refreshReminders();
+        if ((data.unlinkedReminderCount ?? 0) > 0) {
+          showShareToast(
+            `Deleted "${task.title}" and kept ${data.unlinkedReminderCount} reminder${
+              data.unlinkedReminderCount === 1 ? "" : "s"
+            } as ADHOC.`,
+          );
+        }
+      } catch {
+        setTaskFormError("Could not delete task. Try again.");
+      }
+    },
+    [refreshReminders, refreshTasks, showShareToast],
+  );
+
+  const requestTaskStatusToggle = useCallback(
+    (task: TaskRow) => {
+      const pendingReminderCount = getPendingLinkedReminderCount(task.id);
+      if (task.status === "pending" && pendingReminderCount > 0) {
+        setTaskActionWarning({
+          task,
+          action: "complete",
+          pendingReminderCount,
+        });
+        return;
+      }
+      void executeTaskStatusToggle(task);
+    },
+    [executeTaskStatusToggle, getPendingLinkedReminderCount],
+  );
+
+  const requestTaskDelete = useCallback(
+    (task: TaskRow) => {
+      const pendingReminderCount = getPendingLinkedReminderCount(task.id);
+      if (pendingReminderCount > 0) {
+        setTaskActionWarning({
+          task,
+          action: "delete",
+          pendingReminderCount,
+        });
+        return;
+      }
+      void executeTaskDelete(task);
+    },
+    [executeTaskDelete, getPendingLinkedReminderCount],
+  );
+
+  const confirmTaskWarning = useCallback(() => {
+    if (!taskActionWarning) return;
+    const { action, task } = taskActionWarning;
+    setTaskActionWarning(null);
+    if (action === "complete") {
+      void executeTaskStatusToggle(task);
+      return;
+    }
+    void executeTaskDelete(task);
+  }, [executeTaskDelete, executeTaskStatusToggle, taskActionWarning]);
+
   useEffect(() => {
     try {
       if (
@@ -1718,7 +1830,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       textarea.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [input, briefingStreaming, editingMessageId, replyTarget]);
 
-  const inviteQueryParam = searchParams.get("invite");
+  const inviteQueryParam = searchParams?.get("invite");
 
   useEffect(() => {
     const token = inviteQueryParam?.trim();
@@ -1806,8 +1918,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     };
   }, [inviteQueryParam, isHistoryLoaded]);
 
-  const shareBatchAction = searchParams.get("shareBatchAction");
-  const batchKeyParam = searchParams.get("batchKey");
+  const shareBatchAction = searchParams?.get("shareBatchAction");
+  const batchKeyParam = searchParams?.get("batchKey");
 
   useEffect(() => {
     const act = shareBatchAction?.trim();
@@ -1908,8 +2020,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, [messages, isHistoryLoaded]);
 
   useEffect(() => {
-    const rid = searchParams.get("reminderId")?.trim();
-    const act = searchParams.get("notifAction")?.trim();
+    const rid = searchParams?.get("reminderId")?.trim();
+    const act = searchParams?.get("notifAction")?.trim();
     if (!rid) return;
     const sig = `${act ?? ""}:${rid}`;
     if (notifUrlHandledRef.current === sig) return;
@@ -2353,6 +2465,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       .replace(/^\s*(for|about)\s+/i, "")
       .trim();
 
+  const hasInlineCreateDetails = (value: string) =>
+    /\b(today|tomorrow|tmrw|tomorow|tommarow|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|noon|midnight)\b/i.test(
+      value,
+    ) ||
+    /\b\d{1,2}(?:[:.]\d{2})?\s*(am|pm)\b/i.test(value) ||
+    /\b\d{1,2}[:.]\d{2}\b/.test(value);
+
   const parseDateInput = (value: string, now: Date) => {
     const text = value
       .trim()
@@ -2470,7 +2589,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     const dispatchAssistantResponse = async (
       messageText: string,
       responseReplyPayload: ReplyContextPayload | undefined,
-      messagesSnapshot: ChatMessage[],
+      _messagesSnapshot: ChatMessage[],
     ) => {
       try {
         const inviteToken = extractInviteToken(messageText);
@@ -2739,21 +2858,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           }
         }
 
-        if (/^\s*create(\s+a)?\s+reminder\b/i.test(messageText)) {
-          const extractedTitle = extractCreateTitle(messageText);
-          if (!extractedTitle) {
-            setPendingCreateDraft({ step: "title" });
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: "Sure — what should the reminder title be?",
-                createdAt: new Date().toISOString(),
-              },
-            ]);
-            return;
-          }
+        if (
+          /^\s*create(\s+a)?\s+reminder\b/i.test(messageText) &&
+          !hasInlineCreateDetails(messageText)
+        ) {
+          const extractedTitle =
+            extractCreateTitle(messageText) || DEFAULT_CHAT_REMINDER_TITLE;
           setPendingCreateDraft({ step: "date", title: extractedTitle });
           setMessages((prev) => [
             ...prev,
@@ -3319,6 +3429,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     setIsImportOpen(false);
     setIsTasksOpen(false);
     setTaskMode("browse");
+    setTaskActionWarning(null);
     setIsCreateOpen(false);
     setIsListOpen(false);
     setIsSnapshotOpen(false);
@@ -3418,6 +3529,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       const current = readDashboardOverlayFromHistory();
       if (current?.overlay === overlay && typeof window !== "undefined") {
         window.history.back();
+        fallback();
         return;
       }
       fallback();
@@ -3638,7 +3750,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   useEffect(() => {
     const openR = () => showReminderListOverlay();
-    const openT = () => showTasksOverlay("create");
+    const openT = () => showTasksOverlay("browse");
     const runB = () => runBriefingStream();
     window.addEventListener("dashboard:open-reminders", openR);
     window.addEventListener("dashboard:open-tasks", openT);
@@ -3658,7 +3770,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, [showSnapshotOverlay]);
 
   useEffect(() => {
-    const o = searchParams.get("open");
+    const o = searchParams?.get("open");
     if (o !== "reminders" && o !== "tasks" && o !== "create") return;
     if (typeof window !== "undefined") {
       const nextState =
@@ -3681,6 +3793,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const openEditModal = useCallback(
     (reminder: ReminderItem) => {
+      closeAllDashboardOverlays();
       setCreateFormError(null);
       setShowReminderInlineTask(false);
       setReminderInlineTaskTitle("");
@@ -3706,7 +3819,30 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       setIsCreateOpen(true);
       pushDashboardOverlay({ overlay: "create" });
     },
-    [pushDashboardOverlay],
+    [closeAllDashboardOverlays, pushDashboardOverlay],
+  );
+
+  const openTaskReminderReschedule = useCallback(
+    (reminder: ReminderItem) => {
+      setRescheduleReminder({
+        messageId: `task-view:${reminder.id}`,
+        reminderId: reminder.id,
+        title: reminder.title,
+        value:
+          toDateTimeLocalValue(reminder.dueAt) || currentDateTimeLocalValue(),
+        error: null,
+      });
+    },
+    [],
+  );
+
+  const handleTaskReminderAction = useCallback(
+    (reminder: ReminderItem, action: "done" | "delete") => {
+      void runReminderQuickAction(reminder.id, action).catch(() => {
+        showShareToast("Could not update reminder. Try again.");
+      });
+    },
+    [runReminderQuickAction, showShareToast],
   );
 
   const handleManualCreate = async (event: FormEvent<HTMLFormElement>) => {
@@ -4351,7 +4487,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         : "min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-bl-[12px] border border-slate-200 bg-[#f6f7fb] px-4 py-3 text-sm text-slate-800 shadow-[0_20px_40px_-36px_rgba(15,23,42,0.55)]";
 
                     const inner = (
-                      <div className={bubbleClass}>
+                      <div
+                        className={bubbleClass}
+                        data-testid="chat-message"
+                        data-message-role={message.role}
+                      >
                         {replyQuote ? (
                           <div
                             className={`mb-2 rounded-2xl border-l-4 border-amber-400 pl-3 ${
@@ -4415,6 +4555,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                       "done",
                                     )
                                   }
+                                  data-testid="due-reminder-done-button"
                                   className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500"
                                 >
                                   Done
@@ -4428,6 +4569,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                       "snooze",
                                     )
                                   }
+                                  data-testid="due-reminder-snooze-button"
                                   className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50"
                                 >
                                   Snooze 1h
@@ -4441,6 +4583,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                       "reschedule",
                                     )
                                   }
+                                  data-testid="due-reminder-reschedule-button"
                                   className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-100"
                                 >
                                   Set new time
@@ -4454,6 +4597,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                       "delete",
                                     )
                                   }
+                                  data-testid="due-reminder-delete-button"
                                   className="rounded-full bg-rose-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-rose-500"
                                 >
                                   Delete
@@ -4589,6 +4733,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               <form
                 ref={chatFormRef}
                 onSubmit={handleChatSubmit}
+                data-testid="chat-form"
                 className={`shrink-0 border-t border-slate-100 bg-white px-3 pb-[max(0.875rem,env(safe-area-inset-bottom))] pt-3 sm:px-6 sm:pb-4 ${
                   briefingComposerLocked ? "opacity-90" : ""
                 }`}
@@ -4689,6 +4834,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       type="button"
                       onClick={() => showCreateOverlay()}
                       disabled={briefingComposerLocked}
+                      data-testid="chat-mobile-create-reminder"
                       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-xl font-semibold text-white shadow-sm transition hover:bg-violet-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 sm:hidden"
                       aria-label="Create reminder"
                       title="Create reminder"
@@ -4719,6 +4865,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             ? "Message (wait for briefing to finish)"
                             : "Message"
                         }
+                        data-testid="chat-input"
                         className={`scrollbar-none relative z-10 min-h-10 w-full resize-none overflow-y-hidden rounded-2xl bg-transparent px-2 py-1.5 text-sm leading-6 text-slate-800 [overflow-wrap:anywhere] outline-none placeholder:text-slate-400 ${
                           briefingComposerLocked && !editingMessageId
                             ? "cursor-wait caret-transparent"
@@ -4733,6 +4880,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         isLoading ||
                         (briefingStreaming && !editingMessageId)
                       }
+                      data-testid="chat-send-button"
                       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-base font-semibold text-white shadow-md transition hover:bg-violet-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                       aria-label="Send message"
                     >
@@ -4997,6 +5145,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
       {isCreateOpen && (
         <div
+          data-testid="reminder-form-overlay"
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
           onClick={closeCreateOverlay}
         >
@@ -5029,6 +5178,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     value={newTitle}
                     onChange={(e) => setNewTitle(e.target.value)}
                     placeholder="Reminder title (e.g. Pay electricity bill)"
+                    data-testid="reminder-title-input"
                     className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
                   />
                 </label>
@@ -5040,6 +5190,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       min={getMinDate()}
                       value={newDate}
                       onChange={(e) => setNewDate(e.target.value)}
+                      data-testid="reminder-date-input"
                       className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:[color-scheme:dark]"
                     />
                   </label>
@@ -5050,6 +5201,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       min={newDate === getMinDate() ? new Date().toTimeString().slice(0, 5) : undefined}
                       value={newTime}
                       onChange={(e) => setNewTime(e.target.value)}
+                      data-testid="reminder-time-input"
                       className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:[color-scheme:dark]"
                     />
                   </label>
@@ -5066,6 +5218,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     onChange={(e) =>
                       setNewRecurrence(e.target.value as ReminderRecurrence)
                     }
+                    data-testid="reminder-recurrence-select"
                     className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
                   >
                     <option value="none">Does not repeat</option>
@@ -5081,6 +5234,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     value={newNotes}
                     onChange={(e) => setNewNotes(e.target.value)}
                     placeholder="Optional notes"
+                    data-testid="reminder-notes-input"
                     className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
                   />
                 </label>
@@ -5104,6 +5258,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             setReminderLinkedTaskId(e.target.value)
                           }
                           disabled={!canEditLinks}
+                          data-testid="reminder-task-select"
                           className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 disabled:cursor-not-allowed"
                         >
                           <option value="">None — counts as ADHOC</option>
@@ -5122,6 +5277,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           <button
                             type="button"
                             onClick={() => setShowReminderInlineTask((v) => !v)}
+                            data-testid="reminder-inline-task-toggle"
                             className="text-xs font-semibold text-violet-700 hover:underline dark:text-violet-300"
                           >
                             {showReminderInlineTask
@@ -5136,6 +5292,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                   setReminderInlineTaskTitle(e.target.value)
                                 }
                                 placeholder="New task title"
+                                data-testid="reminder-inline-task-title-input"
                                 className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
                               />
                               <label className="grid gap-1 text-[11px] font-medium text-slate-600 dark:text-slate-400">
@@ -5146,6 +5303,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                   onChange={(e) =>
                                     setReminderInlineTaskDue(e.target.value)
                                   }
+                                  data-testid="reminder-inline-task-due-input"
                                   className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
                                 />
                               </label>
@@ -5153,6 +5311,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                 type="button"
                                 disabled={reminderInlineTaskSaving}
                                 onClick={() => void createReminderInlineTask()}
+                                data-testid="reminder-inline-task-save-button"
                                 className="rounded-full bg-violet-600 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                               >
                                 {reminderInlineTaskSaving
@@ -5175,6 +5334,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             setReminderDomain(e.target.value as "" | LifeDomain)
                           }
                           disabled={!canEditLinks}
+                          data-testid="reminder-domain-select"
                           className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 disabled:cursor-not-allowed"
                         >
                           <option value="">No domain</option>
@@ -5200,6 +5360,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   <p
                     className="text-sm text-rose-600 dark:text-rose-400"
                     role="alert"
+                    data-testid="reminder-form-error"
                   >
                     {createFormError}
                   </p>
@@ -5207,6 +5368,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <div className="mt-1 flex gap-2">
                   <button
                     type="submit"
+                    data-testid="reminder-save-button"
                     className="rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white"
                   >
                     {editingReminderId ? "Update" : "Save"}
@@ -5218,6 +5380,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       setCreateFormError(null);
                       closeCreateOverlay();
                     }}
+                    data-testid="reminder-cancel-button"
                     className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold"
                   >
                     Cancel
@@ -5231,6 +5394,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
       {isListOpen && (
         <div
+          data-testid="reminder-list-overlay"
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4"
           onClick={closeReminderListOverlay}
         >
@@ -5243,6 +5407,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               <button
                 type="button"
                 onClick={closeReminderListOverlay}
+                data-testid="reminder-list-close"
                 className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
               >
                 Close
@@ -5271,6 +5436,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     key={key}
                     type="button"
                     onClick={() => setReminderListTab(key)}
+                    data-testid={`reminder-tab-${key}`}
                     className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
                       reminderListTab === key
                         ? "bg-violet-600 text-white"
@@ -5288,6 +5454,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   <button
                     type="button"
                     className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                    data-testid="reminder-selection-start"
                     onClick={() => {
                       setReminderSelectionMode(true);
                       setSelectedReminderIds(new Set());
@@ -5300,6 +5467,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <button
                       type="button"
                       className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+                      data-testid="reminder-selection-cancel"
                       onClick={() => {
                         setReminderSelectionMode(false);
                         setSelectedReminderIds(new Set());
@@ -5310,6 +5478,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <button
                       type="button"
                       disabled={selectedReminderIds.size === 0}
+                      data-testid="reminder-selection-share"
                       className="rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => showShareOverlay([...selectedReminderIds])}
                     >
@@ -5455,6 +5624,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <button
                       type="button"
                       onClick={openCreateReminderFromRemindersList}
+                      data-testid="reminder-create-button"
                       className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1.5 text-xs font-semibold text-violet-900 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100"
                       title="Create reminder"
                       aria-label="Create reminder"
@@ -5467,6 +5637,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <button
                       type="button"
                       onClick={openCreateTaskFromRemindersList}
+                      data-testid="reminder-list-create-task-button"
                       className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                       title="Create task"
                       aria-label="Create task"
@@ -5479,6 +5650,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <button
                       type="button"
                       onClick={openAllTasksFromSnapshot}
+                      data-testid="reminder-list-open-tasks-button"
                       className="inline-flex items-center gap-1 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-900 dark:border-teal-700 dark:bg-teal-950/50 dark:text-teal-100"
                       title="All tasks"
                       aria-label="All tasks"
@@ -5500,6 +5672,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   reminderListRows.map((reminder) => (
                     <article
                       key={reminder.id}
+                      data-testid="reminder-card"
+                      data-reminder-id={reminder.id}
                       className={`flex gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700 sm:p-4 ${
                         reminderSelectionMode &&
                         selectedReminderIds.has(reminder.id)
@@ -5559,25 +5733,43 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         </div>
                       ) : null}
                       <div className="min-w-0 flex-1">
+                        {(() => {
+                          const linkedTaskTitle = reminder.linkedTaskId
+                            ? taskTitleById[reminder.linkedTaskId]
+                            : undefined;
+                          const showAsAdhoc =
+                            isAdhocReminder(reminder) || !linkedTaskTitle;
+
+                          return (
                         <p className="font-semibold">
                           {reminder.title}
                           <span className="text-amber-500">
                             {priorityStarsLabel(reminder.priority)}
+                          </span>
+                          <span
+                            className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase ${
+                              reminderStateLabel(reminder) === "Done"
+                                ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100"
+                                : reminderStateLabel(reminder) === "Missed"
+                                  ? "bg-rose-100 text-rose-900 dark:bg-rose-900/50 dark:text-rose-100"
+                                  : "bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-100"
+                            }`}
+                            data-testid="reminder-state-label"
+                          >
+                            {reminderStateLabel(reminder)}
                           </span>
                           {reminder.access === "shared" ? (
                             <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
                               Shared
                             </span>
                           ) : null}
-                          {isAdhocReminder(reminder) ? (
+                          {showAsAdhoc ? (
                             <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium uppercase text-slate-800 dark:bg-slate-700 dark:text-slate-100">
                               ADHOC
                             </span>
                           ) : (
                             <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-900 dark:bg-indigo-950/80 dark:text-indigo-100">
-                              Task:{" "}
-                              {taskTitleById[reminder.linkedTaskId!] ??
-                                "linked"}
+                              Task: {linkedTaskTitle}
                             </span>
                           )}
                           {reminder.domain ? (
@@ -5586,6 +5778,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             </span>
                           ) : null}
                         </p>
+                          );
+                        })()}
                         <p className="text-sm text-slate-500">
                           Due: {new Date(reminder.dueAt).toLocaleString()}
                         </p>
@@ -5603,6 +5797,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                               <button
                                 type="button"
                                 onClick={() => showShareOverlay([reminder.id])}
+                                data-testid="reminder-share-button"
                                 className="rounded-full border border-violet-400 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-900 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100"
                               >
                                 Share
@@ -5611,6 +5806,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             <button
                               type="button"
                               onClick={() => openEditModal(reminder)}
+                              data-testid="reminder-edit-button"
                               className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
                             >
                               Edit
@@ -5636,6 +5832,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                   ),
                                 );
                               }}
+                              data-testid="reminder-status-button"
                               className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
                             >
                               {reminder.status === "done"
@@ -5655,6 +5852,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                   ),
                                 );
                               }}
+                              data-testid="reminder-delete-button"
                               className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
                             >
                               Delete
@@ -5670,6 +5868,68 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </div>
         </div>
       )}
+
+      {taskActionWarning ? (
+        <div
+          data-testid="task-warning-modal"
+          className="fixed inset-0 z-[54] flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-4"
+          onClick={() => setTaskActionWarning(null)}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-600 dark:text-amber-300">
+                Warning
+              </p>
+              <h3 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
+                {taskActionWarning.action === "delete"
+                  ? "Delete task with pending reminders?"
+                  : "Close task with incomplete reminders?"}
+              </h3>
+            </div>
+            <div className="grid gap-4 px-5 py-5">
+              <p
+                className="text-sm leading-6 text-slate-600 dark:text-slate-300"
+                data-testid="task-warning-text"
+              >
+                {taskActionWarning.action === "delete"
+                  ? `Deleting "${taskActionWarning.task.title}" will unlink ${taskActionWarning.pendingReminderCount} pending reminder${
+                      taskActionWarning.pendingReminderCount === 1 ? "" : "s"
+                    }. They will stay in your reminder list as ADHOC items.`
+                  : `"${taskActionWarning.task.title}" still has ${taskActionWarning.pendingReminderCount} incomplete reminder${
+                      taskActionWarning.pendingReminderCount === 1 ? "" : "s"
+                    }. Continue only if you still want to mark the task done.`}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={confirmTaskWarning}
+                  data-testid="task-warning-confirm"
+                  className={`flex-1 rounded-full px-4 py-3 text-sm font-semibold text-white transition ${
+                    taskActionWarning.action === "delete"
+                      ? "bg-rose-600 hover:bg-rose-500"
+                      : "bg-amber-600 hover:bg-amber-500"
+                  }`}
+                >
+                  {taskActionWarning.action === "delete"
+                    ? "Delete task"
+                    : "Mark task done"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTaskActionWarning(null)}
+                  data-testid="task-warning-cancel"
+                  className="rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isShareOpen && (
         <div
@@ -5805,20 +6065,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           showTasksOverlay("create");
         }}
         onEditTask={openTaskEdit}
-        onToggleStatus={(task) => {
-          void fetch(`/api/tasks/${task.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              status: task.status === "done" ? "pending" : "done",
-            }),
-          }).then(() => void refreshTasks());
-        }}
-        onDeleteTask={(task) => {
-          void fetch(`/api/tasks/${task.id}`, {
-            method: "DELETE",
-          }).then(() => void refreshTasks());
-        }}
+        onToggleStatus={requestTaskStatusToggle}
+        onDeleteTask={requestTaskDelete}
+        onReminderMarkDone={(reminder) =>
+          handleTaskReminderAction(reminder, "done")
+        }
+        onReminderEdit={openEditModal}
+        onReminderReschedule={openTaskReminderReschedule}
+        onReminderDelete={(reminder) =>
+          handleTaskReminderAction(reminder, "delete")
+        }
       />
 
       <TaskFormOverlay
@@ -5913,6 +6169,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
       {rescheduleReminder ? (
         <div
+          data-testid="reschedule-reminder-modal"
           className="fixed inset-0 z-[66] flex items-end justify-center bg-black/45 p-3 sm:items-center sm:p-4"
           onClick={() => setRescheduleReminder(null)}
         >
@@ -5941,6 +6198,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   <button
                     key={preset.label}
                     type="button"
+                    data-testid={`reschedule-preset-${preset.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
                     className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
                     onClick={() => {
                       const next = new Date();
@@ -5965,11 +6223,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       prev ? { ...prev, value: event.target.value, error: null } : prev,
                     )
                   }
+                  data-testid="reschedule-datetime-input"
                   className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:[color-scheme:dark]"
                 />
               </label>
               {rescheduleReminder.error ? (
-                <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">
+                <p
+                  className="text-sm text-rose-600 dark:text-rose-400"
+                  role="alert"
+                  data-testid="reschedule-error"
+                >
                   {rescheduleReminder.error}
                 </p>
               ) : null}
@@ -5977,6 +6240,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <button
                   type="button"
                   onClick={() => void commitRescheduleReminder()}
+                  data-testid="reschedule-save-button"
                   className="flex-1 rounded-full bg-violet-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-violet-500"
                 >
                   Save new time
@@ -5984,6 +6248,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <button
                   type="button"
                   onClick={() => setRescheduleReminder(null)}
+                  data-testid="reschedule-cancel-button"
                   className="rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
                 >
                   Cancel

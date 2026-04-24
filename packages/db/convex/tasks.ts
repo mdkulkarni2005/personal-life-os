@@ -1,3 +1,4 @@
+import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
@@ -9,6 +10,23 @@ const lifeDomain = v.union(
   v.literal("hobby"),
   v.literal("fun")
 );
+
+async function unlinkRemindersForTask(ctx: MutationCtx, taskId: Id<"tasks">) {
+  const linkedReminders = await ctx.db
+    .query("reminders")
+    .withIndex("by_linked_task", (q) => q.eq("linkedTaskId", taskId))
+    .collect();
+  const updatedAt = Date.now();
+
+  for (const reminder of linkedReminders) {
+    await ctx.db.patch(reminder._id, {
+      linkedTaskId: undefined,
+      updatedAt,
+    });
+  }
+
+  return linkedReminders.length;
+}
 
 export const listForUser = query({
   args: { userId: v.string() },
@@ -85,7 +103,8 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.taskId);
     if (!row || row.userId !== args.userId) return { ok: false as const };
+    const unlinkedReminderCount = await unlinkRemindersForTask(ctx, args.taskId);
     await ctx.db.delete(args.taskId);
-    return { ok: true as const };
+    return { ok: true as const, unlinkedReminderCount };
   },
 });

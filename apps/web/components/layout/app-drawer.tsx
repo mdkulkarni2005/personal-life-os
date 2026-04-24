@@ -82,6 +82,7 @@ export function AppDrawer() {
 
   return (
     <div
+      data-testid="app-drawer"
       className="fixed inset-0 z-50 flex"
       style={{ pointerEvents: visible ? "auto" : "none" }}
     >
@@ -106,6 +107,7 @@ export function AppDrawer() {
           <button
             type="button"
             onClick={close}
+            data-testid="drawer-close"
             className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
             aria-label="Close menu"
           >
@@ -143,6 +145,7 @@ export function AppDrawer() {
                 // Small delay so the close animation can start first
                 setTimeout(() => item.action(), 150);
               }}
+              data-testid={`drawer-nav-${item.label.toLowerCase()}`}
               className="flex min-h-[3.25rem] items-center gap-3 border-b border-slate-100 px-5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 active:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-800"
             >
               <span className="text-lg leading-none">{item.icon}</span>
@@ -160,6 +163,7 @@ export function AppDrawer() {
             close();
             setTimeout(() => void signOut(() => router.push("/")), 200);
           }}
+          data-testid="drawer-sign-out"
           className="flex min-h-[3.25rem] items-center gap-3 px-5 text-left text-sm text-slate-500 hover:bg-slate-50 active:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
         >
           <span className="text-lg leading-none">🚪</span>

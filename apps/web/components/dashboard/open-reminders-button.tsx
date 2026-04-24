@@ -125,6 +125,7 @@ export function OpenRemindersButton() {
           router.push("/dashboard?open=reminders");
         }
       }}
+      data-testid="open-reminders-button"
       className={`relative inline-flex h-9 w-9 items-center justify-center rounded-full border bg-white shadow-sm transition sm:h-10 sm:w-10 dark:bg-slate-900 ${
         missedCount > 0
           ? "border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-950/40"
