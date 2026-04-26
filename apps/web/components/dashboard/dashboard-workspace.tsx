@@ -166,6 +166,17 @@ interface TaskActionWarning {
   pendingReminderCount: number;
 }
 
+type ReminderListTab =
+  | "all"
+  | "missed"
+  | "today"
+  | "tomorrow"
+  | "next2hours"
+  | "upcoming"
+  | "done"
+  | "shared"
+  | "sent";
+
 
 function groupShareInboxRows(
   rows: ShareInboxRow[],
@@ -618,6 +629,14 @@ function isOverdueTodayReminder(reminder: ReminderItem, now = new Date()) {
   return dueMs >= startTodayMs && dueMs < nowMs;
 }
 
+function isNextTwoHoursReminder(reminder: ReminderItem, now = new Date()) {
+  if (reminder.status === "done" || reminder.status === "archived") return false;
+  const dueMs = new Date(reminder.dueAt).getTime();
+  if (!Number.isFinite(dueMs)) return false;
+  const nextTwoHoursMs = now.getTime() + 2 * 60 * 60 * 1000;
+  return dueMs >= now.getTime() && dueMs < nextTwoHoursMs;
+}
+
 function reminderStateLabel(reminder: ReminderItem, now = new Date()) {
   if (reminder.status === "done" || reminder.status === "archived") return "Done";
   if (isOverdueTodayReminder(reminder, now)) return "Missed";
@@ -1017,9 +1036,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     FollowUpQuestion[]
   >([]);
   const [showSuggestedQuestions, setShowSuggestedQuestions] = useState(true);
-  const [reminderListTab, setReminderListTab] = useState<
-    "missed" | "today" | "tomorrow" | "upcoming" | "all" | "done" | "shared" | "sent"
-  >("missed");
+  const [reminderListTab, setReminderListTab] = useState<ReminderListTab>(
+    "all",
+  );
   const [reminderSearchQuery, setReminderSearchQuery] = useState("");
   const [sharedFromFilter, setSharedFromFilter] = useState<"all" | string>(
     "all",
@@ -1106,7 +1125,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   remindersRef.current = reminders;
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
-  const listOpenRef = useRef(false);
   const [briefingStreaming, setBriefingStreaming] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -2227,33 +2245,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     [grouped.missed.length, grouped.today.length, grouped.tomorrow.length, reminders],
   );
 
-  useEffect(() => {
-    if (isListOpen && !listOpenRef.current) {
-      const order = [
-        "missed",
-        "today",
-        "tomorrow",
-        "upcoming",
-        "all",
-        "shared",
-        "sent",
-        "done",
-      ] as const;
-      const sharedCount = reminders.filter((r) => r.access === "shared").length;
-      const sentCount = reminders.filter(
-        (r) => r.access === "owner" && r.outgoingShared,
-      ).length;
-      const hit =
-        order.find((k) => {
-          if (k === "all") return reminders.length > 0;
-          if (k === "shared") return sharedCount > 0;
-          if (k === "sent") return sentCount > 0;
-          return grouped[k].length > 0;
-        }) ?? "missed";
-      setReminderListTab(hit);
-    }
-    listOpenRef.current = isListOpen;
-  }, [isListOpen, grouped, reminders]);
+  const nextTwoHoursReminders = useMemo(() => {
+    const now = new Date();
+    return reminders
+      .filter((reminder) => isNextTwoHoursReminder(reminder, now))
+      .slice()
+      .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+  }, [reminders]);
 
   const tasksGrouped = useMemo(() => {
     const now = new Date();
@@ -2325,6 +2323,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       }
       return rows.filter((r) => matchesReminderSearch(r, reminderSearchQuery));
     }
+    if (reminderListTab === "next2hours") {
+      let rows = nextTwoHoursReminders;
+      if (reminderTaskFilter === "adhoc") {
+        return rows.filter((r) => isAdhocReminder(r));
+      }
+      if (reminderTaskFilter !== "all") {
+        return rows.filter((r) => r.linkedTaskId === reminderTaskFilter);
+      }
+      return rows;
+    }
     if (reminderListTab === "shared") {
       let rows = reminders.filter((r) => r.access === "shared");
       if (sharedFromFilter !== "all") {
@@ -2367,6 +2375,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     sharedFromFilter,
     sentToFilter,
     matchesReminderSearch,
+    nextTwoHoursReminders,
   ]);
 
   const sharedTabCount = useMemo(
@@ -3576,8 +3585,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
 
   const showReminderListOverlay = useCallback(
-    (pushHistory = true) => {
+    (pushHistory = true, tab: ReminderListTab = "all") => {
       closeAllDashboardOverlays();
+      setReminderListTab(tab);
       setIsListOpen(true);
       if (pushHistory) pushDashboardOverlay({ overlay: "reminders" });
     },
@@ -3774,6 +3784,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     showTasksOverlay("browse");
   };
 
+  const openNextTwoHoursFromSnapshot = () => {
+    showReminderListOverlay(true, "next2hours");
+  };
+
   const openReminderListFromCreateModal = () => {
     showReminderListOverlay();
   };
@@ -3786,15 +3800,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     const openR = () => showReminderListOverlay();
     const openT = () => showTasksOverlay("browse");
     const runB = () => runBriefingStream();
+    const clearChat = () => {
+      void handleClearChat();
+    };
     window.addEventListener("dashboard:open-reminders", openR);
     window.addEventListener("dashboard:open-tasks", openT);
     window.addEventListener("dashboard:run-briefing", runB);
+    window.addEventListener("dashboard:clear-chat", clearChat);
     return () => {
       window.removeEventListener("dashboard:open-reminders", openR);
       window.removeEventListener("dashboard:open-tasks", openT);
       window.removeEventListener("dashboard:run-briefing", runB);
+      window.removeEventListener("dashboard:clear-chat", clearChat);
     };
-  }, [showReminderListOverlay, showTasksOverlay, runBriefingStream]);
+  }, [showReminderListOverlay, showTasksOverlay, runBriefingStream, handleClearChat]);
 
   useEffect(() => {
     const openSnapshot = () => showSnapshotOverlay();
@@ -4225,6 +4244,34 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           <aside className="hidden w-20 shrink-0 lg:flex lg:flex-col lg:items-center lg:gap-3 lg:pt-6">
             <button
               type="button"
+              onClick={openNextTwoHoursFromSnapshot}
+              className="relative flex h-14 w-14 items-center justify-center rounded-[22px] bg-[linear-gradient(135deg,#f59e0b_0%,#f97316_100%)] text-white shadow-[0_24px_45px_-22px_rgba(249,115,22,0.65)] transition hover:-translate-y-0.5"
+              aria-label="Next 2 Hours"
+              title="Next 2 Hours"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-5 w-5"
+                aria-hidden="true"
+              >
+                <path d="M12 7v5l3 2" />
+                <circle cx="12" cy="12" r="8" />
+              </svg>
+              {nextTwoHoursReminders.length > 0 ? (
+                <span className="absolute -bottom-1 -right-1 inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                  {nextTwoHoursReminders.length > 99
+                    ? "99+"
+                    : nextTwoHoursReminders.length}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
               onClick={() => showReminderListOverlay()}
               className="relative flex h-14 w-14 items-center justify-center rounded-[22px] bg-[linear-gradient(135deg,#79d8c2_0%,#7568ff_100%)] text-white shadow-[0_24px_45px_-22px_rgba(117,104,255,0.75)] transition hover:-translate-y-0.5"
               aria-label="All reminders"
@@ -4360,6 +4407,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
+                    onClick={openNextTwoHoursFromSnapshot}
+                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:bg-amber-100 sm:inline-flex lg:hidden"
+                  >
+                    <span
+                      aria-hidden
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-100 text-amber-700"
+                    >
+                      ⏱
+                    </span>
+                    Next 2 hours
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => showReminderListOverlay()}
                     className="hidden h-10 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 sm:inline-flex lg:hidden"
                   >
@@ -4431,8 +4491,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <button
                       type="button"
                       onClick={() => {
-                        setReminderListTab("today");
-                        showReminderListOverlay();
+                        showReminderListOverlay(true, "today");
                       }}
                       className="flex shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 transition hover:bg-amber-100"
                     >
@@ -4447,8 +4506,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <button
                       type="button"
                       onClick={() => {
-                        setReminderListTab("tomorrow");
-                        showReminderListOverlay();
+                        showReminderListOverlay(true, "tomorrow");
                       }}
                       className="flex shrink-0 items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-700 transition hover:bg-teal-100"
                     >
@@ -4854,6 +4912,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   <div className="mb-2 flex items-center gap-2 sm:hidden">
                     <button
                       type="button"
+                      onClick={openNextTwoHoursFromSnapshot}
+                      className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700"
+                    >
+                      ⏱ Next 2 Hours
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => showReminderListOverlay()}
                       className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700"
                     >
@@ -5097,6 +5162,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </div>
 
               <div className="mt-3 grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={openNextTwoHoursFromSnapshot}
+                  className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-amber-500 to-orange-600 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-amber-400/25 transition hover:brightness-110 active:scale-[0.98]"
+                >
+                  <span aria-hidden className="text-sm leading-none opacity-90">
+                    ⏱
+                  </span>
+                  <span className="mt-0.5 leading-tight">Next 2 Hours</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => showCreateOverlay()}
@@ -5463,11 +5538,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 px-2 py-2 dark:border-slate-800">
               {(
                 [
+                  ["all", "All"],
                   ["missed", "Missed"],
                   ["today", "Today"],
                   ["tomorrow", "Tomorrow"],
+                  ["next2hours", "Next 2 Hours"],
                   ["upcoming", "Later"],
-                  ["all", "All"],
                   ["shared", "Shared"],
                   ["sent", "Sent"],
                   ["done", "Done"],
@@ -5476,12 +5552,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 const count =
                   key === "all"
                     ? reminders.length
-                    :
-                  key === "shared"
-                    ? sharedTabCount
-                    : key === "sent"
-                      ? sentTabCount
-                      : grouped[key].length;
+                    : key === "next2hours"
+                      ? nextTwoHoursReminders.length
+                      : key === "shared"
+                        ? sharedTabCount
+                        : key === "sent"
+                          ? sentTabCount
+                          : grouped[key].length;
                 return (
                   <button
                     key={key}

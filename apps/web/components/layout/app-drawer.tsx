@@ -78,6 +78,12 @@ export function AppDrawer() {
       action: () =>
         window.dispatchEvent(new CustomEvent("dashboard:run-briefing")),
     },
+    {
+      icon: "🧹",
+      label: "Clear Chat",
+      action: () =>
+        window.dispatchEvent(new CustomEvent("dashboard:clear-chat")),
+    },
   ];
 
   return (
