@@ -34,6 +34,7 @@ interface TaskListOverlayProps {
   onEditTask: (task: TaskRow) => void;
   onToggleStatus: (task: TaskRow) => void;
   onDeleteTask: (task: TaskRow) => void;
+  onCreateLinkedReminder: (task: TaskRow) => void;
   onReminderMarkDone: (reminder: ReminderItem) => void;
   onReminderEdit: (reminder: ReminderItem) => void;
   onReminderReschedule: (reminder: ReminderItem) => void;
@@ -65,7 +66,12 @@ interface TaskFormOverlayProps {
 
 function formatTaskDate(iso?: string) {
   if (!iso) return null;
-  return new Date(iso).toLocaleString();
+  return new Date(iso).toLocaleString(undefined, {
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function TaskHeader({
@@ -117,6 +123,7 @@ function TaskListCard({
   onEditTask,
   onToggleStatus,
   onDeleteTask,
+  onCreateLinkedReminder,
   onReminderMarkDone,
   onReminderEdit,
   onReminderReschedule,
@@ -127,6 +134,7 @@ function TaskListCard({
   onEditTask: (task: TaskRow) => void;
   onToggleStatus: (task: TaskRow) => void;
   onDeleteTask: (task: TaskRow) => void;
+  onCreateLinkedReminder: (task: TaskRow) => void;
   onReminderMarkDone: (reminder: ReminderItem) => void;
   onReminderEdit: (reminder: ReminderItem) => void;
   onReminderReschedule: (reminder: ReminderItem) => void;
@@ -139,146 +147,175 @@ function TaskListCard({
   );
 
   return (
-    <article
-      className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+    <details
+      className="group rounded-xl border border-slate-200 bg-white shadow-sm open:bg-slate-50/60 dark:border-slate-700 dark:bg-slate-900 dark:open:bg-slate-950/40"
       data-testid="task-card"
       data-task-id={task.id}
     >
-      <p className="font-semibold text-slate-950 dark:text-slate-100">
-        {task.title}
-        <span className="text-amber-500">{priorityStarsLabel(task.priority)}</span>
-        {task.domain ? (
-          <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100">
-            {task.domain}
-          </span>
-        ) : null}
-      </p>
-      {task.dueAt ? (
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          {task.status === "done" ? "Completed due: " : "Due: "}
-          {formatTaskDate(task.dueAt)}
-        </p>
-      ) : (
-        <p className="text-sm text-slate-500 dark:text-slate-400">No due date</p>
-      )}
-      {task.notes ? (
-        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-          {task.notes}
-        </p>
-      ) : null}
-      {linkedAll.length > 0 ? (
-        <div className="mt-2 space-y-2">
-          {linkedPending.length > 0 ? (
-            <div className="rounded-xl border border-violet-200/90 bg-gradient-to-b from-violet-50/95 to-white px-2.5 py-2 dark:border-violet-800/80 dark:from-violet-950/50 dark:to-slate-900/90">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
-                Linked reminders
-              </p>
-              <ul className="space-y-1.5">
-                {linkedPending.map((r) => (
-                  <li
-                    key={r.id}
-                    className="rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/90"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="min-w-0 font-medium text-slate-900 dark:text-slate-100">
-                        {r.title}
-                      </span>
-                      <span className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
-                        {new Date(r.dueAt).toLocaleString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => onReminderMarkDone(r)}
-                        data-testid={`task-reminder-done-${r.id}`}
-                        className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold text-white"
-                      >
-                        Mark done
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onReminderEdit(r)}
-                        data-testid={`task-reminder-edit-${r.id}`}
-                        className="rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-semibold text-white"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onReminderReschedule(r)}
-                        data-testid={`task-reminder-reschedule-${r.id}`}
-                        className="rounded-full border border-sky-300 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100"
-                      >
-                        Reschedule
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onReminderDelete(r)}
-                        data-testid={`task-reminder-delete-${r.id}`}
-                        className="rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-semibold text-white"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {linkedDone.length > 0 ? (
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              <span className="font-medium text-slate-600 dark:text-slate-300">
-                Completed on this task:
-              </span>{" "}
-              {linkedDone.map((r) => r.title).join(" · ")}
-            </p>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-left outline-none [&::-webkit-details-marker]:hidden">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold text-slate-950 dark:text-slate-100">
+            {task.title}
+          </p>
+        </div>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-4 w-4 shrink-0 text-slate-400 transition group-open:rotate-180 dark:text-slate-500"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </summary>
+      <div className="border-t border-slate-200 px-3 py-3 dark:border-slate-700">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+          <span>{task.status === "done" ? "Completed task" : "Task details"}</span>
+          <span className="text-amber-500">{priorityStarsLabel(task.priority)}</span>
+          {task.domain ? (
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100">
+              {task.domain}
+            </span>
           ) : null}
         </div>
-      ) : null}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => onEditTask(task)}
-          data-testid="task-edit-button"
-          className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
-        >
-          Edit
-        </button>
-        {task.status === "pending" ? (
-          <button
-            type="button"
-            onClick={() => onToggleStatus(task)}
-            data-testid="task-status-button"
-            className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
-          >
-            Mark done
-          </button>
+        {task.dueAt ? (
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            {task.status === "done" ? "Completed due: " : "Due: "}
+            {formatTaskDate(task.dueAt)}
+          </p>
         ) : (
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">No due date</p>
+        )}
+        {task.notes ? (
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            {task.notes}
+          </p>
+        ) : null}
+        <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => onToggleStatus(task)}
-            data-testid="task-status-button"
-            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+            onClick={() => onCreateLinkedReminder(task)}
+            data-testid="task-create-linked-reminder-button"
+            className="rounded-full border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-900 transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
           >
-            Reopen
+            + Add Reminder
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => onDeleteTask(task)}
-          data-testid="task-delete-button"
-          className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
-        >
-          Delete
-        </button>
+          <button
+            type="button"
+            onClick={() => onEditTask(task)}
+            data-testid="task-edit-button"
+            className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
+          >
+            Edit
+          </button>
+          {task.status === "pending" ? (
+            <button
+              type="button"
+              onClick={() => onToggleStatus(task)}
+              data-testid="task-status-button"
+              className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
+            >
+              Mark done
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onToggleStatus(task)}
+              data-testid="task-status-button"
+              className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+            >
+              Reopen
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onDeleteTask(task)}
+            data-testid="task-delete-button"
+            className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
+          >
+            Delete
+          </button>
+        </div>
+        {linkedAll.length > 0 ? (
+          <div className="mt-3 space-y-2">
+            {linkedPending.length > 0 ? (
+              <div className="rounded-xl border border-violet-200/90 bg-gradient-to-b from-violet-50/95 to-white px-2.5 py-2 dark:border-violet-800/80 dark:from-violet-950/50 dark:to-slate-900/90">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
+                  Linked reminders
+                </p>
+                <ul className="space-y-1.5">
+                  {linkedPending.map((r) => (
+                    <li
+                      key={r.id}
+                      className="rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/90"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="min-w-0 font-medium text-slate-900 dark:text-slate-100">
+                          {r.title}
+                        </span>
+                        <span className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
+                          {new Date(r.dueAt).toLocaleString(undefined, {
+                            month: "long",
+                            day: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => onReminderMarkDone(r)}
+                          data-testid={`task-reminder-done-${r.id}`}
+                          className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold text-white"
+                        >
+                          Mark done
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onReminderEdit(r)}
+                          data-testid={`task-reminder-edit-${r.id}`}
+                          className="rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-semibold text-white"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onReminderReschedule(r)}
+                          data-testid={`task-reminder-reschedule-${r.id}`}
+                          className="rounded-full border border-sky-300 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100"
+                        >
+                          Reschedule
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onReminderDelete(r)}
+                          data-testid={`task-reminder-delete-${r.id}`}
+                          className="rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-semibold text-white"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {linkedDone.length > 0 ? (
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                <span className="font-medium text-slate-600 dark:text-slate-300">
+                  Completed on this task:
+                </span>{" "}
+                {linkedDone.map((r) => r.title).join(" · ")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-    </article>
+    </details>
   );
 }
 
@@ -296,6 +333,7 @@ export function TaskListOverlay({
   onEditTask,
   onToggleStatus,
   onDeleteTask,
+  onCreateLinkedReminder,
   onReminderMarkDone,
   onReminderEdit,
   onReminderReschedule,
@@ -422,6 +460,7 @@ export function TaskListOverlay({
                   onEditTask={onEditTask}
                   onToggleStatus={onToggleStatus}
                   onDeleteTask={onDeleteTask}
+                  onCreateLinkedReminder={onCreateLinkedReminder}
                   onReminderMarkDone={onReminderMarkDone}
                   onReminderEdit={onReminderEdit}
                   onReminderReschedule={onReminderReschedule}

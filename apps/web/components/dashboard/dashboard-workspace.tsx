@@ -229,6 +229,19 @@ function formatSummaryTime(value: string) {
   }
 }
 
+function formatDisplayDateTime(value: string | number) {
+  try {
+    return new Date(value).toLocaleString(undefined, {
+      month: "long",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return String(value);
+  }
+}
+
 function buildOpeningSummaryMessage(input: {
   reminders: ReminderItem[];
   tasks: TaskItemBrief[];
@@ -295,7 +308,7 @@ function buildOpeningSummaryMessage(input: {
     lines.push("- None");
   } else {
     for (const item of upcomingLater.slice(0, 12)) {
-      lines.push(`- ${new Date(item.dueAt).toLocaleDateString()} ${formatSummaryTime(item.dueAt)} — **${item.title}**`);
+      lines.push(`- ${new Date(item.dueAt).toLocaleDateString(undefined, { month: "long", day: "numeric" })} ${formatSummaryTime(item.dueAt)} — **${item.title}**`);
     }
   }
 
@@ -3470,7 +3483,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
 
   const openTasksPanel = useCallback(
-    (mode: "create" | "browse" = "browse", preserveState = false) => {
+    (
+      mode: "create" | "browse" = "browse",
+      preserveState = false,
+      initialTab?: "missed" | "pending" | "done" | "all",
+    ) => {
       if (!preserveState) {
         resetTaskForm();
       }
@@ -3480,11 +3497,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         setTaskTab("pending");
       } else {
         setTaskTab(
-          tasksGrouped.missed.length > 0
-            ? "missed"
-            : tasksGrouped.pending.length > 0
-              ? "pending"
-              : "done",
+          initialTab ??
+            (tasksGrouped.missed.length > 0
+              ? "missed"
+              : tasksGrouped.pending.length > 0
+                ? "pending"
+                : "done"),
         );
       }
       setIsTasksOpen(true);
@@ -3639,9 +3657,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       mode: "create" | "browse" = "browse",
       pushHistory = true,
       preserveState = false,
+      initialTab?: "missed" | "pending" | "done" | "all",
     ) => {
       closeAllDashboardOverlays();
-      openTasksPanel(mode, preserveState);
+      openTasksPanel(mode, preserveState, initialTab);
       if (pushHistory)
         pushDashboardOverlay({ overlay: "tasks", taskMode: mode });
     },
@@ -3812,7 +3831,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   };
 
   const openAllTasksFromSnapshot = () => {
-    showTasksOverlay("browse");
+    showTasksOverlay("browse", true, false, "all");
   };
 
   const openNextTwoHoursFromSnapshot = () => {
@@ -3824,12 +3843,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   };
 
   const openReminderListFromTasksPanel = () => {
-    showReminderListOverlay();
+    showReminderListOverlay(true, "all");
   };
+
+  const openLinkedReminderForTask = useCallback(
+    (task: TaskRow) => {
+      showCreateOverlay({ linkedTaskId: task.id });
+    },
+    [showCreateOverlay],
+  );
 
   useEffect(() => {
     const openR = () => showReminderListOverlay();
-    const openT = () => showTasksOverlay("browse");
+    const openT = () => showTasksOverlay("browse", true, false, "all");
     const runB = () => runBriefingStream();
     const clearChat = () => {
       void handleClearChat();
@@ -3866,7 +3892,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       window.history.replaceState(nextState, "", "/dashboard");
     }
     if (o === "reminders") showReminderListOverlay();
-    if (o === "tasks") showTasksOverlay("browse");
+    if (o === "tasks") showTasksOverlay("browse", true, false, "all");
     if (o === "create") showCreateOverlay();
   }, [
     searchParams,
@@ -5358,13 +5384,6 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   onChange={setReminderStars}
                   label="Priority (required)"
                 />
-                <button
-                  type="submit"
-                  data-testid="reminder-save-button"
-                  className="w-full rounded-full bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white"
-                >
-                  {editingReminderId ? "Update" : "Save"}
-                </button>
                 <div className="-mt-1 flex gap-2">
                   <button
                     type="submit"
@@ -5570,10 +5589,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               {(
                 [
                   ["all", "All"],
+                  ["next2hours", "Next 2 Hours"],
                   ["missed", "Missed"],
                   ["today", "Today"],
                   ["tomorrow", "Tomorrow"],
-                  ["next2hours", "Next 2 Hours"],
                   ["upcoming", "Later"],
                   ["shared", "Shared"],
                   ["sent", "Sent"],
@@ -5716,21 +5735,21 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             ) : null}
             <div className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
               <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="grid min-w-0 flex-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
                     {reminderListTab === "all" ? (
-                      <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                      <label className="flex w-full flex-col gap-1 text-xs text-slate-600 dark:text-slate-400 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
                         <span className="font-medium">Search</span>
                         <input
                           value={reminderSearchQuery}
                           onChange={(e) => setReminderSearchQuery(e.target.value)}
                           placeholder="Search reminders..."
                           data-testid="reminder-search-input"
-                          className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950 sm:w-64"
                         />
                       </label>
                     ) : null}
-                    <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                    <label className="flex w-full flex-col gap-1 text-xs text-slate-600 dark:text-slate-400 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
                       <span className="font-medium">Filter</span>
                       <select
                         value={reminderTaskFilter}
@@ -5739,7 +5758,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             e.target.value as "all" | "adhoc" | string,
                           )
                         }
-                        className="max-w-[min(100%,14rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950 sm:w-56"
                       >
                         <option value="all">All in this tab</option>
                         <option value="adhoc">ADHOC only</option>
@@ -5751,7 +5770,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       </select>
                     </label>
                     {reminderListTab === "shared" ? (
-                      <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                      <label className="flex w-full flex-col gap-1 text-xs text-slate-600 dark:text-slate-400 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
                         <span className="font-medium">From</span>
                         <select
                           value={sharedFromFilter}
@@ -5760,7 +5779,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                               e.target.value as "all" | string,
                             )
                           }
-                          className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950 sm:w-64"
                         >
                           <option value="all">Everyone</option>
                           {sharedFromOptions.map((id) => (
@@ -5772,14 +5791,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       </label>
                     ) : null}
                     {reminderListTab === "sent" ? (
-                      <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                      <label className="flex w-full flex-col gap-1 text-xs text-slate-600 dark:text-slate-400 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
                         <span className="font-medium">Sent to</span>
                         <select
                           value={sentToFilter}
                           onChange={(e) =>
                             setSentToFilter(e.target.value as "all" | string)
                           }
-                          className="max-w-[min(100%,16rem)] rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950 sm:w-64"
                         >
                           <option value="all">Everyone</option>
                           {sentRecipientOptions.map(([id, name]) => (
@@ -5791,7 +5810,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       </label>
                     ) : null}
                   </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
+                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                     <button
                       type="button"
                       onClick={openCreateReminderFromRemindersList}
@@ -5952,7 +5971,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           );
                         })()}
                         <p className="text-sm text-slate-500">
-                          Due: {new Date(reminder.dueAt).toLocaleString()}
+                          Due: {formatDisplayDateTime(reminder.dueAt)}
                         </p>
                         <p className="text-xs text-slate-500">
                           Repeat: {reminder.recurrence ?? "none"}
@@ -6234,6 +6253,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         onEditTask={openTaskEdit}
         onToggleStatus={requestTaskStatusToggle}
         onDeleteTask={requestTaskDelete}
+        onCreateLinkedReminder={openLinkedReminderForTask}
         onReminderMarkDone={(reminder) =>
           handleTaskReminderAction(reminder, "done")
         }
