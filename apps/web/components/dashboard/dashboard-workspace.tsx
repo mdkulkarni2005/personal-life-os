@@ -3119,14 +3119,21 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       const data = (await response.json()) as {
         error?: string;
         createdCount?: number;
+        createdReminderCount?: number;
+        createdTaskCount?: number;
       };
       if (!response.ok) {
         setImportStatus(data.error ?? "Import failed.");
         return;
       }
 
-      setImportStatus(`Imported ${data.createdCount ?? 0} reminders.`);
+      const reminderCount = data.createdReminderCount ?? data.createdCount ?? 0;
+      const taskCount = data.createdTaskCount ?? 0;
+      setImportStatus(
+        `Imported ${reminderCount} reminder${reminderCount === 1 ? "" : "s"} and ${taskCount} task${taskCount === 1 ? "" : "s"}.`,
+      );
       await refreshReminders();
+      await refreshTasks();
       setImportJson("");
     } catch {
       setImportStatus("Import failed. Please try again.");
@@ -3326,6 +3333,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       .filter(Boolean);
   };
 
+  const BATCH_MAX_QUESTIONS_PER_MINUTE = 30;
+  const BATCH_MIN_INTERVAL_MS = Math.ceil(
+    60_000 / BATCH_MAX_QUESTIONS_PER_MINUTE,
+  );
+
+  const waitFor = (durationMs: number) =>
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, durationMs);
+    });
+
   const handleBatchQuestions = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const raw = batchJson.trim();
@@ -3353,7 +3370,18 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       }
 
       let processed = 0;
-      for (const question of questions) {
+      let nextAllowedSendAt = Date.now();
+      for (const [index, question] of questions.entries()) {
+        const now = Date.now();
+        if (now < nextAllowedSendAt) {
+          const waitMs = nextAllowedSendAt - now;
+          setBatchStatus(
+            `Waiting ${Math.ceil(waitMs / 1000)}s before sending ${index + 1}/${questions.length}...`,
+          );
+          await waitFor(waitMs);
+        }
+
+        const sentAt = Date.now();
         const userMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: "user",
@@ -3361,7 +3389,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           createdAt: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, userMessage]);
-        setBatchStatus(`Processing ${processed + 1}/${questions.length}...`);
+        setBatchStatus(
+          `Processing ${processed + 1}/${questions.length} (one at a time)...`,
+        );
 
         try {
           const response = await fetch("/api/chat", {
@@ -3369,8 +3399,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               message: question,
-              reminders,
-              tasks: tasks.map((t) => ({
+              reminders: remindersRef.current,
+              tasks: tasksRef.current.map((t) => ({
                 id: t.id,
                 title: t.title,
                 notes: t.notes,
@@ -3396,7 +3426,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         } catch {
           const grounded = tryGroundedReminderAnswer(
             question,
-            reminders,
+            remindersRef.current,
             new Date(),
             clientTimeZonePayload(),
           );
@@ -3414,6 +3444,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         }
 
         processed += 1;
+        nextAllowedSendAt = sentAt + BATCH_MIN_INTERVAL_MS;
       }
 
       setBatchStatus(`Completed ${processed}/${questions.length} questions.`);
@@ -6246,9 +6277,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-              <h3 className="text-lg font-semibold">Import reminders JSON</h3>
+              <h3 className="text-lg font-semibold">Import reminders and tasks JSON</h3>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                Paste either an array or an object with <code>reminders</code>.
+                Paste reminders only, or an object with <code>tasks</code> and <code>reminders</code>.
               </p>
             </div>
             <form
@@ -6260,7 +6291,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   value={importJson}
                   onChange={(event) => setImportJson(event.target.value)}
                   rows={12}
-                  placeholder='{"reminders":[{"title":"Gym","dueAt":"2026-04-12T08:00:00.000Z"}]}'
+                  placeholder='{"tasks":[{"ref":"task-1","title":"Test task"}],"reminders":[{"title":"Test reminder 1","dueAt":"2026-04-12T08:00:00.000Z","taskRef":"task-1"}]}'
                   className="min-h-[18rem] w-full rounded-xl border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
                 />
                 {importStatus ? (
