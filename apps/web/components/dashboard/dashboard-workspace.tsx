@@ -3957,9 +3957,28 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const handleManualCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!newTitle.trim() || !newDate || !newTime) return;
+    if (!newTitle.trim()) {
+      const message = "Title is required.";
+      setCreateFormError(message);
+      showShareToast(message);
+      return;
+    }
+    if (!newDate) {
+      const message = "Date is required.";
+      setCreateFormError(message);
+      showShareToast(message);
+      return;
+    }
+    if (!newTime) {
+      const message = "Time is required.";
+      setCreateFormError(message);
+      showShareToast(message);
+      return;
+    }
     if (reminderStars < 1 || reminderStars > 5) {
-      setCreateFormError("Choose a priority: tap 1–5 stars.");
+      const message = "Choose a priority: tap 1–5 stars.";
+      setCreateFormError(message);
+      showShareToast(message);
       return;
     }
     setCreateFormError(null);
@@ -4116,9 +4135,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const handleTaskSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!taskFormTitle.trim()) return;
+    if (!taskFormTitle.trim()) {
+      const message = "Task title is required.";
+      setTaskFormError(message);
+      showShareToast(message);
+      return;
+    }
     if (taskStars < 1 || taskStars > 5) {
-      setTaskFormError("Choose a priority: tap 1–5 stars.");
+      const message = "Choose a priority: tap 1–5 stars.";
+      setTaskFormError(message);
+      showShareToast(message);
       return;
     }
     setTaskFormError(null);
@@ -5387,6 +5413,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 <div className="-mt-1 flex gap-2">
                   <button
                     type="submit"
+                    data-testid="reminder-save-button"
                     className="flex-1 rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white"
                   >
                     {editingReminderId ? "Update" : "Save"}
@@ -6278,6 +6305,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         taskStars={taskStars}
         setTaskStars={setTaskStars}
         taskFormError={taskFormError}
+        setTaskFormError={setTaskFormError}
         taskDueUserEdited={taskDueUserEdited}
         setTaskDueUserEdited={setTaskDueUserEdited}
         onSubmit={handleTaskSave}

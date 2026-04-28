@@ -55,6 +55,7 @@ interface TaskFormOverlayProps {
   taskStars: number;
   setTaskStars: (value: number) => void;
   taskFormError: string | null;
+  setTaskFormError: (value: string | null) => void;
   taskDueUserEdited: boolean;
   setTaskDueUserEdited: (value: boolean) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -489,6 +490,7 @@ export function TaskFormOverlay({
   taskStars,
   setTaskStars,
   taskFormError,
+  setTaskFormError,
   setTaskDueUserEdited,
   onSubmit,
   onCancelEdit,
@@ -497,6 +499,20 @@ export function TaskFormOverlay({
   onCreateLinkedReminder,
 }: TaskFormOverlayProps) {
   if (!open) return null;
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    if (!taskFormTitle.trim()) {
+      event.preventDefault();
+      setTaskFormError("Task title is required.");
+      return;
+    }
+    if (taskStars < 1 || taskStars > 5) {
+      event.preventDefault();
+      setTaskFormError("Choose a priority: tap 1–5 stars.");
+      return;
+    }
+    onSubmit(event);
+  };
 
   return (
     <div
@@ -516,7 +532,7 @@ export function TaskFormOverlay({
           onViewReminders={onViewReminders}
           onClose={onClose}
         />
-        <form className="min-h-0 overflow-y-auto" onSubmit={onSubmit}>
+        <form className="min-h-0 overflow-y-auto" onSubmit={handleSubmit}>
           <div className="grid gap-4 px-4 py-4">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-slate-500 dark:text-slate-400">

@@ -137,6 +137,25 @@ test.describe("Task and reminder edge cases", () => {
     await expect(page.getByTestId("reminder-form-error")).toContainText("future");
   });
 
+  test("missing required reminder and task fields show validation feedback", async ({
+    dashboardPage,
+    page,
+  }) => {
+    await dashboardPage.goto();
+
+    await dashboardPage.openCreateReminder();
+    await dashboardPage.submitReminderForm(false);
+    await expect(page.getByRole("status")).toContainText("Title is required.");
+    await expect(page.getByTestId("reminder-form-error")).toContainText("Title is required.");
+    await page.getByTestId("reminder-cancel-button").click();
+
+    await dashboardPage.openTasks();
+    await dashboardPage.openCreateTask();
+    await page.getByTestId("task-form-overlay").getByTestId("task-save-button").click();
+    await expect(page.getByRole("status")).toContainText("Task title is required.");
+    await expect(page.getByTestId("task-form-error")).toContainText("Task title is required.");
+  });
+
   test("rapid create and delete loops leave no stale reminders behind", async ({
     dashboardPage,
   }) => {
