@@ -43,8 +43,8 @@ export async function GET() {
     ];
     merged.sort((a, b) => Number(a.dueAt) - Number(b.dueAt));
     return NextResponse.json({ reminders: merged });
-  } catch (err) {
-    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
+  } catch {
+    return NextResponse.json({ reminders: [] });
   }
 }
 
@@ -102,6 +102,16 @@ export async function POST(request: Request) {
         : {}),
       ...(body.domain ? { domain: body.domain } : {}),
     });
+    // MISSING-3: track creation event (fire-and-forget)
+    if ((result as any)?.created) {
+      client.mutation(api.userEvents.track, {
+        userId,
+        eventType: "reminder_created",
+        entityId: String((result as any)?.reminder?._id ?? ""),
+        entityTitle: body.title.trim(),
+        ...(body.domain ? { domain: body.domain } : {}),
+      }).catch(() => {});
+    }
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });

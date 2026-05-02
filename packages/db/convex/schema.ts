@@ -103,6 +103,34 @@ const chatMessages = defineTable({
   .index("by_user", ["userId"])
   .index("by_user_created", ["userId", "createdAt"]);
 
+const userProfiles = defineTable({
+  userId: v.string(),
+  preferredWorkingHoursStart: v.optional(v.number()),
+  preferredWorkingHoursEnd: v.optional(v.number()),
+  dominantDomain: v.optional(lifeDomain),
+  avgCompletionDelayMinutes: v.optional(v.number()),
+  topTags: v.optional(v.array(v.string())),
+  updatedAt: v.number(),
+}).index("by_user", ["userId"]);
+
+const userEvents = defineTable({
+  userId: v.string(),
+  eventType: v.union(
+    v.literal("reminder_completed"),
+    v.literal("reminder_deleted"),
+    v.literal("reminder_created"),
+    v.literal("task_completed"),
+    v.literal("task_created"),
+  ),
+  entityId: v.optional(v.string()),
+  entityTitle: v.optional(v.string()),
+  domain: v.optional(lifeDomain),
+  metadata: v.optional(v.string()),
+  createdAt: v.number(),
+})
+  .index("by_user_created", ["userId", "createdAt"])
+  .index("by_user_type", ["userId", "eventType"]);
+
 export default defineSchema({
   reminders,
   reminderInvites,
@@ -111,4 +139,6 @@ export default defineSchema({
   pushSubscriptions,
   tasks,
   chatMessages,
+  userProfiles,
+  userEvents,
 });

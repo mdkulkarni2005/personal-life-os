@@ -1,21 +1,5 @@
 import type { ReminderItem } from "./index";
-
-type Bucket = "missed" | "today" | "tomorrow" | "upcoming" | "done";
-
-function bucketOf(reminder: ReminderItem, now: Date): Bucket {
-  if (reminder.status === "done") return "done";
-  const due = new Date(reminder.dueAt);
-  const startToday = new Date(now);
-  startToday.setHours(0, 0, 0, 0);
-  const startTomorrow = new Date(startToday);
-  startTomorrow.setDate(startTomorrow.getDate() + 1);
-  const startDayAfterTomorrow = new Date(startTomorrow);
-  startDayAfterTomorrow.setDate(startDayAfterTomorrow.getDate() + 1);
-  if (due < now) return "missed";
-  if (due >= startToday && due < startTomorrow) return "today";
-  if (due >= startTomorrow && due < startDayAfterTomorrow) return "tomorrow";
-  return "upcoming";
-}
+import { getReminderBucket } from "./index";
 
 export interface TaskItemBrief {
   id: string;
@@ -129,7 +113,8 @@ export function buildBriefingParts(
   reminders: ReminderItem[],
   firstName?: string | null,
   tasks: TaskItemBrief[] = [],
-  now = new Date()
+  now = new Date(),
+  timeZone?: string
 ): BriefingMessagePart[] {
   const name = firstName?.trim();
   const greet = name
@@ -142,16 +127,16 @@ export function buildBriefingParts(
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   const missed = active
-    .filter((r) => bucketOf(r, now) === "missed")
+    .filter((r) => getReminderBucket(r, now, timeZone) === "missed")
     .sort(sortByPriorityThenDue);
   const today = active
-    .filter((r) => bucketOf(r, now) === "today")
+    .filter((r) => getReminderBucket(r, now, timeZone) === "today")
     .sort(sortByPriorityThenDue);
   const tomorrow = active
-    .filter((r) => bucketOf(r, now) === "tomorrow")
+    .filter((r) => getReminderBucket(r, now, timeZone) === "tomorrow")
     .sort(sortByPriorityThenDue);
   const later = active
-    .filter((r) => bucketOf(r, now) === "upcoming")
+    .filter((r) => getReminderBucket(r, now, timeZone) === "upcoming")
     .sort(sortByPriorityThenDue);
 
   const completedLines: string[] = [`## Completed (${completed.length})`];
@@ -236,9 +221,10 @@ export function buildBriefingNarrative(
   reminders: ReminderItem[],
   firstName?: string | null,
   tasks: TaskItemBrief[] = [],
-  now = new Date()
+  now = new Date(),
+  timeZone?: string
 ): string {
-  return buildBriefingParts(reminders, firstName, tasks, now)
+  return buildBriefingParts(reminders, firstName, tasks, now, timeZone)
     .map((p) => p.text)
     .join("\n\n");
 }
@@ -257,19 +243,21 @@ export function buildFollowUpQuestions(input: {
   lastUserMessage?: string;
   firstName?: string | null;
   now?: Date;
+  timeZone?: string;
 }): FollowUpQuestion[] {
   const now = input.now ?? new Date();
+  const timeZone = input.timeZone;
   const name = input.firstName?.trim();
   const pending = input.reminders.filter((r) => r.status !== "done" && r.status !== "archived");
   const missed = pending
-    .filter((r) => bucketOf(r, now) === "missed")
+    .filter((r) => getReminderBucket(r, now, timeZone) === "missed")
     .sort(sortByPriorityThenDue);
   const today = pending
-    .filter((r) => bucketOf(r, now) === "today")
+    .filter((r) => getReminderBucket(r, now, timeZone) === "today")
     .sort(sortByPriorityThenDue);
   const upcoming = pending
     .filter((r) => {
-      const b = bucketOf(r, now);
+      const b = getReminderBucket(r, now, timeZone);
       return b === "tomorrow" || b === "upcoming";
     })
     .sort(sortByPriorityThenDue);

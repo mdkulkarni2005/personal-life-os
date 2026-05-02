@@ -15,8 +15,8 @@ export async function GET() {
     const client = getConvexClient();
     const tasks = await client.query(api.tasks.listForUser, { userId });
     return NextResponse.json({ tasks });
-  } catch (err) {
-    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
+  } catch {
+    return NextResponse.json({ tasks: [] });
   }
 }
 
@@ -59,6 +59,14 @@ export async function POST(request: Request) {
       priority,
       ...(body.domain ? { domain: body.domain } : {}),
     });
+    // MISSING-3: track task creation event (fire-and-forget)
+    client.mutation(api.userEvents.track, {
+      userId,
+      eventType: "task_created",
+      entityId: String((task as any)?._id ?? ""),
+      entityTitle: body.title.trim(),
+      ...(body.domain ? { domain: body.domain } : {}),
+    }).catch(() => {});
     return NextResponse.json({ task });
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });

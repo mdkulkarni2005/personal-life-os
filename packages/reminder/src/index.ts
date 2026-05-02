@@ -71,20 +71,20 @@ export type ReminderIntent =
 
 export type ReminderBucket = "missed" | "today" | "tomorrow" | "upcoming" | "done";
 
-export function getReminderBucket(reminder: ReminderItem, now = new Date()): ReminderBucket {
+function dateKey(date: Date, timeZone?: string): string {
+  return date.toLocaleDateString("en-CA", timeZone ? { timeZone } : undefined);
+}
+
+// BUG-3 fix: accepts optional timezone so bucket boundaries use the user's calendar day
+export function getReminderBucket(reminder: ReminderItem, now = new Date(), timeZone?: string): ReminderBucket {
   if (reminder.status === "done") return "done";
-
   const due = new Date(reminder.dueAt);
-  const startToday = new Date(now);
-  startToday.setHours(0, 0, 0, 0);
-  const startTomorrow = new Date(startToday);
-  startTomorrow.setDate(startTomorrow.getDate() + 1);
-  const startDayAfterTomorrow = new Date(startTomorrow);
-  startDayAfterTomorrow.setDate(startDayAfterTomorrow.getDate() + 1);
-
   if (due < now) return "missed";
-  if (due >= startToday && due < startTomorrow) return "today";
-  if (due >= startTomorrow && due < startDayAfterTomorrow) return "tomorrow";
+  const todayKey = dateKey(now, timeZone);
+  const tomorrowKey = dateKey(new Date(now.getTime() + 86_400_000), timeZone);
+  const dueKey = dateKey(due, timeZone);
+  if (dueKey === todayKey) return "today";
+  if (dueKey === tomorrowKey) return "tomorrow";
   return "upcoming";
 }
 
@@ -155,23 +155,19 @@ export function filterRemindersByListScope(
   }
 }
 
-export function filterToday(reminders: ReminderItem[], now = new Date()): ReminderItem[] {
-  const startOfDay = new Date(now);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(startOfDay);
-  endOfDay.setDate(endOfDay.getDate() + 1);
-
+// BUG-3 fix: compare calendar-day keys in user's timezone, not server-local midnight
+export function filterToday(reminders: ReminderItem[], now = new Date(), timeZone?: string): ReminderItem[] {
+  const todayKey = dateKey(now, timeZone);
   return reminders
     .filter((r) => {
       if (r.status === "done" || r.status === "archived") return false;
-      const dueAt = new Date(r.dueAt).getTime();
-      return dueAt >= startOfDay.getTime() && dueAt < endOfDay.getTime();
+      return dateKey(new Date(r.dueAt), timeZone) === todayKey;
     })
     .sort(sortByDueAsc);
 }
 
-export function getTodayReminders(reminders: ReminderItem[], now = new Date()): ReminderItem[] {
-  return filterToday(reminders, now);
+export function getTodayReminders(reminders: ReminderItem[], now = new Date(), timeZone?: string): ReminderItem[] {
+  return filterToday(reminders, now, timeZone);
 }
 
 function reminderPriority(reminder: ReminderItem): number {
@@ -215,7 +211,8 @@ export interface ScheduleAnalysis {
   freeSlots: string[];
 }
 
-export function analyzeSchedule(reminders: ReminderItem[], now = new Date()): ScheduleAnalysis {
+// BUG-4 fix: accepts display options so free-slot times use the user's timezone
+export function analyzeSchedule(reminders: ReminderItem[], now = new Date(), options?: ReminderDisplayOptions): ScheduleAnalysis {
   const ranked = rankTasks(reminders, now);
   const overdueTasks = ranked.filter((r) => new Date(r.dueAt).getTime() < now.getTime()).slice(0, 5);
   const upcomingTasks = ranked.filter((r) => new Date(r.dueAt).getTime() >= now.getTime()).slice(0, 5);
@@ -238,6 +235,7 @@ export function analyzeSchedule(reminders: ReminderItem[], now = new Date()): Sc
     }
   }
 
+  const tzOpts = options?.timeZone ? { timeZone: options.timeZone } : undefined;
   const freeSlots: string[] = [];
   for (let i = 0; i < sortedByDue.length - 1 && freeSlots.length < 3; i += 1) {
     const current = sortedByDue[i];
@@ -249,10 +247,7 @@ export function analyzeSchedule(reminders: ReminderItem[], now = new Date()): Sc
     if (gapMinutes >= 90) {
       const start = new Date(currentDue.getTime() + 30 * 60 * 1000);
       freeSlots.push(
-        `${start.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} to ${nextDue.toLocaleTimeString(undefined, {
-          hour: "numeric",
-          minute: "2-digit",
-        })}`
+        `${start.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", ...tzOpts })} to ${nextDue.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", ...tzOpts })}`
       );
     }
   }
@@ -260,14 +255,18 @@ export function analyzeSchedule(reminders: ReminderItem[], now = new Date()): Sc
   return { nextTask, overdueTasks, upcomingTasks, conflicts, freeSlots };
 }
 
-/** True when the user is likely trying to create a new reminder (broad, natural phrasing). */
+// FLAW-1 fix: remove over-broad last condition that matched queries about existing reminders
 export function looksLikeCreateIntent(message: string): boolean {
-  const n = message.toLowerCase();
+  const n = message.toLowerCase().trim();
+  // Exclude lookup / list queries about existing reminders
+  if (/^(did i|have i|do i|does|is there|was there)\b/.test(n)) return false;
+  if (/^(show|list|what|which|tell me|give me|find)\b/.test(n)) return false;
+  if (/\b(already\s+(set|have|created|scheduled)|check if|look up)\s+a?\s*reminder\b/.test(n)) return false;
   if (/\bremind me to\b/.test(n)) return true;
-  if (/\b(create|add|set|make)\s+(a\s+)?reminder\b/.test(n)) return true;
+  if (/\b(create|add|set|make|schedule)\s+(a\s+)?reminder\b/.test(n)) return true;
   if (/\b(schedule|set)\s+(a\s+)?(task|meeting|event|appointment|call)\b/.test(n)) return true;
   if (/\b(add|create)\s+to\s+(my\s+)?(calendar|reminders)\b/.test(n)) return true;
-  return /\b(create|add|set|make|schedule|remind me)\b/.test(n) && /\b(reminder|remind)\b/.test(n);
+  return false;
 }
 
 export function classifyReminderIntent(message: string): ReminderIntent {
@@ -314,7 +313,16 @@ function dueTimeLocaleOptions(options?: ReminderDisplayOptions): Intl.DateTimeFo
   };
 }
 
-/** Single-line, human-readable; never emits raw ISO strings */
+function overdueLabel(dueAt: string, now: Date): string {
+  const diff = now.getTime() - new Date(dueAt).getTime();
+  const days = Math.floor(diff / 86_400_000);
+  const hours = Math.floor(diff / 3_600_000);
+  if (days >= 1) return `overdue ${days}d`;
+  if (hours >= 1) return `overdue ${hours}h`;
+  return "overdue";
+}
+
+// MISSING-5 fix: overdue items now show how long they've been overdue (e.g. "overdue 3d")
 export function describeReminderForChat(
   reminder: ReminderItem,
   now = new Date(),
@@ -322,10 +330,10 @@ export function describeReminderForChat(
 ): string {
   const due = new Date(reminder.dueAt);
   const when = due.toLocaleString(undefined, dueTimeLocaleOptions(options));
-  const bucket = getReminderBucket(reminder, now);
+  const bucket = getReminderBucket(reminder, now, options?.timeZone);
   const bucketLabel =
     bucket === "missed"
-      ? "overdue"
+      ? overdueLabel(reminder.dueAt, now)
       : bucket === "today"
         ? "today"
         : bucket === "tomorrow"

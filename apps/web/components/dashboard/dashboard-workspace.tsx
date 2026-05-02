@@ -1011,6 +1011,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
   const [notifUiTick, setNotifUiTick] = useState(0);
   const [dueNotifBannerDismissed, setDueNotifBannerDismissed] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const messagesRef = useRef<ChatMessage[]>([]);
   const userIdRef = useRef(userId);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -1152,6 +1153,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   messagesRef.current = messages;
   userIdRef.current = userId;
   isHistoryLoadedRef.current = isHistoryLoaded;
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     window.dispatchEvent(
@@ -4457,7 +4462,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           </aside>
 
           <div className="flex min-h-0 flex-1 flex-col gap-0 sm:gap-3">
-            {typeof Notification !== "undefined" &&
+            {mounted &&
+            typeof Notification !== "undefined" &&
             Notification.permission === "default" &&
             !dueNotifBannerDismissed ? (
               <div className="flex flex-col gap-2 rounded-none border-b border-violet-200 bg-white px-4 py-3 text-xs text-slate-600 shadow-sm sm:rounded-[24px] sm:border lg:hidden">

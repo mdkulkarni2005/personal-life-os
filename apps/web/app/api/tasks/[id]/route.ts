@@ -77,6 +77,18 @@ export async function PATCH(
     const client = getConvexClient();
     const task = await client.mutation(api.tasks.update, patch);
     if (!task) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // MISSING-3: track task completion event (fire-and-forget)
+    if (body.status === "done") {
+      const t = task as Record<string, unknown>;
+      const taskDomain = t.domain as "health" | "finance" | "career" | "hobby" | "fun" | undefined;
+      client.mutation(api.userEvents.track, {
+        userId,
+        eventType: "task_completed",
+        entityId: id,
+        entityTitle: String(t.title ?? ""),
+        ...(taskDomain ? { domain: taskDomain } : {}),
+      }).catch(() => {});
+    }
     return NextResponse.json({ task });
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });

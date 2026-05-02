@@ -54,9 +54,10 @@ export async function getChatHistory(userId: string): Promise<StoredChatMessage[
   }
 }
 
+// BUG-2 fix: use upsertMessages (no delete-all, safe across tabs)
 export async function appendChatMessages(userId: string, messages: StoredChatMessage[]) {
   const client = getConvexClient();
-  await client.mutation(api.chat.replaceAllForUser, {
+  await client.mutation(api.chat.upsertMessages, {
     userId,
     messages: messages.map((m) => ({
       clientId: m.id,

@@ -80,17 +80,32 @@ export async function PATCH(
 
   if (reminder && typeof reminder === "object" && "userId" in reminder) {
     const ownerId = (reminder as { userId: string }).userId;
+    const reminderTitle = String((reminder as { title?: string }).title ?? "Reminder");
+    const reminderDomain = (reminder as { domain?: string }).domain as
+      | "health" | "finance" | "career" | "hobby" | "fun" | undefined;
+
     if (ownerId && ownerId !== userId) {
       const user = await currentUser();
       const actor = formatNameWithInitial(user);
-      const title = String((reminder as { title?: string }).title ?? "Reminder");
-      let line = `${actor} updated "${title}".`;
-      if (body.status === "done") line = `${actor} marked "${title}" as done.`;
-      else if (body.status === "pending") line = `${actor} put "${title}" back to pending.`;
-      else if (body.status === "archived") line = `${actor} archived "${title}".`;
-      else if (body.dueAt != null) line = `${actor} rescheduled "${title}".`;
-      else if (body.title != null) line = `${actor} edited the reminder (now "${title}").`;
+      let line = `${actor} updated "${reminderTitle}".`;
+      if (body.status === "done") line = `${actor} marked "${reminderTitle}" as done.`;
+      else if (body.status === "pending") line = `${actor} put "${reminderTitle}" back to pending.`;
+      else if (body.status === "archived") line = `${actor} archived "${reminderTitle}".`;
+      else if (body.dueAt != null) line = `${actor} rescheduled "${reminderTitle}".`;
+      else if (body.title != null) line = `${actor} edited the reminder (now "${reminderTitle}").`;
       await appendSystemChatMessage(ownerId, line);
+    }
+
+    // MISSING-3: track completion event (fire-and-forget)
+    if (body.status === "done") {
+      const client = getConvexClient();
+      client.mutation(api.userEvents.track, {
+        userId,
+        eventType: "reminder_completed",
+        entityId: id,
+        entityTitle: reminderTitle,
+        ...(reminderDomain ? { domain: reminderDomain } : {}),
+      }).catch(() => {});
     }
   }
 
@@ -125,10 +140,18 @@ export async function DELETE(
   if (!result.actorWasOwner) {
     const user = await currentUser();
     const actor = formatNameWithInitial(user);
-    await appendSystemChatMessage(
-      result.ownerUserId,
-      `${actor} deleted "${result.title}".`
-    );
+    await appendSystemChatMessage(result.ownerUserId, `${actor} deleted "${result.title}".`);
+  }
+
+  // MISSING-3: track deletion event (fire-and-forget)
+  {
+    const client = getConvexClient();
+    client.mutation(api.userEvents.track, {
+      userId,
+      eventType: "reminder_deleted",
+      entityId: id,
+      entityTitle: result.title,
+    }).catch(() => {});
   }
 
   return NextResponse.json({ ok: true });

@@ -13,6 +13,8 @@ import type * as pushSubscriptions from "../pushSubscriptions.js";
 import type * as reminderSharing from "../reminderSharing.js";
 import type * as reminders from "../reminders.js";
 import type * as tasks from "../tasks.js";
+import type * as userEvents from "../userEvents.js";
+import type * as userProfiles from "../userProfiles.js";
 
 import type {
   ApiFromModules,
@@ -26,6 +28,8 @@ declare const fullApi: ApiFromModules<{
   reminderSharing: typeof reminderSharing;
   reminders: typeof reminders;
   tasks: typeof tasks;
+  userEvents: typeof userEvents;
+  userProfiles: typeof userProfiles;
 }>;
 
 /**
