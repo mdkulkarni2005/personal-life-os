@@ -4,11 +4,8 @@ import {
   buildBriefingParts,
   buildFollowUpQuestions,
   replaceFollowUpSlot,
-  buildListRemindersReply,
   getReminderBucket,
-  inferListScopeFromMessage,
   isAdhocReminder,
-  isCompoundReminderQuestion,
   tryGroundedReminderAnswer,
   type BriefingSection,
   type FollowUpQuestion,
@@ -91,13 +88,27 @@ interface AgentAction {
     | "mark_done"
     | "delete_reminder"
     | "reschedule_reminder"
+    | "snooze_reminder"
+    | "edit_reminder"
+    | "bulk_action"
     | "clarify"
+    | "pending_confirm"
     | "unknown";
   title?: string;
   dueAt?: string;
   notes?: string;
   linkedTaskId?: string;
   priority?: number;
+  domain?: string;
+  recurrence?: string;
+  pendingType?: "mark_done" | "delete_reminder";
+  delayMinutes?: number;
+  newTitle?: string;
+  newNotes?: string;
+  bulkOperation?: "mark_done" | "delete";
+  bulkTargetIds?: string[];
+  listedIds?: string[];
+  suggestedDueAt?: string;
   targetTitle?: string;
   targetId?: string;
   scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all";
@@ -1042,6 +1053,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [newNotes, setNewNotes] = useState("");
   const [pendingCreateDraft, setPendingCreateDraft] =
     useState<PendingCreateDraft | null>(null);
+  const [pendingConfirmAction, setPendingConfirmAction] =
+    useState<{ type: "mark_done" | "delete_reminder"; targetId?: string; targetTitle?: string; targetIds?: string[] } | null>(null);
+  const [recentListedIds, setRecentListedIds] = useState<string[]>([]);
+  const [pendingTimeSuggestion, setPendingTimeSuggestion] = useState<{
+    title: string;
+    suggestedDueAt: string;
+    priority?: number;
+    domain?: string;
+    recurrence?: string;
+  } | null>(null);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [showReminderSuccess, setShowReminderSuccess] = useState(false);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
@@ -2467,6 +2488,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
 
     if (action.type === "mark_done") {
+      setPendingConfirmAction(null);
       const target = reminders.find((r) =>
         matchesReminder(r, action.targetId, action.targetTitle),
       );
@@ -2482,6 +2504,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
 
     if (action.type === "delete_reminder") {
+      setPendingConfirmAction(null);
       const target = reminders.find((r) =>
         matchesReminder(r, action.targetId, action.targetTitle),
       );
@@ -2489,6 +2512,62 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       void refreshAfterReminderMutation(
         fetch(`/api/reminders/${target.id}`, { method: "DELETE" }),
       ).catch(() => showShareToast("Could not delete reminder. Try again."));
+      return;
+    }
+
+    if (action.type === "snooze_reminder" && typeof action.delayMinutes === "number" && action.delayMinutes > 0) {
+      const target = reminders.find((r) =>
+        matchesReminder(r, action.targetId, action.targetTitle),
+      );
+      if (!target) return;
+      const newDueAt = Date.now() + action.delayMinutes * 60_000;
+      void refreshAfterReminderMutation(
+        fetch(`/api/reminders/${target.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dueAt: newDueAt }),
+        }),
+      ).catch(() => showShareToast("Could not snooze reminder. Try again."));
+      return;
+    }
+
+    if (action.type === "edit_reminder" && (action.newTitle || action.newNotes !== undefined)) {
+      const target = reminders.find((r) =>
+        matchesReminder(r, action.targetId, action.targetTitle),
+      );
+      if (!target) return;
+      const patch: Record<string, unknown> = {
+        priority: typeof target.priority === "number" ? target.priority : 3,
+      };
+      if (action.newTitle) patch.title = action.newTitle;
+      if (typeof action.newNotes === "string") patch.notes = action.newNotes;
+      void refreshAfterReminderMutation(
+        fetch(`/api/reminders/${target.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        }),
+      ).catch(() => showShareToast("Could not edit reminder. Try again."));
+      return;
+    }
+
+    if (action.type === "bulk_action" && action.bulkOperation && action.bulkTargetIds?.length) {
+      const ids = action.bulkTargetIds;
+      const op = action.bulkOperation;
+      void (async () => {
+        await Promise.allSettled(
+          ids.map((id) =>
+            op === "delete"
+              ? fetch(`/api/reminders/${id}`, { method: "DELETE" })
+              : fetch(`/api/reminders/${id}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ status: "done" }),
+                }),
+          ),
+        );
+        await refreshReminders();
+      })();
       return;
     }
 
@@ -2506,7 +2585,32 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       ).catch(() => showShareToast("Could not reschedule reminder. Try again."));
     }
 
+    if (action.type === "pending_confirm" && action.pendingType) {
+      setPendingConfirmAction({
+        type: action.pendingType,
+        targetId: action.targetId,
+        targetTitle: action.targetTitle,
+        targetIds: action.bulkTargetIds,
+      });
+      return;
+    }
+
+    // Gap 7: store listed IDs so the next turn can use ordinal references
+    if (action.type === "list_reminders" && action.listedIds?.length) {
+      setRecentListedIds(action.listedIds);
+    }
+
     if (action.type === "clarify") {
+      // Gap 8: if the server included a time suggestion, store it for confirmation on next turn
+      if (action.suggestedDueAt && action.title) {
+        setPendingTimeSuggestion({
+          title: action.title,
+          suggestedDueAt: action.suggestedDueAt,
+          priority: action.priority,
+          domain: typeof action.domain === "string" ? action.domain : undefined,
+          recurrence: typeof action.recurrence === "string" ? action.recurrence : undefined,
+        });
+      }
       setPendingCreateDraft({
         step: action.title ? "date" : "title",
         title: action.title,
@@ -2933,26 +3037,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           return;
         }
 
-        const listScope = inferListScopeFromMessage(messageText);
-        if (listScope && !isCompoundReminderQuestion(messageText)) {
-          const listReply = buildListRemindersReply(
-            reminders,
-            listScope,
-            new Date(),
-            5,
-            clientTimeZonePayload(),
-          );
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: listReply,
-              createdAt: new Date().toISOString(),
-            },
-          ]);
-          return;
-        }
+        const pendingActionSnapshot = pendingConfirmAction
+          ?? (pendingTimeSuggestion
+            ? { type: "create_reminder" as const, ...pendingTimeSuggestion }
+            : null);
+        setPendingConfirmAction(null);
+        setPendingTimeSuggestion(null);
 
         const response = await fetch("/api/chat", {
           method: "POST",
@@ -2971,6 +3061,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             })),
             ...clientTimeZonePayload(),
             ...(responseReplyPayload ? { replyContext: responseReplyPayload } : {}),
+            ...(pendingActionSnapshot ? { pendingAction: pendingActionSnapshot } : {}),
+            ...(recentListedIds.length > 0 ? { recentListedIds } : {}),
           }),
         });
 

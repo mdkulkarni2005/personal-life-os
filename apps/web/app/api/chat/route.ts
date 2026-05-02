@@ -8,6 +8,14 @@ import {
   inferListScopeFromMessage,
   isCompoundReminderQuestion,
   looksLikeCreateIntent,
+  looksLikeMarkDoneIntent,
+  looksLikeDeleteIntent,
+  looksLikeBulkIntent,
+  looksLikeSnoozeIntent,
+  looksLikeEditIntent,
+  getReminderBucket,
+  filterRemindersByListScope,
+  describeReminderForChat,
   rankTasks,
   tryGroundedReminderAnswer,
   type ReminderListScope,
@@ -32,7 +40,11 @@ type ReminderAgentActionType =
   | "mark_done"
   | "delete_reminder"
   | "reschedule_reminder"
+  | "snooze_reminder"
+  | "edit_reminder"
+  | "bulk_action"
   | "clarify"
+  | "pending_confirm"
   | "unknown";
 
 interface ReminderAgentAction {
@@ -47,6 +59,20 @@ interface ReminderAgentAction {
   targetTitle?: string;
   targetId?: string;
   scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all";
+  /** Only on pending_confirm: the action waiting for user confirmation */
+  pendingType?: "mark_done" | "delete_reminder";
+  /** Only on snooze_reminder: minutes to push the due time forward */
+  delayMinutes?: number;
+  /** Only on edit_reminder: new title or new notes value */
+  newTitle?: string;
+  newNotes?: string;
+  /** Only on bulk_action / pending_confirm(bulk): operation and resolved IDs */
+  bulkOperation?: "mark_done" | "delete";
+  bulkTargetIds?: string[];
+  /** Only on list_reminders: ordered IDs of what was shown, for multi-turn ordinal resolution */
+  listedIds?: string[];
+  /** Only on clarify (no-time create): suggested dueAt ISO from profile/domain analysis */
+  suggestedDueAt?: string;
 }
 
 interface ReminderAgentResponse {
@@ -196,7 +222,7 @@ function fallbackDeterministicReply(message: string, reminders: ReminderItem[], 
     if (today.length === 0) return "You have no reminders for today.";
     return [
       "Here are your reminders for today:",
-      ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${formatDueInUserZone(item.dueAt, timeZone)}`),
+      ...today.map((item, idx) => `${idx + 1}. ${describeReminderForChat(item, new Date(), { timeZone })}`),
     ].join("\n");
   }
   if (listScope) return buildListRemindersReply(reminders, listScope, new Date(), 5, { timeZone });
@@ -216,7 +242,9 @@ function hasExplicitTime(input: string) {
     || /\b\d{1,2}[:.]\d{2}\b/.test(input)
     || /(?:^|\s)\d{1,2}\s*(?:बजे|वाजता|वाजले)(?=\s|$|[,.!?])/i.test(normalized)
     || /(?:^|\s)(सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)(?=\s|$|[,.!?])/i.test(normalized)
-    || /\b(noon|midnight)\b/i.test(input);
+    || /\b(noon|midnight)\b/i.test(input)
+    || /\b(morning|afternoon|evening|night)\b/i.test(input)
+    || /\bin\s+\d+\s*(hour|hr|minute|min)s?\b/i.test(input);
 }
 
 function hasTodayHint(input: string) {
@@ -282,6 +310,10 @@ function parseTimeFromInput(input: string) {
   if (/\bmidnight\b/i.test(input)) return { hour: 0, minute: 0 };
   if (/(?:^|\s)(दोपहर|दुपारी)(?=\s|$|[,.!?])/i.test(normalized)) return { hour: 12, minute: 0 };
   if (/(?:^|\s)(आधी रात|मध्यरात्र)(?=\s|$|[,.!?])/i.test(normalized)) return { hour: 0, minute: 0 };
+  if (/\bmorning\b/i.test(input)) return { hour: 9, minute: 0 };
+  if (/\bafternoon\b/i.test(input)) return { hour: 14, minute: 0 };
+  if (/\bevening\b/i.test(input)) return { hour: 19, minute: 0 };
+  if (/\bnight\b/i.test(input)) return { hour: 21, minute: 0 };
   return null;
 }
 
@@ -334,6 +366,108 @@ function calendarDateTimeToIso(
   return new Date(utcInstant).toISOString();
 }
 
+// ─── Extended date parsers ─────────────────────────────────────────────────────
+
+const WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+const MONTH_MAP: Record<string, number> = {
+  january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3,
+  april: 4, apr: 4, may: 5, june: 6, jun: 6, july: 7, jul: 7,
+  august: 8, aug: 8, september: 9, sep: 9, sept: 9,
+  october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
+};
+
+/** "next Friday", "this Monday", "on Thursday" → calendar date in user's timezone */
+function parseWeekdayTarget(input: string, timeZone?: string): string | null {
+  const n = input.toLowerCase();
+  for (let i = 0; i < WEEKDAY_NAMES.length; i++) {
+    const day = WEEKDAY_NAMES[i]!;
+    const isNext = new RegExp(`\\b(next|coming)\\s+${day}\\b`).test(n);
+    const isThis = new RegExp(`\\bthis\\s+${day}\\b`).test(n);
+    const isOn   = new RegExp(`\\bon\\s+${day}\\b`).test(n);
+    const isPlain = new RegExp(`\\b${day}\\b`).test(n);
+    if (!isNext && !isThis && !isOn && !isPlain) continue;
+
+    const time = parseTimeFromInput(input);
+    if (!time) return null;
+
+    const now = new Date();
+    const today = getCalendarDateInTimeZone(now, timeZone);
+    const todayUtc = new Date(Date.UTC(today.year, today.month - 1, today.day));
+    const currentWeekday = todayUtc.getUTCDay();
+
+    let daysUntil = i - currentWeekday;
+    if (isNext) {
+      // "next X" = at least 1 day away; if same day, go to next week
+      if (daysUntil <= 0) daysUntil += 7;
+    } else {
+      // "this X" / plain "X" = next upcoming occurrence (never today itself)
+      if (daysUntil <= 0) daysUntil += 7;
+    }
+
+    const targetDay = addDaysToCalendarDate(today, daysUntil);
+    return calendarDateTimeToIso(targetDay, time, timeZone);
+  }
+  return null;
+}
+
+/** "in 2 hours", "in 30 minutes", "in 3 days" → ISO string */
+function parseRelativeOffset(input: string): string | null {
+  const match = input.toLowerCase().match(/\bin\s+(\d+(?:\.\d+)?)\s*(hour|hr|minute|min|day|week)s?\b/);
+  if (!match) return null;
+  const amount = parseFloat(match[1]!);
+  const unit = match[2]!;
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 8760) return null;
+  const ms =
+    /^(hour|hr)/.test(unit) ? amount * 3_600_000 :
+    /^(minute|min)/.test(unit) ? amount * 60_000 :
+    /^day/.test(unit) ? amount * 86_400_000 :
+    /^week/.test(unit) ? amount * 7 * 86_400_000 : 0;
+  if (!ms) return null;
+  return new Date(Date.now() + ms).toISOString();
+}
+
+/** "May 15", "June 5th", "15 April", "5/15" → ISO string in user's timezone */
+function parseAbsoluteDate(input: string, timeZone?: string): string | null {
+  const n = input.toLowerCase();
+
+  for (const [monthName, monthNum] of Object.entries(MONTH_MAP)) {
+    // Skip "may" as standalone word — too ambiguous ("may I", "you may")
+    if (monthName === "may" && !new RegExp(`\\bmay\\s+\\d`).test(n) && !new RegExp(`\\b\\d.*\\bmay\\b`).test(n)) continue;
+    const p1 = new RegExp(`\\b${monthName}\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`);
+    const p2 = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${monthName}\\b`);
+    const m1 = p1.exec(n);
+    const m2 = m1 ? null : p2.exec(n);
+    const dayStr = m1?.[1] ?? m2?.[1];
+    if (!dayStr) continue;
+    const dayNum = parseInt(dayStr, 10);
+    if (!Number.isFinite(dayNum) || dayNum < 1 || dayNum > 31) continue;
+    const time = parseTimeFromInput(input);
+    if (!time) return null;
+    const now = new Date();
+    const today = getCalendarDateInTimeZone(now, timeZone);
+    let year = today.year;
+    if (Date.UTC(year, monthNum - 1, dayNum, time.hour, time.minute) <= now.getTime()) year++;
+    return calendarDateTimeToIso({ year, month: monthNum, day: dayNum }, time, timeZone);
+  }
+
+  // Numeric MM/DD or MM-DD
+  const numMatch = n.match(/\b(1[0-2]|0?[1-9])[\/\-](3[01]|[12]\d|0?[1-9])(?!\d)\b/);
+  if (numMatch) {
+    const monthNum = parseInt(numMatch[1]!, 10);
+    const dayNum = parseInt(numMatch[2]!, 10);
+    const time = parseTimeFromInput(input);
+    if (!time) return null;
+    const now = new Date();
+    const today = getCalendarDateInTimeZone(now, timeZone);
+    let year = today.year;
+    if (Date.UTC(year, monthNum - 1, dayNum, time.hour, time.minute) <= now.getTime()) year++;
+    return calendarDateTimeToIso({ year, month: monthNum, day: dayNum }, time, timeZone);
+  }
+
+  return null;
+}
+
 function parseDateTimeFromInput(input: string, timeZone?: string) {
   const now = new Date();
   let day = getCalendarDateInTimeZone(now, timeZone);
@@ -344,6 +478,13 @@ function parseDateTimeFromInput(input: string, timeZone?: string) {
   } else if (hasTodayHint(input)) {
     // no change
   } else {
+    // Extended: weekday / relative offset / absolute date
+    const weekdayResult = parseWeekdayTarget(input, timeZone);
+    if (weekdayResult) return weekdayResult;
+    const relativeResult = parseRelativeOffset(input);
+    if (relativeResult) return relativeResult;
+    const absoluteResult = parseAbsoluteDate(input, timeZone);
+    if (absoluteResult) return absoluteResult;
     return null;
   }
   const time = parseTimeFromInput(input);
@@ -358,10 +499,31 @@ function isValidFutureIsoDate(value: string) {
 
 function extractTitleFromCreateInput(input: string) {
   let working = input.trim();
-  const remindGlobal = /\bremind me to\s+/i.exec(working);
-  if (remindGlobal && remindGlobal.index !== undefined) {
-    working = working.slice(remindGlobal.index + remindGlobal[0].length);
-  } else {
+
+  // Ordered prefix patterns — strip the intent phrase, keep the subject/action after it
+  const prefixPatterns: RegExp[] = [
+    /\bremind me to\s+/i,
+    /\bremind myself\s+(to|about)\s+/i,
+    /\bdon'?t\s+forget\s+to\s+/i,
+    /\bi\s+(need|must|have|should|want)\s+to\s+remember\s+to\s+/i,
+    /\b(can|could|please)\s+(you\s+)?remind\s+me\s+(to|about)\s+/i,
+    /\bping\s+me\s+(at|about|for|when)\s+/i,
+    /\b(alert|notify)\s+me\s+(at|about|for|when|to)\s+/i,
+    /\bput\s+(a\s+)?reminder\s+(for|to|about)\s+/i,
+    /\b(याद\s+दिलाना|याद\s+कराना|याद\s+रखना|रिमाइंडर\s+लगाओ)\s+/i,
+  ];
+
+  let stripped = false;
+  for (const pattern of prefixPatterns) {
+    const match = pattern.exec(working);
+    if (match?.index !== undefined) {
+      working = working.slice(match.index + match[0].length);
+      stripped = true;
+      break;
+    }
+  }
+
+  if (!stripped) {
     working = working
       .replace(
         /^(?:please\s+)?(?:create|add|set|make|schedule|बनाओ|तैयार करो|set karo|करो)\s+(?:(?:a|an)\s+)?(?:reminder|रिमाइंडर|स्मरणपत्र)?\s*/i,
@@ -373,9 +535,11 @@ function extractTitleFromCreateInput(input: string) {
     .replace(/^(?:called|named|titled)\s+/i, "")
     .replace(/\b(for|about|called|named|titled|के लिए|साठी)\b/gi, " ")
     .replace(
-      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)\b/gi,
+      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|morning|afternoon|evening|night|next|this|coming|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
       " "
     )
+    .replace(/\bin\s+\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
+    .replace(/\b\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
     .replace(/\b\d{1,2}(?:[:.]\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")
     .replace(/\b\d{1,2}[:.]\d{2}\b/g, " ")
     .replace(/\s+/g, " ")
@@ -428,6 +592,260 @@ function safeAgentResponse(text: string): ReminderAgentResponse {
     return parsed;
   } catch {
     return { reply: text.trim() || "I could not understand that request.", action: { type: "unknown" } };
+  }
+}
+
+// ─── Gap 2: deterministic target extraction for mark-done / delete ────────────
+
+function extractTargetFromMarkDone(message: string): string {
+  return message
+    .replace(/^(please\s+)?/i, "")
+    .replace(/\b(mark|set|flag|put)\s*(it|them|this|that)?\s*/gi, " ")
+    .replace(/\b(as\s+)?(done|complete|completed|finished|finish)\b/gi, " ")
+    .replace(/\bdone\s+with\b/gi, " ")
+    .replace(/\b(i('?ve| have)\s+)?(done|completed|finished)\b/gi, " ")
+    .replace(/\bcheck(ed)?\s*off\b/gi, " ")
+    .replace(/\b(my|the|a|an|reminder|reminders|for|about)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractTargetFromDelete(message: string): string {
+  return message
+    .replace(/^(please\s+)?/i, "")
+    .replace(/\b(delete|remove|cancel|dismiss|drop|trash|erase)\s*(it|them|this|that)?\s*/gi, " ")
+    .replace(/\b(my|the|a|an|reminder|reminders|for|about)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ─── Gap 4: snooze helpers ────────────────────────────────────────────────────
+
+const PRONOUN_TARGETS = new Set(["it", "that", "this", "them", "those", "one"]);
+
+/** Returns delay in minutes, or null if no duration found in message. */
+function extractSnoozeDelayMinutes(message: string): number | null {
+  const n = message.toLowerCase();
+  if (/\bhalf\s+an?\s+hour\b/.test(n) || /\bhalf\s+hour\b/.test(n)) return 30;
+  if (/\ban?\s+hour\b/.test(n)) return 60;
+  if (/\ba\s+few\s+minutes?\b/.test(n)) return 5;
+  const match = n.match(/\b(\d+(?:\.\d+)?)\s*(hour|hr|h|minute|min|m)s?\b/);
+  if (match) {
+    const amount = parseFloat(match[1]!);
+    const unit = match[2]!;
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1440) return null;
+    if (/^(hour|hr|h)/.test(unit)) return Math.round(amount * 60);
+    if (/^(minute|min|m)/.test(unit)) return Math.round(amount);
+  }
+  return null;
+}
+
+function extractTargetFromSnooze(message: string): string {
+  return message
+    .replace(/^(please\s+)?/i, "")
+    .replace(/\b(snooze|postpone|delay|push|remind me again|remind me later)\s*/gi, " ")
+    .replace(/\b(by|for|in|after)\s+\d+\s*(hour|hr|minute|min|h|m)s?\b/gi, " ")
+    .replace(/\b(half\s+(an?\s+)?hour|an?\s+hour|a\s+few\s+minutes?)\b/gi, " ")
+    .replace(/\b(my|the|a|an|reminder|reminders|for|about)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ─── Gap 5: edit title/notes helpers ─────────────────────────────────────────
+
+function extractEditField(message: string): "title" | "notes" | null {
+  const n = message.toLowerCase();
+  if (/\b(rename|retitle)\b/.test(n)) return "title";
+  if (/\b(title|name)\b/.test(n)) return "title";
+  if (/\bnotes?\b/.test(n)) return "notes";
+  return null;
+}
+
+function extractNewValueFromEdit(message: string): string | null {
+  // Quoted: to "value" or to 'value'
+  const quotedTo = message.match(/\bto\s+"([^"]+)"\s*$/i) ?? message.match(/\bto\s+'([^']+)'\s*$/i);
+  if (quotedTo?.[1]) return quotedTo[1].trim();
+  // Quoted: with "value"
+  const quotedWith = message.match(/\bwith\s+"([^"]+)"\s*$/i) ?? message.match(/\bwith\s+'([^']+)'\s*$/i);
+  if (quotedWith?.[1]) return quotedWith[1].trim();
+  // Unquoted after "to": take rest of string, skip if it looks like a date/time phrase
+  const toMatch = message.match(/\bto\s+(.+?)\s*$/i);
+  if (toMatch?.[1]) {
+    const val = toMatch[1].trim();
+    const looksLikeDate = /\b(am|pm|tomorrow|today|tonight|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening|night|noon|midnight|\d{1,2}[:.]\d{2})\b/i.test(val);
+    if (!looksLikeDate && val.length >= 2) return val;
+  }
+  // Unquoted after "with"
+  const withMatch = message.match(/\bwith\s+(.+?)\s*$/i);
+  if (withMatch?.[1] && withMatch[1].trim().length >= 2) return withMatch[1].trim();
+  return null;
+}
+
+function extractTargetFromEdit(message: string): string {
+  let working = message
+    .replace(/^(please\s+)?/i, "")
+    .replace(/\b(rename|retitle|change|update|edit|modify)\s*/gi, " ");
+  // Strip "the title/name/notes of/for/on"
+  working = working.replace(/\b(the\s+)?(title|name|notes?|description)\s+(?:of|for|on|in)\s*/gi, " ");
+  working = working.replace(/\b(the\s+)?(title|name|notes?|description)\s*/gi, " ");
+  // Strip separator and new value (everything after "to", "with", "as")
+  working = working.replace(/\s+to\s+.+$/i, " ");
+  working = working.replace(/\s+with\s+.+$/i, " ");
+  working = working.replace(/\s+as\s+.+$/i, " ");
+  return working
+    .replace(/\b(my|the|a|an|reminder|reminders|for|about)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ─── Gap 6: bulk helpers ──────────────────────────────────────────────────────
+
+function extractBulkOperation(message: string): "mark_done" | "delete" | null {
+  const n = message.toLowerCase();
+  if (/\b(delete|remove|cancel|dismiss|trash|erase)\b/.test(n)) return "delete";
+  if (/\b(mark|set|flag)\b.{0,25}\b(done|complete|completed|finished)\b/.test(n)) return "mark_done";
+  if (/\b(complete|finish)\b/.test(n)) return "mark_done";
+  return null;
+}
+
+function extractBulkTargets(message: string, reminders: ReminderItem[], timeZone?: string): ReminderItem[] {
+  const n = message.toLowerCase();
+  const now = new Date();
+  const sortByDue = (a: ReminderItem, b: ReminderItem) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
+  const pending = reminders.filter((r) => r.status === "pending");
+
+  if (/\b(missed|overdue)\b/.test(n)) {
+    return pending.filter((r) => new Date(r.dueAt).getTime() < now.getTime()).sort(sortByDue);
+  }
+  if (/\btoday\b/.test(n)) return filterToday(pending, now, timeZone);
+  if (/\btomorrow\b/.test(n)) {
+    return pending.filter((r) => getReminderBucket(r, now, timeZone) === "tomorrow").sort(sortByDue);
+  }
+  // Domain filters
+  const DOMAIN_PATTERNS: [RegExp, LifeDomain][] = [
+    [/\bhealth\b/, "health"],
+    [/\b(finance|financial|money)\b/, "finance"],
+    [/\b(career|work|job)\b/, "career"],
+    [/\bhobby\b/, "hobby"],
+    [/\b(fun|entertainment)\b/, "fun"],
+  ];
+  for (const [pattern, domain] of DOMAIN_PATTERNS) {
+    if (pattern.test(n)) return pending.filter((r) => r.domain === domain).sort(sortByDue);
+  }
+  return pending.sort(sortByDue);
+}
+
+// ─── Gap 7: multi-turn ordinal resolution ────────────────────────────────────
+
+function extractOrdinalIndex(message: string): number | null {
+  const n = message.toLowerCase();
+  if (/\b(first|1st)\b/.test(n)) return 0;
+  if (/\b(second|2nd)\b/.test(n)) return 1;
+  if (/\b(third|3rd)\b/.test(n)) return 2;
+  if (/\b(fourth|4th)\b/.test(n)) return 3;
+  if (/\b(fifth|5th)\b/.test(n)) return 4;
+  if (/\blast\b/.test(n)) return -1; // -1 = last index
+  return null;
+}
+
+/** Resolve "the first one / the last one" against the last listed set. Returns null if no match. */
+function resolveByOrdinal(
+  message: string,
+  reminders: ReminderItem[],
+  recentListedIds: string[] | undefined,
+): ReminderItem | null {
+  if (!recentListedIds?.length) return null;
+  const ordinal = extractOrdinalIndex(message);
+  if (ordinal === null) return null;
+  const idx = ordinal === -1 ? recentListedIds.length - 1 : ordinal;
+  const id = recentListedIds[idx];
+  if (!id) return null;
+  return reminders.find((r) => r.id === id && r.status === "pending") ?? null;
+}
+
+// ─── Gap 8: profile-based time suggestion ─────────────────────────────────────
+
+function computeDomainHourPatterns(events: Array<Record<string, unknown>>): Record<string, number> {
+  const sums: Record<string, number> = {};
+  const counts: Record<string, number> = {};
+  for (const e of events) {
+    const domain = typeof e.domain === "string" ? e.domain : undefined;
+    const ts = Number(e.createdAt);
+    if (!domain || !Number.isFinite(ts)) continue;
+    const hour = new Date(ts).getHours();
+    sums[domain] = (sums[domain] ?? 0) + hour;
+    counts[domain] = (counts[domain] ?? 0) + 1;
+  }
+  const result: Record<string, number> = {};
+  for (const [d, sum] of Object.entries(sums)) result[d] = sum / counts[d]!;
+  return result;
+}
+
+function inferDomainFromTitle(title: string): LifeDomain | undefined {
+  const t = title.toLowerCase();
+  if (/\b(medicine|pill|doctor|health|gym|workout|run|yoga|exercise|appointment|dentist|hospital)\b/.test(t)) return "health";
+  if (/\b(pay|bill|bank|budget|invest|tax|salary|finance|money|loan|insurance)\b/.test(t)) return "finance";
+  if (/\b(meeting|work|boss|client|project|deadline|review|presentation|interview|standup|sprint|office)\b/.test(t)) return "career";
+  if (/\b(hobby|craft|paint|guitar|book|read|learn|course|class|practice)\b/.test(t)) return "hobby";
+  if (/\b(movie|party|dinner|game|concert|friend|fun|hangout|travel|trip)\b/.test(t)) return "fun";
+  return undefined;
+}
+
+function suggestDomainTime(
+  domain: LifeDomain | undefined,
+  title: string,
+  profile: { preferredWorkingHoursStart?: number; preferredWorkingHoursEnd?: number } | null,
+  domainHourPatterns: Record<string, number>,
+): { hour: number; minute: number; basis: string } {
+  const effectiveDomain = domain ?? inferDomainFromTitle(title);
+  // 1. Event-based average hour for this domain
+  if (effectiveDomain && domainHourPatterns[effectiveDomain] != null) {
+    const avg = Math.round(domainHourPatterns[effectiveDomain]!);
+    const h = Math.min(Math.max(avg, 7), 22);
+    return { hour: h, minute: 0, basis: `your ${effectiveDomain} reminder patterns` };
+  }
+  // 2. Profile working hours
+  const ws = profile?.preferredWorkingHoursStart;
+  if (ws != null && Number.isFinite(ws) && ws >= 6 && ws <= 22) {
+    return { hour: ws, minute: 0, basis: "your preferred working hours" };
+  }
+  // 3. Domain keyword defaults
+  const defaults: Record<string, { hour: number; minute: number }> = {
+    health: { hour: 8, minute: 0 },
+    finance: { hour: 10, minute: 0 },
+    career: { hour: 9, minute: 0 },
+    hobby: { hour: 18, minute: 0 },
+    fun: { hour: 19, minute: 0 },
+  };
+  if (effectiveDomain && defaults[effectiveDomain]) {
+    return { ...defaults[effectiveDomain]!, basis: `typical ${effectiveDomain} schedule` };
+  }
+  // 4. Title keyword hints
+  const t = title.toLowerCase();
+  if (/\b(medicine|pill|workout|gym|run|yoga)\b/.test(t)) return { hour: 8, minute: 0, basis: "your morning routine" };
+  if (/\b(lunch)\b/.test(t)) return { hour: 12, minute: 30, basis: "lunchtime" };
+  if (/\b(dinner|movie|concert|party)\b/.test(t)) return { hour: 19, minute: 0, basis: "evening schedule" };
+  if (/\b(meeting|standup|call|review)\b/.test(t)) return { hour: 10, minute: 0, basis: "work hours" };
+  // 5. Generic default
+  return { hour: 9, minute: 0, basis: "a standard morning time" };
+}
+
+async function loadProfileForSuggestion(userId: string): Promise<{
+  profile: { preferredWorkingHoursStart?: number; preferredWorkingHoursEnd?: number } | null;
+  domainHourPatterns: Record<string, number>;
+}> {
+  try {
+    const client = getConvexClient();
+    const [events, profile] = await Promise.all([
+      client.query(api.userEvents.getRecent, { userId, limitDays: 30 }),
+      client.query(api.userProfiles.get, { userId }),
+    ]);
+    return {
+      profile: profile as { preferredWorkingHoursStart?: number; preferredWorkingHoursEnd?: number } | null,
+      domainHourPatterns: computeDomainHourPatterns(events as Array<Record<string, unknown>>),
+    };
+  } catch {
+    return { profile: null, domainHourPatterns: {} };
   }
 }
 
@@ -571,24 +989,33 @@ async function buildBehaviorContext(userId: string): Promise<string> {
   }
 }
 
-// FLAW-4: save a single chat message server-side (idempotent)
-async function saveMessageServerSide(
-  userId: string,
-  role: "user" | "assistant",
-  content: string,
+// M1 fix: messages are persisted client-side via /api/chat/history (flushChatHistoryToServer).
+// Saving here too created duplicate records in Convex (different clientId per path → two rows per message).
+// The function is kept as a no-op so all 73 call sites compile without change.
+function saveMessageServerSide(
+  _userId: string,
+  _role: "user" | "assistant",
+  _content: string,
 ): Promise<void> {
-  try {
-    const client = getConvexClient();
-    await client.mutation(api.chat.insertMessage, {
-      userId,
-      clientId: `server-${userId}-${Date.now()}-${crypto.randomUUID()}`,
-      role,
-      content,
-      createdAt: Date.now(),
-    });
-  } catch {
-    // best-effort; never block the response
+  return Promise.resolve();
+}
+
+function looksLikeConfirmation(message: string): boolean {
+  const n = message.toLowerCase().trim();
+  return /^(yes|yeah|yep|yup|ok|okay|sure|confirm|confirmed|go ahead|do it|proceed|correct|right|absolutely|definitely)[\s!.,]*$/.test(n);
+}
+
+function findTargetReminder(reminders: ReminderItem[], targetId?: string, targetTitle?: string): ReminderItem | undefined {
+  if (targetId) {
+    const byId = reminders.find((r) => r.id === targetId);
+    if (byId) return byId;
   }
+  if (targetTitle) {
+    return reminders.find((r) =>
+      r.title.toLowerCase().includes(targetTitle.toLowerCase())
+    );
+  }
+  return undefined;
 }
 
 function normalizeClientTimeZone(raw: unknown): string | undefined {
@@ -615,6 +1042,18 @@ export async function POST(request: Request) {
     tasks?: TaskItem[];
     timeZone?: string;
     replyContext?: ReplyContextPayload;
+    pendingAction?: {
+      type: "mark_done" | "delete_reminder" | "create_reminder";
+      targetId?: string;
+      targetTitle?: string;
+      targetIds?: string[];
+      title?: string;
+      dueAt?: string;
+      priority?: number;
+      domain?: string;
+      recurrence?: string;
+    };
+    recentListedIds?: string[];
   };
   const timeZone = normalizeClientTimeZone(body.timeZone);
   const message = body.message?.trim();
@@ -624,6 +1063,60 @@ export async function POST(request: Request) {
   const displayOptions = { timeZone, taskTitleById };
 
   if (!message) return NextResponse.json({ error: "Message is required" }, { status: 400 });
+
+  // ─── Confirmation execution: user replied "yes" to a pending_confirm ──────────
+  if (body.pendingAction && looksLikeConfirmation(message)) {
+    const { type: pendingType, targetId, targetTitle, targetIds } = body.pendingAction;
+
+    // Gap 8: create suggestion confirmation
+    if (pendingType === "create_reminder") {
+      const { title, dueAt: suggestedDueAt } = body.pendingAction;
+      if (title && suggestedDueAt && isValidFutureIsoDate(suggestedDueAt)) {
+        const priority = typeof body.pendingAction.priority === "number" ? body.pendingAction.priority : undefined;
+        const domain = parseLifeDomain(body.pendingAction.domain);
+        const recurrence = (["none", "daily", "weekly", "monthly"] as const).includes(body.pendingAction.recurrence as any)
+          ? (body.pendingAction.recurrence as "none" | "daily" | "weekly" | "monthly")
+          : undefined;
+        const reply = `Reminder "${title}" created for ${formatDueInUserZone(suggestedDueAt, timeZone)}.`;
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", reply);
+        return NextResponse.json({
+          reply,
+          action: { type: "create_reminder", title, dueAt: suggestedDueAt, priority, domain, recurrence },
+        } satisfies ReminderAgentResponse);
+      }
+    }
+
+    // Bulk confirmation: targetIds present → execute on all of them
+    if (targetIds && targetIds.length > 0) {
+      const op = pendingType === "delete_reminder" ? "delete" : "mark_done";
+      const verb = op === "delete" ? "deleted" : "marked as done";
+      const reply = `Done — ${targetIds.length} reminder${targetIds.length !== 1 ? "s" : ""} ${verb}.`;
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", reply);
+      return NextResponse.json({
+        reply,
+        action: { type: "bulk_action", bulkOperation: op, bulkTargetIds: targetIds },
+      } satisfies ReminderAgentResponse);
+    }
+
+    const target = findTargetReminder(reminders, targetId, targetTitle);
+    if (target) {
+      const verb = pendingType === "delete_reminder" ? "deleted" : "marked as done";
+      const reply = `Done — "${target.title}" has been ${verb}.`;
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", reply);
+      return NextResponse.json({
+        reply,
+        action: { type: pendingType, targetId: target.id, targetTitle: target.title },
+      } satisfies ReminderAgentResponse);
+    }
+    // Target no longer found (already deleted/done) — tell the user
+    const reply = "I couldn't find that reminder anymore — it may have already been updated.";
+    void saveMessageServerSide(userId, "user", message);
+    void saveMessageServerSide(userId, "assistant", reply);
+    return NextResponse.json({ reply, action: { type: "unknown" } } satisfies ReminderAgentResponse);
+  }
 
   const replyContext =
     body.replyContext
@@ -671,33 +1164,334 @@ export async function POST(request: Request) {
       return NextResponse.json(response);
     }
 
+    // Gap 8: no time provided → suggest based on profile/domain instead of plain "please give time"
+    const domain = extractDomainFromInput(effectiveMessage);
+    const priority = extractPriorityFromInput(effectiveMessage);
+    const recurrence = extractRecurrenceFromInput(effectiveMessage);
+    const { profile, domainHourPatterns } = await loadProfileForSuggestion(userId);
+    const suggested = suggestDomainTime(domain, resolvedTitle, profile, domainHourPatterns);
+
+    // Pick the best available day (respect explicit hint in message; default to tomorrow)
+    const now = new Date();
+    const todayCal = getCalendarDateInTimeZone(now, timeZone);
+    let suggestDay = addDaysToCalendarDate(todayCal, 1); // default: tomorrow
+    if (hasDayAfterTomorrowHint(effectiveMessage)) {
+      suggestDay = addDaysToCalendarDate(todayCal, 2);
+    } else if (hasTodayHint(effectiveMessage)) {
+      const todayTs = calendarDateTimeToIso(todayCal, suggested, timeZone);
+      suggestDay = new Date(todayTs).getTime() > now.getTime()
+        ? todayCal
+        : addDaysToCalendarDate(todayCal, 1);
+    }
+    const suggestedDueAt = calendarDateTimeToIso(suggestDay, suggested, timeZone);
+    const timeLabel = formatDueInUserZone(suggestedDueAt, timeZone);
+
     const response: ReminderAgentResponse = {
-      reply: "I can create it. Please share date and exact time, like: tomorrow at 8:00 PM.",
-      action: { type: "clarify", title: resolvedTitle },
+      reply: `I can create "${resolvedTitle}". Based on ${suggested.basis}, I suggest **${timeLabel}**. Reply **yes** to confirm, or tell me a different time.`,
+      action: {
+        type: "clarify",
+        title: resolvedTitle,
+        suggestedDueAt,
+        priority,
+        domain,
+        recurrence,
+      },
     };
     void saveMessageServerSide(userId, "user", effectiveMessage);
     void saveMessageServerSide(userId, "assistant", response.reply);
     return NextResponse.json(response);
   }
 
+  // ─── Gap 6: bulk fast path (before single mark-done / delete) ────────────
+  if (looksLikeBulkIntent(effectiveMessage)) {
+    const op = extractBulkOperation(effectiveMessage);
+    if (op) {
+      const targets = extractBulkTargets(effectiveMessage, reminders, timeZone);
+      if (targets.length === 0) {
+        const r: ReminderAgentResponse = {
+          reply: "You have no pending reminders matching that filter.",
+          action: { type: "unknown" },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+      const verb = op === "delete" ? "delete" : "mark as done";
+      const count = targets.length;
+      const preview = targets
+        .slice(0, 5)
+        .map((r) => `"${r.title}"`)
+        .join(", ");
+      const ellipsis = count > 5 ? ` (+${count - 5} more)` : "";
+      const r: ReminderAgentResponse = {
+        reply: `You have ${count} reminder${count !== 1 ? "s" : ""}: ${preview}${ellipsis}. ${count === 1 ? "It" : "All"} will be ${op === "delete" ? "deleted" : "marked as done"}. Reply **yes** to confirm.`,
+        action: {
+          type: "pending_confirm",
+          pendingType: op === "delete" ? "delete_reminder" : "mark_done",
+          bulkTargetIds: targets.map((r) => r.id),
+        },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+    // op unknown — fall through to LLM
+  }
+
+  // ─── Gap 2: deterministic mark-done fast path ──────────────────────────────
+  if (looksLikeMarkDoneIntent(effectiveMessage)) {
+    const ordinalTarget = resolveByOrdinal(effectiveMessage, reminders, body.recentListedIds);
+    if (ordinalTarget) {
+      const r: ReminderAgentResponse = {
+        reply: `Are you sure you want to mark "${ordinalTarget.title}" — ${formatDueInUserZone(ordinalTarget.dueAt, timeZone)} as done? Reply **yes** to confirm.`,
+        action: { type: "pending_confirm", pendingType: "mark_done", targetId: ordinalTarget.id, targetTitle: ordinalTarget.title },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+    const rawTarget = extractTargetFromMarkDone(effectiveMessage);
+    if (rawTarget.length >= 2) {
+      const matches = reminders.filter(
+        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+      );
+      if (matches.length === 1) {
+        const target = matches[0]!;
+        const r: ReminderAgentResponse = {
+          reply: `Are you sure you want to mark "${target.title}" — ${formatDueInUserZone(target.dueAt, timeZone)} as done? Reply **yes** to confirm.`,
+          action: { type: "pending_confirm", pendingType: "mark_done", targetId: target.id, targetTitle: target.title },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+      if (matches.length > 1) {
+        const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
+        const r: ReminderAgentResponse = {
+          reply: `Which one do you mean — ${sample.join(" or ")}?`,
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+      // Zero matches — fall through to LLM
+    }
+  }
+
+  // ─── Gap 2: deterministic delete fast path ─────────────────────────────────
+  if (looksLikeDeleteIntent(effectiveMessage)) {
+    const ordinalTarget = resolveByOrdinal(effectiveMessage, reminders, body.recentListedIds);
+    if (ordinalTarget) {
+      const r: ReminderAgentResponse = {
+        reply: `Are you sure you want to delete "${ordinalTarget.title}" — ${formatDueInUserZone(ordinalTarget.dueAt, timeZone)}? Reply **yes** to confirm.`,
+        action: { type: "pending_confirm", pendingType: "delete_reminder", targetId: ordinalTarget.id, targetTitle: ordinalTarget.title },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+    const rawTarget = extractTargetFromDelete(effectiveMessage);
+    if (rawTarget.length >= 2) {
+      const matches = reminders.filter(
+        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+      );
+      if (matches.length === 1) {
+        const target = matches[0]!;
+        const r: ReminderAgentResponse = {
+          reply: `Are you sure you want to delete "${target.title}" — ${formatDueInUserZone(target.dueAt, timeZone)}? Reply **yes** to confirm.`,
+          action: { type: "pending_confirm", pendingType: "delete_reminder", targetId: target.id, targetTitle: target.title },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+      if (matches.length > 1) {
+        const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
+        const r: ReminderAgentResponse = {
+          reply: `Which one do you mean — ${sample.join(" or ")}?`,
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+      // Zero matches — fall through to LLM
+    }
+  }
+
+  // ─── Gap 5: edit title/notes fast path ────────────────────────────────────
+  if (looksLikeEditIntent(effectiveMessage)) {
+    const field = extractEditField(effectiveMessage);
+    const newValue = extractNewValueFromEdit(effectiveMessage);
+
+    if (!field) {
+      const r: ReminderAgentResponse = {
+        reply: "What would you like to change — the title or the notes?",
+        action: { type: "clarify" },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+
+    if (!newValue) {
+      const r: ReminderAgentResponse = {
+        reply: `What should the new ${field} be?`,
+        action: { type: "clarify" },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+
+    const ordinalEditTarget = resolveByOrdinal(effectiveMessage, reminders, body.recentListedIds);
+    if (ordinalEditTarget) {
+      const r: ReminderAgentResponse = {
+        reply: `Done — updated the ${field} of "${ordinalEditTarget.title}".`,
+        action: {
+          type: "edit_reminder",
+          targetId: ordinalEditTarget.id,
+          targetTitle: ordinalEditTarget.title,
+          ...(field === "title" ? { newTitle: newValue } : { newNotes: newValue }),
+        },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+
+    const rawTarget = extractTargetFromEdit(effectiveMessage);
+    const isPronoun = !rawTarget || rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase());
+
+    if (!isPronoun) {
+      const matches = reminders.filter(
+        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+      );
+      if (matches.length === 1) {
+        const target = matches[0]!;
+        const r: ReminderAgentResponse = {
+          reply: `Done — updated the ${field} of "${target.title}".`,
+          action: {
+            type: "edit_reminder",
+            targetId: target.id,
+            targetTitle: target.title,
+            ...(field === "title" ? { newTitle: newValue } : { newNotes: newValue }),
+          },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+      if (matches.length > 1) {
+        const sample = matches.slice(0, 2).map((r) => `"${r.title}"`);
+        const r: ReminderAgentResponse = {
+          reply: `Which one do you mean — ${sample.join(" or ")}?`,
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+      // Zero matches — fall through to LLM
+    }
+    // Pronoun or no target — fall through to LLM for disambiguation
+  }
+
+  // ─── Gap 4: snooze fast path ───────────────────────────────────────────────
+  if (looksLikeSnoozeIntent(effectiveMessage)) {
+    const delayMinutes = extractSnoozeDelayMinutes(effectiveMessage);
+
+    if (!delayMinutes) {
+      const r: ReminderAgentResponse = {
+        reply: "How long should I snooze it? For example: 30 minutes, 1 hour, 2 hours.",
+        action: { type: "clarify" },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+
+    // Gap 7: ordinal resolution ("snooze the second one by 30 min")
+    const ordinalSnoozeTarget = resolveByOrdinal(effectiveMessage, reminders, body.recentListedIds);
+
+    const rawTarget = extractTargetFromSnooze(effectiveMessage);
+    const isPronoun = !rawTarget || rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase());
+    let target: ReminderItem | undefined = ordinalSnoozeTarget ?? undefined;
+
+    if (!target && !isPronoun) {
+      const matches = reminders.filter(
+        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+      );
+      if (matches.length === 1) {
+        target = matches[0];
+      } else if (matches.length > 1) {
+        const sample = matches.slice(0, 2).map((r) => `"${r.title}"`);
+        const r: ReminderAgentResponse = {
+          reply: `Which one do you mean — ${sample.join(" or ")}?`,
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+    }
+
+    // No explicit title (or pronoun) → pick nearest overdue, then nearest upcoming
+    if (!target) {
+      const pending = reminders
+        .filter((r) => r.status === "pending")
+        .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
+      const overdue = pending.filter((r) => new Date(r.dueAt).getTime() < Date.now());
+      target = overdue[0] ?? pending[0];
+    }
+
+    if (!target) {
+      const r: ReminderAgentResponse = {
+        reply: "You have no pending reminders to snooze.",
+        action: { type: "unknown" },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+
+    const newDueAt = new Date(Date.now() + delayMinutes * 60_000).toISOString();
+    const label =
+      delayMinutes >= 60
+        ? `${Math.round(delayMinutes / 60)} hour${Math.round(delayMinutes / 60) !== 1 ? "s" : ""}`
+        : `${delayMinutes} minute${delayMinutes !== 1 ? "s" : ""}`;
+    const r: ReminderAgentResponse = {
+      reply: `Snoozed "${target.title}" — I'll remind you again in ${label} (${formatDueInUserZone(newDueAt, timeZone)}).`,
+      action: { type: "snooze_reminder", targetId: target.id, targetTitle: target.title, delayMinutes },
+    };
+    void saveMessageServerSide(userId, "user", effectiveMessage);
+    void saveMessageServerSide(userId, "assistant", r.reply);
+    return NextResponse.json(r);
+  }
+
   const listScopeFromMessage = inferListScopeFromMessage(effectiveMessage);
   if (listScopeFromMessage && !isCompoundReminderQuestion(effectiveMessage)) {
     let reply: string;
+    let listedIds: string[];
     if (listScopeFromMessage === "today") {
       // BUG-3 fix: pass timezone to filterToday
       const today = filterToday(reminders, new Date(), timeZone).slice(0, 5);
+      listedIds = today.map((r) => r.id);
       reply = today.length === 0
         ? "You have no reminders for today."
         : [
           today.length === 1 ? "Here is your reminder for today:" : "Here are your reminders for today:",
-          ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${formatDueInUserZone(item.dueAt, timeZone)}`),
+          ...today.map((item, idx) => `${idx + 1}. ${describeReminderForChat(item, new Date(), displayOptions)}`),
         ].join("\n");
     } else {
-      reply = buildListRemindersReply(reminders, listScopeFromMessage, new Date(), 5, { timeZone });
+      const listed = filterRemindersByListScope(reminders, listScopeFromMessage, new Date()).slice(0, 5);
+      listedIds = listed.map((r) => r.id);
+      reply = buildListRemindersReply(reminders, listScopeFromMessage, new Date(), 5, displayOptions);
     }
     void saveMessageServerSide(userId, "user", effectiveMessage);
     void saveMessageServerSide(userId, "assistant", reply);
-    return NextResponse.json({ reply, action: { type: "list_reminders" } } satisfies ReminderAgentResponse);
+    return NextResponse.json({ reply, action: { type: "list_reminders", listedIds } } satisfies ReminderAgentResponse);
   }
 
   const nimApiKey = process.env.NVIDIA_NIM_API_KEY;
@@ -753,11 +1547,14 @@ export async function POST(request: Request) {
         mapAgentScopeToListScope(parsed.action.scope) ?? inferListScopeFromMessage(effectiveMessage) ?? "future";
       if (scope === "today") {
         const today = filterToday(reminders, new Date(), timeZone).slice(0, 5);
+        parsed.action.listedIds = today.map((r) => r.id);
         parsed.reply = today.length === 0
           ? "You have no reminders for today."
-          : ["Here are your reminders for today:", ...today.map((item, idx) => `${idx + 1}. ${item.title} — ${formatDueInUserZone(item.dueAt, timeZone)}`)].join("\n");
+          : ["Here are your reminders for today:", ...today.map((item, idx) => `${idx + 1}. ${describeReminderForChat(item, new Date(), displayOptions)}`)].join("\n");
       } else {
-        parsed.reply = buildListRemindersReply(reminders, scope, new Date(), 5, { timeZone });
+        const listed = filterRemindersByListScope(reminders, scope, new Date()).slice(0, 5);
+        parsed.action.listedIds = listed.map((r) => r.id);
+        parsed.reply = buildListRemindersReply(reminders, scope, new Date(), 5, displayOptions);
       }
     }
 
@@ -770,26 +1567,29 @@ export async function POST(request: Request) {
       if (!parsed.action.domain) parsed.action.domain = extractDomainFromInput(effectiveMessage);
       if (!parsed.action.recurrence) parsed.action.recurrence = extractRecurrenceFromInput(effectiveMessage);
 
-      const asksForRelativeDate =
-        hasTodayHint(effectiveMessage) || hasTomorrowHint(effectiveMessage) || hasDayAfterTomorrowHint(effectiveMessage);
-      if (asksForRelativeDate && !deterministicDueAt) {
-        const r: ReminderAgentResponse = {
-          reply: "I understood you want to create a reminder, but I could not confidently parse the date/time. Please resend with clear format like: tomorrow at 8:00 PM.",
-          action: { type: "clarify", title: parsed.action.title },
-        };
-        void saveMessageServerSide(userId, "user", effectiveMessage);
-        void saveMessageServerSide(userId, "assistant", r.reply);
-        return NextResponse.json(r);
-      }
+      // If the deterministic parser resolved a date, trust it and skip the clarify checks
+      if (!deterministicDueAt) {
+        const asksForRelativeDate =
+          hasTodayHint(effectiveMessage) || hasTomorrowHint(effectiveMessage) || hasDayAfterTomorrowHint(effectiveMessage);
+        if (asksForRelativeDate) {
+          const r: ReminderAgentResponse = {
+            reply: "I understood you want to create a reminder, but I could not confidently parse the date/time. Please resend with clear format like: tomorrow at 8:00 PM.",
+            action: { type: "clarify", title: parsed.action.title },
+          };
+          void saveMessageServerSide(userId, "user", effectiveMessage);
+          void saveMessageServerSide(userId, "assistant", r.reply);
+          return NextResponse.json(r);
+        }
 
-      if (!parsed.action.dueAt || !hasExplicitTime(effectiveMessage) || !isValidFutureIsoDate(parsed.action.dueAt)) {
-        const r: ReminderAgentResponse = {
-          reply: "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
-          action: { type: "clarify", title: parsed.action.title },
-        };
-        void saveMessageServerSide(userId, "user", effectiveMessage);
-        void saveMessageServerSide(userId, "assistant", r.reply);
-        return NextResponse.json(r);
+        if (!parsed.action.dueAt || !hasExplicitTime(effectiveMessage) || !isValidFutureIsoDate(parsed.action.dueAt)) {
+          const r: ReminderAgentResponse = {
+            reply: "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
+            action: { type: "clarify", title: parsed.action.title },
+          };
+          void saveMessageServerSide(userId, "user", effectiveMessage);
+          void saveMessageServerSide(userId, "assistant", r.reply);
+          return NextResponse.json(r);
+        }
       }
 
       if (tasks && tasks.length > 0 && !parsed.action.linkedTaskId) {
@@ -817,23 +1617,43 @@ export async function POST(request: Request) {
       return NextResponse.json(r);
     }
 
-    if (
-      (parsed.action.type === "delete_reminder" || parsed.action.type === "mark_done" || parsed.action.type === "reschedule_reminder")
-      && parsed.action.targetTitle
-    ) {
-      const matches = reminders.filter((item) =>
-        item.title.toLowerCase().includes(parsed.action.targetTitle!.toLowerCase())
-      );
-      if (matches.length > 1) {
-        const sample = matches.slice(0, 2).map((item) => `${item.title} at ${formatDueInUserZone(item.dueAt, timeZone)}`);
-        const r: ReminderAgentResponse = {
-          reply: `Do you mean ${sample.join(" or ")}?`,
-          action: { type: "clarify", targetTitle: parsed.action.targetTitle },
-        };
-        void saveMessageServerSide(userId, "user", effectiveMessage);
-        void saveMessageServerSide(userId, "assistant", r.reply);
-        return NextResponse.json(r);
+    // ─── Gap 1: confirmation gate for mark_done / delete_reminder ───────────────
+    if (parsed.action.type === "mark_done" || parsed.action.type === "delete_reminder") {
+      const target = findTargetReminder(reminders, parsed.action.targetId, parsed.action.targetTitle);
+
+      // Ambiguous: multiple reminders match — ask which one first
+      if (!target && parsed.action.targetTitle) {
+        const matches = reminders.filter((item) =>
+          item.title.toLowerCase().includes(parsed.action.targetTitle!.toLowerCase())
+        );
+        if (matches.length > 1) {
+          const sample = matches.slice(0, 2).map((item) => `${item.title} at ${formatDueInUserZone(item.dueAt, timeZone)}`);
+          const r: ReminderAgentResponse = {
+            reply: `Do you mean ${sample.join(" or ")}?`,
+            action: { type: "clarify", targetTitle: parsed.action.targetTitle },
+          };
+          void saveMessageServerSide(userId, "user", effectiveMessage);
+          void saveMessageServerSide(userId, "assistant", r.reply);
+          return NextResponse.json(r);
+        }
       }
+
+      const verb = parsed.action.type === "delete_reminder" ? "delete" : "mark as done";
+      const label = target
+        ? `"${target.title}" — ${formatDueInUserZone(target.dueAt, timeZone)}`
+        : `"${parsed.action.targetTitle ?? "that reminder"}"`;
+      const r: ReminderAgentResponse = {
+        reply: `Are you sure you want to ${verb} ${label}? Reply **yes** to confirm.`,
+        action: {
+          type: "pending_confirm",
+          pendingType: parsed.action.type,
+          targetId: target?.id ?? parsed.action.targetId,
+          targetTitle: target?.title ?? parsed.action.targetTitle,
+        },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
     }
 
     void saveMessageServerSide(userId, "user", effectiveMessage);

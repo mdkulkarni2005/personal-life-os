@@ -262,10 +262,75 @@ export function looksLikeCreateIntent(message: string): boolean {
   if (/^(did i|have i|do i|does|is there|was there)\b/.test(n)) return false;
   if (/^(show|list|what|which|tell me|give me|find)\b/.test(n)) return false;
   if (/\b(already\s+(set|have|created|scheduled)|check if|look up)\s+a?\s*reminder\b/.test(n)) return false;
+  // Original patterns
   if (/\bremind me to\b/.test(n)) return true;
   if (/\b(create|add|set|make|schedule)\s+(a\s+)?reminder\b/.test(n)) return true;
   if (/\b(schedule|set)\s+(a\s+)?(task|meeting|event|appointment|call)\b/.test(n)) return true;
   if (/\b(add|create)\s+to\s+(my\s+)?(calendar|reminders)\b/.test(n)) return true;
+  // Extended patterns
+  if (/\bdon'?t\s+forget\s+to\b/.test(n)) return true;
+  if (/\bi\s+(need|must|have|should|want)\s+to\s+remember\s+to\b/.test(n)) return true;
+  if (/\bremind\s+myself\s+(to|about)\b/.test(n)) return true;
+  if (/\b(can|could|please)\s+(you\s+)?remind\s+me\s+(to|about)\b/.test(n)) return true;
+  if (/\bping\s+me\s+(at|about|for|when)\b/.test(n)) return true;
+  if (/\b(alert|notify)\s+me\s+(at|about|for|when|to)\b/.test(n)) return true;
+  if (/\bput\s+(a\s+)?reminder\s+(for|to|about)\b/.test(n)) return true;
+  // Hindi / Marathi
+  if (/\b(याद\s+दिलाना|याद\s+कराना|याद\s+रखना|रिमाइंडर\s+लगाओ)\b/.test(n)) return true;
+  return false;
+}
+
+export function looksLikeBulkIntent(message: string): boolean {
+  const n = message.toLowerCase().trim();
+  if (/^(did i|have i|do i|does|is there|was there|what|which|show|list|how many)\b/.test(n)) return false;
+  // Requires explicit "all / every / each" scope word
+  if (!/\b(all|every|each)\b/.test(n)) return false;
+  // Must pair with a mutation operation
+  if (/\b(delete|remove|cancel|dismiss|trash|erase)\b/.test(n)) return true;
+  if (/\b(mark|set|flag)\b.{0,25}\b(done|complete|completed|finished)\b/.test(n)) return true;
+  if (/\b(complete|finish)\b/.test(n)) return true;
+  return false;
+}
+
+export function looksLikeEditIntent(message: string): boolean {
+  const n = message.toLowerCase().trim();
+  if (/^(did i|have i|do i|does|is there|was there|what|which|show|list|how many)\b/.test(n)) return false;
+  if (/\b(rename|retitle)\b/.test(n)) return true;
+  if (/\b(change|update|edit|modify)\b.{0,35}\b(title|name|notes?|description)\b/.test(n)) return true;
+  if (/\b(add|set)\s+(notes?|description)\s+(for|to|on)\b/.test(n)) return true;
+  return false;
+}
+
+export function looksLikeSnoozeIntent(message: string): boolean {
+  const n = message.toLowerCase().trim();
+  if (/^(did i|have i|do i|does|is there|was there|what|which|show|list|how many)\b/.test(n)) return false;
+  if (/\bsnooze\b/.test(n)) return true;
+  if (/\b(remind me again|remind me later)\b/.test(n)) return true;
+  if (/\b(push|delay|postpone)\b.{0,25}\b(by|for)\s+\d/.test(n)) return true;
+  return false;
+}
+
+export function looksLikeMarkDoneIntent(message: string): boolean {
+  const n = message.toLowerCase().trim();
+  // Guard: questions about done status, not commands to mark done
+  if (/^(did i|have i|do i|does|is there|was there|what|which|show|list|how many)\b/.test(n)) return false;
+  if (/\b(already\s+(done|complete)|check if|look up)\b/.test(n)) return false;
+  // Explicit mark-done commands
+  if (/\b(mark|set|flag)\b.{0,40}\b(done|complete|completed|finished)\b/i.test(n)) return true;
+  if (/\bdone\s+with\b/i.test(n)) return true;
+  if (/\b(complete|finish|finished)\s+(?:the\s+|my\s+)?(?:reminder\s+(?:for\s+)?)?(\w)/i.test(n)) return true;
+  if (/\bi('?ve| have)\s+(done|completed|finished)\b/i.test(n)) return true;
+  if (/\bcheck\s*(ed)?\s*off\b/i.test(n)) return true;
+  return false;
+}
+
+export function looksLikeDeleteIntent(message: string): boolean {
+  const n = message.toLowerCase().trim();
+  // Guard: questions about deleted items, not commands to delete
+  if (/^(did i|have i|do i|does|is there|was there|what|which|show|list|how many)\b/.test(n)) return false;
+  if (/\b(already\s+deleted|check if|look up)\b/.test(n)) return false;
+  // Explicit delete commands
+  if (/\b(delete|remove|cancel|dismiss|drop|trash|erase)\s+(?:the\s+|my\s+|this\s+|that\s+)?(?:reminder\s+(?:for\s+)?)?(\w)/i.test(n)) return true;
   return false;
 }
 
@@ -399,6 +464,19 @@ export function inferListScopeFromMessage(message: string): ReminderListScope | 
   const n = message.toLowerCase().trim();
   if (classifyReminderIntent(message) === "decision_query") return null;
   if (looksLikeCreateIntent(message)) return null;
+
+  // M2 fix: topic-qualified queries ("related to X", "about the X") must go to LLM, not return
+  // a generic time-bucket list — the user is searching by topic, not by time.
+  if (/\brelated\s+to\b/.test(n)) return null;
+  if (
+    /\breminders?\s+(about|for|on|regarding)\s+\w/.test(n)
+    && !/\b(today|tonight|tomorrow|overdue|missed|upcoming|all|pending|done)\b/.test(n)
+  ) return null;
+  if (
+    /\b(about|regarding)\s+(the\s+|a\s+|an\s+)?\w/.test(n)
+    && /\breminders?\b/.test(n)
+    && !/\b(today|tonight|tomorrow|overdue|missed|upcoming|all|pending|done)\b/.test(n)
+  ) return null;
 
   // Detail-style questions are handled elsewhere, not as a bulk list
   if (/\bwhat'?s that\b/.test(n)) return null;
