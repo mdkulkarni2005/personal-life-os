@@ -3,13 +3,12 @@ import { NextResponse } from "next/server";
 import { api } from "@repo/db/convex/api";
 import { getConvexClient } from "../../../lib/server/convex-client";
 
-const client = getConvexClient();
-
 /** GET /api/notifications — list recent in-app notifications */
 export async function GET(request: Request) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const client = getConvexClient();
   const url = new URL(request.url);
   const limit = Math.min(Number(url.searchParams.get("limit") ?? "50"), 100);
 
@@ -24,6 +23,7 @@ export async function PATCH(request: Request) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const client = getConvexClient();
   const body = (await request.json()) as { id?: string; markAll?: boolean };
 
   if (body.markAll) {
@@ -32,10 +32,7 @@ export async function PATCH(request: Request) {
   }
 
   if (body.id) {
-    // Validate ownership before marking read
     const rows = await client.query(api.notifications.listForUser, { userId, limit: 1 });
-    // We trust the client to only send IDs belonging to the user
-    // since Convex mutations check by ID only; ownership enforced at query level.
     await client.mutation(api.notifications.markRead, { id: body.id as never });
     return NextResponse.json({ ok: true, rows });
   }
