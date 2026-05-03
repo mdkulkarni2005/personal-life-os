@@ -61,6 +61,31 @@ export const list = query({
   },
 });
 
+/**
+ * Lightweight query used by the server-side push cron.
+ * Returns reminders for a user filtered by status and a dueAt range.
+ * Does NOT include shared/participant reminders to keep cron logic simple.
+ */
+export const listForCron = query({
+  args: {
+    userId: v.string(),
+    statusFilter: v.union(v.literal("pending"), v.literal("done"), v.literal("archived")),
+    dueAtFrom: v.number(),
+    dueAtTo: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("reminders")
+      .withIndex("by_user_status_dueAt", (q) =>
+        q.eq("userId", args.userId)
+          .eq("status", args.statusFilter)
+          .gte("dueAt", args.dueAtFrom)
+          .lte("dueAt", args.dueAtTo),
+      )
+      .collect();
+  },
+});
+
 export const listForUser = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {

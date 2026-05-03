@@ -54,19 +54,13 @@ export async function getChatHistory(userId: string): Promise<StoredChatMessage[
   }
 }
 
-// BUG-2 fix: use upsertMessages (no delete-all, safe across tabs)
-export async function appendChatMessages(userId: string, messages: StoredChatMessage[]) {
-  const client = getConvexClient();
-  await client.mutation(api.chat.upsertMessages, {
-    userId,
-    messages: messages.map((m) => ({
-      clientId: m.id,
-      role: m.role,
-      content: m.content,
-      createdAt: m.createdAt,
-      metaJson: m.meta ? JSON.stringify(m.meta) : undefined,
-    })),
-  });
+// DEAD CODE — DO NOT CALL.
+// M1 fix: saveMessageServerSide was made a no-op; the client (flushChatHistoryToServer)
+// is the sole writer to Convex. Calling this from server routes would recreate the
+// duplicate-message bug (two different clientIds → two Convex records → duplicates in UI).
+// @deprecated
+export async function appendChatMessages(_userId: string, _messages: StoredChatMessage[]): Promise<void> {
+  // intentionally empty
 }
 
 export async function clearChatHistory(userId: string) {

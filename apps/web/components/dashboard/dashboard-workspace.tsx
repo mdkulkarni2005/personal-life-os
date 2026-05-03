@@ -50,6 +50,9 @@ import {
   type DueNotificationPrefs,
 } from "../../lib/reminder-notification-prefs";
 import { syncReminderPushSubscription } from "../../lib/push-subscription-client";
+import { playDueChime, playPreDuePing, playOverdueNudge } from "../../lib/notification-sounds";
+import { NotificationBell } from "../notifications/notification-bell";
+import { NotificationPrefsPanel } from "../notifications/notification-prefs-panel";
 
 type ChatRole = "user" | "assistant" | "system";
 
@@ -101,7 +104,7 @@ interface AgentAction {
   priority?: number;
   domain?: string;
   recurrence?: string;
-  pendingType?: "mark_done" | "delete_reminder";
+  pendingType?: "mark_done" | "delete_reminder" | "edit_reminder";
   delayMinutes?: number;
   newTitle?: string;
   newNotes?: string;
@@ -111,7 +114,7 @@ interface AgentAction {
   suggestedDueAt?: string;
   targetTitle?: string;
   targetId?: string;
-  scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all";
+  scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all" | "later" | "future";
 }
 
 interface AgentResponse {
@@ -642,16 +645,6 @@ function isDueThisMinute(dueAtIso: string, now: Date) {
   );
 }
 
-function isOverdueTodayReminder(reminder: ReminderItem, now = new Date()) {
-  if (reminder.status === "done" || reminder.status === "archived") return false;
-  const dueMs = new Date(reminder.dueAt).getTime();
-  if (!Number.isFinite(dueMs)) return false;
-  const startToday = new Date(now);
-  startToday.setHours(0, 0, 0, 0);
-  const startTodayMs = startToday.getTime();
-  const nowMs = now.getTime();
-  return dueMs >= startTodayMs && dueMs < nowMs;
-}
 
 function isNextTwoHoursReminder(reminder: ReminderItem, now = new Date()) {
   if (reminder.status === "done" || reminder.status === "archived") return false;
@@ -663,7 +656,7 @@ function isNextTwoHoursReminder(reminder: ReminderItem, now = new Date()) {
 
 function reminderStateLabel(reminder: ReminderItem, now = new Date()) {
   if (reminder.status === "done" || reminder.status === "archived") return "Done";
-  if (isOverdueTodayReminder(reminder, now)) return "Missed";
+  if (getReminderBucket(reminder, now) === "missed") return "Missed";
   return "Upcoming";
 }
 
@@ -1054,7 +1047,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [pendingCreateDraft, setPendingCreateDraft] =
     useState<PendingCreateDraft | null>(null);
   const [pendingConfirmAction, setPendingConfirmAction] =
-    useState<{ type: "mark_done" | "delete_reminder"; targetId?: string; targetTitle?: string; targetIds?: string[] } | null>(null);
+    useState<{ type: "mark_done" | "delete_reminder" | "edit_reminder"; targetId?: string; targetTitle?: string; targetIds?: string[]; newTitle?: string; newNotes?: string } | null>(null);
   const [recentListedIds, setRecentListedIds] = useState<string[]>([]);
   const [pendingTimeSuggestion, setPendingTimeSuggestion] = useState<{
     title: string;
@@ -1096,6 +1089,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [taskActionWarning, setTaskActionWarning] =
     useState<TaskActionWarning | null>(null);
+  const [pendingReminderCardDelete, setPendingReminderCardDelete] =
+    useState<{ id: string; title: string } | null>(null);
   const [reminderLinkedTaskId, setReminderLinkedTaskId] = useState("");
   const [reminderDomain, setReminderDomain] = useState<"" | LifeDomain>("");
   const [reminderTaskFilter, setReminderTaskFilter] = useState<
@@ -1156,6 +1151,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const resetTaskFormRef = useRef<() => void>(() => {});
   const briefingPlaybackActiveRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Forward ref so flushChatHistoryToServer (declared before showShareToast) can access it
+  const showShareToastRef = useRef<((msg: string) => void) | null>(null);
   const remindersRef = useRef(reminders);
   remindersRef.current = reminders;
   const tasksRef = useRef(tasks);
@@ -1215,11 +1212,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     } catch {
       /* fall through to fetch */
     }
-    void fetch(url, {
+    fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
       keepalive: true,
+    }).catch(() => {
+      // Non-blocking: show a subtle toast so the user knows history wasn't saved.
+      // Use the ref-forwarded handler to avoid declaration-order issues.
+      showShareToastRef.current?.("Chat history couldn't be saved — check your connection.");
     });
   }, []);
 
@@ -1306,6 +1307,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       shareToastTimerRef.current = null;
     }, 3400);
   }, []);
+  // Keep ref in sync so flushChatHistoryToServer (defined earlier) can call it
+  showShareToastRef.current = showShareToast;
 
   const refreshAfterReminderMutation = useCallback(
     async (responsePromise: Promise<Response>) => {
@@ -1611,9 +1614,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const runReminderQuickAction = useCallback(
     async (reminderId: string, action: "delete" | "done" | "snooze") => {
       if (action === "delete") {
-        await refreshAfterReminderMutation(
-          fetch(`/api/reminders/${reminderId}`, { method: "DELETE" }),
-        );
+        // Show confirmation dialog instead of immediately deleting
+        const reminder = reminders.find((r) => r.id === reminderId);
+        setPendingReminderCardDelete({ id: reminderId, title: reminder?.title ?? "this reminder" });
+        return;
       } else if (action === "done") {
         await refreshAfterReminderMutation(
           fetch(`/api/reminders/${reminderId}`, {
@@ -1632,7 +1636,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         );
       }
     },
-    [refreshAfterReminderMutation],
+    [refreshAfterReminderMutation, reminders],
   );
 
   useEffect(() => {
@@ -2130,6 +2134,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         else if (a === "deny") void dismissShareBatch(d.batchKey);
         return;
       }
+      // Play sound for push-triggered notification actions received via SW
+      if (d?.type === "REMINDER_NOTIF") {
+        const notifType = (d as { notifType?: string }).notifType;
+        if (notifType === "pre_due_reminder" && dueNotifPrefs.soundEnabled !== false) playPreDuePing();
+        if (notifType === "overdue_nudge" && dueNotifPrefs.soundEnabled !== false) playOverdueNudge();
+      }
       if (d?.type !== "REMINDER_NOTIF" || !d.reminderId) return;
       const a = d.action ?? "open";
       if (a === "open") return;
@@ -2212,6 +2222,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             },
           };
           setMessages((prev) => [...prev, msg]);
+          // Sound alert (if user has sound enabled — checked via prefs)
+          if (dueNotifPrefs.soundEnabled !== false) {
+            playDueChime();
+          }
           if (
             typeof navigator !== "undefined" &&
             navigator.vibrate &&
@@ -2252,12 +2266,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     };
 
     for (const reminder of reminders) {
-      if (isOverdueTodayReminder(reminder, now)) {
+      const bucket = getReminderBucket(reminder, now);
+      if (bucket === "missed") {
         next.missed.push(reminder);
         continue;
       }
-
-      const bucket = getReminderBucket(reminder, now);
       if (bucket === "today") next.today.push(reminder);
       else if (bucket === "tomorrow") next.tomorrow.push(reminder);
       else if (bucket === "upcoming") next.upcoming.push(reminder);
@@ -2447,6 +2460,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, [reminders]);
 
   const applyAction = (action: AgentAction) => {
+    // Clear stale pending state for every action type except pending_confirm (which sets it)
+    // This prevents a stale "yes" from firing a previously abandoned confirmation.
+    if (action.type !== "pending_confirm") {
+      setPendingConfirmAction(null);
+    }
+    // Clear stale listed IDs for every non-list action — prevents ordinal resolution
+    // from targeting a reminder list from many turns ago.
+    if (action.type !== "list_reminders") {
+      setRecentListedIds([]);
+    }
+
     if (action.type === "create_reminder" && action.title && action.dueAt) {
       setPendingCreateDraft(null);
       const title = action.title;
@@ -2555,7 +2579,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       const ids = action.bulkTargetIds;
       const op = action.bulkOperation;
       void (async () => {
-        await Promise.allSettled(
+        const results = await Promise.allSettled(
           ids.map((id) =>
             op === "delete"
               ? fetch(`/api/reminders/${id}`, { method: "DELETE" })
@@ -2566,6 +2590,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 }),
           ),
         );
+        const failed = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)).length;
+        if (failed > 0) {
+          showShareToast(`${failed} of ${ids.length} reminders could not be ${op === "delete" ? "deleted" : "marked done"}. Try again.`);
+        }
         await refreshReminders();
       })();
       return;
@@ -2591,18 +2619,27 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         targetId: action.targetId,
         targetTitle: action.targetTitle,
         targetIds: action.bulkTargetIds,
+        // edit_reminder confirmation carries the new value
+        newTitle: action.newTitle,
+        newNotes: action.newNotes,
       });
       return;
     }
 
     // Gap 7: store listed IDs so the next turn can use ordinal references
+    // (cleared at the top of applyAction for every non-list action)
     if (action.type === "list_reminders" && action.listedIds?.length) {
       setRecentListedIds(action.listedIds);
     }
 
     if (action.type === "clarify") {
-      // Gap 8: if the server included a time suggestion, store it for confirmation on next turn
+      // Gap 8: if the server included a time suggestion, store it for confirmation on next turn.
+      // Fix: don't activate BOTH wizard and suggestion simultaneously — pick suggestion path only,
+      // skip setPendingCreateDraft so the two flows don't conflict.
       if (action.suggestedDueAt && action.title) {
+        // Fix: suggestion path takes over — don't also activate the step-by-step wizard
+        // which would leave both pendingTimeSuggestion AND pendingCreateDraft alive,
+        // causing a spurious duplicate reminder on wizard completion.
         setPendingTimeSuggestion({
           title: action.title,
           suggestedDueAt: action.suggestedDueAt,
@@ -2610,6 +2647,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           domain: typeof action.domain === "string" ? action.domain : undefined,
           recurrence: typeof action.recurrence === "string" ? action.recurrence : undefined,
         });
+        // Clear any stale wizard so it doesn't conflict
+        setPendingCreateDraft(null);
+        return;
       }
       setPendingCreateDraft({
         step: action.title ? "date" : "title",
@@ -3261,8 +3301,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         return;
       }
       clearChatBackup(userId);
-      skipRemotePollMergeUntilRef.current = Date.now() + 12_000;
+      // Extend suppress window to 60s so in-flight polls from other tabs don't restore cleared history
+      skipRemotePollMergeUntilRef.current = Date.now() + 60_000;
       setPendingCreateDraft(null);
+      setPendingConfirmAction(null);
+      setPendingTimeSuggestion(null);
+      setRecentListedIds([]);
       setReplyTarget(null);
       setEditingMessageId(null);
       const starter: ChatMessage = {
@@ -4006,8 +4050,21 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       setReminderInlineTaskTitle("");
       setReminderInlineTaskDue("");
       const dueDate = new Date(reminder.dueAt);
-      const datePart = dueDate.toISOString().slice(0, 10);
-      const timePart = dueDate.toTimeString().slice(0, 5);
+      // Use the user's local timezone consistently for both date and time parts
+      // (toISOString is UTC, toTimeString is browser-local — mixing them causes wrong values)
+      const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: localTz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).formatToParts(dueDate);
+      const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+      const datePart = `${get("year")}-${get("month")}-${get("day")}`;
+      const timePart = `${get("hour").replace("24", "00")}:${get("minute")}`;
       setEditingReminderId(reminder.id);
       setNewTitle(reminder.title);
       setNewDate(datePart);
@@ -4634,6 +4691,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     Menu
                   </button>
                 </div>
+                {/* Notification bell */}
+                <NotificationBell pollIntervalMs={30_000} />
+
                 <button
                   type="button"
                   onClick={() => runBriefingStream()}
@@ -5340,6 +5400,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     Notifications blocked—enable in browser settings.
                   </p>
                 ) : null}
+              </div>
+
+              {/* Extended notification preferences panel */}
+              <div className="mt-3">
+                <NotificationPrefsPanel
+                  prefs={dueNotifPrefs}
+                  onChange={(next) => {
+                    setDueNotifPrefs(next);
+                  }}
+                  onRequestPermission={() => void requestDueNotificationPermission()}
+                />
               </div>
 
               <div className="mt-3 grid grid-cols-2 gap-1.5">
@@ -6230,6 +6301,54 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   type="button"
                   onClick={() => setTaskActionWarning(null)}
                   data-testid="task-warning-cancel"
+                  className="rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingReminderCardDelete ? (
+        <div
+          className="fixed inset-0 z-[54] flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-4"
+          onClick={() => setPendingReminderCardDelete(null)}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-rose-600 dark:text-rose-400">
+                Confirm delete
+              </p>
+              <h3 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
+                Delete reminder?
+              </h3>
+            </div>
+            <div className="grid gap-4 px-5 py-5">
+              <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
+                &ldquo;{pendingReminderCardDelete.title}&rdquo; will be permanently deleted. This cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const { id } = pendingReminderCardDelete;
+                    setPendingReminderCardDelete(null);
+                    await refreshAfterReminderMutation(
+                      fetch(`/api/reminders/${id}`, { method: "DELETE" }),
+                    );
+                  }}
+                  className="flex-1 rounded-full bg-rose-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-rose-500"
+                >
+                  Delete reminder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingReminderCardDelete(null)}
                   className="rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
                 >
                   Cancel

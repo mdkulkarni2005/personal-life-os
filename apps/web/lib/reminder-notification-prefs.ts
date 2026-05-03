@@ -7,12 +7,27 @@ export type DueNotificationPrefs = {
   notifyWhenForeground: boolean;
   /** User explicitly enabled on large screens (desktop/tablet landscape). */
   desktopEnabled: boolean;
+  /** Play an in-app chime sound when a reminder fires (default true). */
+  soundEnabled: boolean;
+  /** Show a pre-due push N minutes before (0 = disabled). */
+  preDueMinutes: number;
+  /** Send a morning briefing push at the configured UTC hour. */
+  morningBriefingEnabled: boolean;
+  /** UTC hour for morning briefing (default 2 = 7:30 IST). */
+  morningBriefingHourUtc: number;
+  /** Hourly nudge push for overdue reminders (default true). */
+  overdueNudgeEnabled: boolean;
 };
 
 const defaultPrefs: DueNotificationPrefs = {
   enabled: false,
   notifyWhenForeground: false,
   desktopEnabled: false,
+  soundEnabled: true,
+  preDueMinutes: 15,
+  morningBriefingEnabled: true,
+  morningBriefingHourUtc: 2,
+  overdueNudgeEnabled: true,
 };
 
 export function loadDueNotificationPrefs(): DueNotificationPrefs {

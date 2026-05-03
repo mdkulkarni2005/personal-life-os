@@ -59,3 +59,17 @@ export const listForUser = query({
       .collect();
   },
 });
+
+/**
+ * Returns the unique userId + endpoint for every subscription in the table.
+ * Used by the push cron to discover which users have push enabled.
+ * Only returns the userId + endpoint fields to keep the payload small.
+ */
+export const listAllUsers = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("pushSubscriptions").collect();
+    // Return deduplicated userId list with endpoint for subscription health checks
+    return rows.map((r) => ({ userId: r.userId, endpoint: r.endpoint }));
+  },
+});

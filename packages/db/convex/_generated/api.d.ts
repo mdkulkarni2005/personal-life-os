@@ -9,6 +9,8 @@
  */
 
 import type * as chat from "../chat.js";
+import type * as notifications from "../notifications.js";
+import type * as pushNotificationLogs from "../pushNotificationLogs.js";
 import type * as pushSubscriptions from "../pushSubscriptions.js";
 import type * as reminderSharing from "../reminderSharing.js";
 import type * as reminders from "../reminders.js";
@@ -24,6 +26,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   chat: typeof chat;
+  notifications: typeof notifications;
+  pushNotificationLogs: typeof pushNotificationLogs;
   pushSubscriptions: typeof pushSubscriptions;
   reminderSharing: typeof reminderSharing;
   reminders: typeof reminders;

@@ -10,55 +10,125 @@ self.addEventListener("fetch", () => {
   // Runtime caching can be added in future versions.
 });
 
+// ── helpers ────────────────────────────────────────────────────────────────────
+
+function showNotif(event, title, body, tag, data, actions) {
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: "/logo-remindos.svg",
+      badge: "/logo-remindos.svg",
+      tag,
+      data,
+      actions: actions || [],
+      requireInteraction: false,
+      vibrate: [200, 100, 200],
+    })
+  );
+}
+
+function postToClients(event, msg, fallbackUrl) {
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url && client.url.includes(self.location.origin)) {
+          client.postMessage(msg);
+          if ("focus" in client) return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(fallbackUrl);
+    })
+  );
+}
+
+// ── push handler ───────────────────────────────────────────────────────────────
+
 self.addEventListener("push", (event) => {
   let payload = {};
-  try {
-    payload = event.data ? event.data.json() : {};
-  } catch {
-    payload = {};
-  }
+  try { payload = event.data ? event.data.json() : {}; } catch { payload = {}; }
   const type = payload.type;
 
+  // ── Share invite ────────────────────────────────────────────────────────────
   if (type === "share_invite") {
     const title = payload.title || "Shared reminders";
     const body = payload.body || "Open to review";
     const batchKey = payload.batchKey || "";
-    const tag = payload.tag || `share-in-${batchKey}`;
-    event.waitUntil(
-      self.registration.showNotification(title, {
-        body,
-        icon: "/logo-remindos.svg",
-        badge: "/logo-remindos.svg",
-        tag,
-        data: {
-          type: "share_invite",
-          batchKey,
-          fromUserId: payload.fromUserId,
-        },
-        actions: [
-          { action: "accept", title: "Accept" },
-          { action: "deny", title: "Deny" },
-        ],
-      })
+    showNotif(event, title, body, payload.tag || `share-in-${batchKey}`, {
+      type: "share_invite", batchKey, fromUserId: payload.fromUserId,
+    }, [
+      { action: "accept", title: "✅ Accept" },
+      { action: "deny",   title: "❌ Deny" },
+    ]);
+    return;
+  }
+
+  // ── Share accepted ──────────────────────────────────────────────────────────
+  if (type === "share_accepted") {
+    showNotif(event, payload.title || "Reminder share",
+      payload.body || "Someone accepted your invites.",
+      payload.tag || "share-accepted",
+      { type: "share_accepted", batchKey: payload.batchKey }, []);
+    return;
+  }
+
+  // ── Due reminder ────────────────────────────────────────────────────────────
+  if (type === "due_reminder") {
+    const title = payload.title || "Reminder due";
+    const body = payload.body || "A reminder is due now.";
+    showNotif(event, "⏰ " + title, body,
+      "due-" + (payload.reminderId || ""),
+      { type: "due_reminder", reminderId: payload.reminderId, title: payload.title, dueAt: payload.dueAt },
+      [
+        { action: "done",   title: "✅ Mark done" },
+        { action: "snooze", title: "⏱ Snooze 15 min" },
+      ]
     );
     return;
   }
 
-  if (type === "share_accepted") {
-    const title = payload.title || "Reminder share";
-    const body = payload.body || "Someone accepted your invites.";
-    const tag = payload.tag || "share-accepted";
-    event.waitUntil(
-      self.registration.showNotification(title, {
-        body,
-        icon: "/logo-remindos.svg",
-        badge: "/logo-remindos.svg",
-        tag,
-        data: { type: "share_accepted", batchKey: payload.batchKey },
-      })
+  // ── Pre-due reminder (15 min warning) ───────────────────────────────────────
+  if (type === "pre_due_reminder") {
+    const title = payload.title || "Upcoming reminder";
+    const body = payload.body || "Due soon";
+    showNotif(event, "🔔 " + title, body,
+      "predue-" + (payload.reminderId || ""),
+      { type: "pre_due_reminder", reminderId: payload.reminderId, title: payload.title, dueAt: payload.dueAt },
+      [
+        { action: "open",   title: "Open" },
+        { action: "snooze", title: "⏱ Snooze" },
+      ]
     );
+    return;
+  }
+
+  // ── Overdue nudge ───────────────────────────────────────────────────────────
+  if (type === "overdue_nudge") {
+    const count = payload.count || 1;
+    const title = count === 1 ? "Overdue reminder" : `${count} overdue reminders`;
+    const body = payload.body || "You have overdue reminders.";
+    showNotif(event, "⚠️ " + title, body,
+      "overdue-nudge",
+      { type: "overdue_nudge" },
+      [{ action: "open", title: "View all" }]
+    );
+    return;
+  }
+
+  // ── Morning briefing ────────────────────────────────────────────────────────
+  if (type === "morning_briefing") {
+    const count = payload.count || 0;
+    const title = `Good morning! ${count} reminder${count !== 1 ? "s" : ""} today`;
+    const body = payload.body || "Tap to see your day.";
+    showNotif(event, "☀️ " + title, body,
+      "morning-briefing",
+      { type: "morning_briefing" },
+      [{ action: "open", title: "See today" }]
+    );
+    return;
   }
 });
+
+// ── notification click handler ─────────────────────────────────────────────────
 
 self.addEventListener("notificationclick", (event) => {
   const notification = event.notification;
@@ -66,64 +136,39 @@ self.addEventListener("notificationclick", (event) => {
   const action = event.action || "open";
   notification.close();
 
+  // Share invite actions
   if (data.type === "share_invite") {
     const batchKey = data.batchKey || "";
-    const payload = {
-      type: "SHARE_INVITE_NOTIF",
-      action,
-      batchKey,
-    };
-    event.waitUntil(
-      self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-        for (const client of clientList) {
-          if (client.url && client.url.includes(self.location.origin)) {
-            client.postMessage(payload);
-            if ("focus" in client) {
-              return client.focus();
-            }
-          }
-        }
+    postToClients(event,
+      { type: "SHARE_INVITE_NOTIF", action, batchKey },
+      (() => {
         const url = new URL("/dashboard", self.location.origin);
-        if (action === "accept") {
-          url.searchParams.set("shareBatchAction", "accept");
-          url.searchParams.set("batchKey", batchKey);
-        } else if (action === "deny") {
-          url.searchParams.set("shareBatchAction", "deny");
-          url.searchParams.set("batchKey", batchKey);
-        }
-        if (self.clients.openWindow) {
-          return self.clients.openWindow(url.href);
-        }
-      })
+        if (action === "accept") { url.searchParams.set("shareBatchAction", "accept"); url.searchParams.set("batchKey", batchKey); }
+        else if (action === "deny") { url.searchParams.set("shareBatchAction", "deny"); url.searchParams.set("batchKey", batchKey); }
+        return url.href;
+      })()
     );
     return;
   }
 
-  const payload = {
-    type: "REMINDER_NOTIF",
-    action,
-    reminderId: data.reminderId,
-    title: data.title,
-  };
+  // due_reminder / pre_due_reminder action buttons
+  if (data.type === "due_reminder" || data.type === "pre_due_reminder") {
+    postToClients(event,
+      { type: "REMINDER_NOTIF", action, reminderId: data.reminderId, title: data.title, notifType: data.type },
+      (() => {
+        const url = new URL("/dashboard", self.location.origin);
+        url.searchParams.set("notifAction", action);
+        if (data.reminderId) url.searchParams.set("reminderId", data.reminderId);
+        return url.href;
+      })()
+    );
+    return;
+  }
 
-  event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        if (client.url && client.url.includes(self.location.origin)) {
-          client.postMessage(payload);
-          if ("focus" in client) {
-            return client.focus();
-          }
-        }
-      }
-      const url = new URL("/dashboard", self.location.origin);
-      url.searchParams.set("notifAction", action);
-      if (data.reminderId) {
-        url.searchParams.set("reminderId", data.reminderId);
-      }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(url.href);
-      }
-    })
+  // overdue_nudge / morning_briefing / share_accepted — just open the app
+  const fallbackUrl = new URL("/dashboard", self.location.origin).href;
+  postToClients(event,
+    { type: "REMINDER_NOTIF", action: "open", notifType: data.type },
+    fallbackUrl
   );
 });

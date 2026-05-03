@@ -120,10 +120,12 @@ export type ReminderListScope =
   | "tomorrow"
   /** Strict UI bucket: due after end of tomorrow */
   | "later"
-  /** Pending with due >= now (colloquial “upcoming”, includes today/tomorrow) */
+  /** Pending with due >= now (colloquial "upcoming", includes today/tomorrow) */
   | "future"
   /** All pending (may include missed) */
-  | "all_pending";
+  | "all_pending"
+  /** Completed reminders */
+  | "done";
 
 function sortByDueAsc(a: ReminderItem, b: ReminderItem) {
   return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
@@ -150,6 +152,10 @@ export function filterRemindersByListScope(
       return pending.filter((r) => getReminderBucket(r, now) === "tomorrow").sort(sortByDueAsc);
     case "later":
       return pending.filter((r) => getReminderBucket(r, now) === "upcoming").sort(sortByDueAsc);
+    case "done":
+      return reminders
+        .filter((r) => r.status === "done")
+        .sort((a, b) => new Date(b.dueAt).getTime() - new Date(a.dueAt).getTime()); // newest first
     default:
       return pending.slice().sort(sortByDueAsc);
   }
@@ -318,7 +324,8 @@ export function looksLikeMarkDoneIntent(message: string): boolean {
   // Explicit mark-done commands
   if (/\b(mark|set|flag)\b.{0,40}\b(done|complete|completed|finished)\b/i.test(n)) return true;
   if (/\bdone\s+with\b/i.test(n)) return true;
-  if (/\b(complete|finish|finished)\s+(?:the\s+|my\s+)?(?:reminder\s+(?:for\s+)?)?(\w)/i.test(n)) return true;
+  // Fix: only match imperative-start "complete/finish <reminder>" — not mid-sentence uses like "I need to finish the project"
+  if (/^(complete|finish|finished)\s+(?:the\s+|my\s+)?(?:reminder\s+(?:for\s+)?)?(\w)/i.test(n)) return true;
   if (/\bi('?ve| have)\s+(done|completed|finished)\b/i.test(n)) return true;
   if (/\bcheck\s*(ed)?\s*off\b/i.test(n)) return true;
   return false;
@@ -458,15 +465,15 @@ export function buildListRemindersReply(
 
 /**
  * Map a user message to a list scope, or null if this is not a list/summary query.
- * Colloquial “upcoming” maps to `future` (due >= now), not the strict “later” bucket.
+ * Colloquial "upcoming" maps to `future` (due >= now), not the strict "later" bucket.
  */
 export function inferListScopeFromMessage(message: string): ReminderListScope | null {
   const n = message.toLowerCase().trim();
   if (classifyReminderIntent(message) === "decision_query") return null;
   if (looksLikeCreateIntent(message)) return null;
 
-  // M2 fix: topic-qualified queries ("related to X", "about the X") must go to LLM, not return
-  // a generic time-bucket list — the user is searching by topic, not by time.
+  // M2 fix: topic-qualified queries ("related to X", "about the X", "health reminders") must go
+  // to LLM, not return a generic time-bucket list — the user is searching by topic, not by time.
   if (/\brelated\s+to\b/.test(n)) return null;
   if (
     /\breminders?\s+(about|for|on|regarding)\s+\w/.test(n)
@@ -474,6 +481,13 @@ export function inferListScopeFromMessage(message: string): ReminderListScope | 
   ) return null;
   if (
     /\b(about|regarding)\s+(the\s+|a\s+|an\s+)?\w/.test(n)
+    && /\breminders?\b/.test(n)
+    && !/\b(today|tonight|tomorrow|overdue|missed|upcoming|all|pending|done)\b/.test(n)
+  ) return null;
+  // M2 fix (extended): domain keyword BEFORE "reminders" also routes to LLM
+  // e.g. "show me health reminders", "list finance reminders", "my gym reminders"
+  if (
+    /\b(health|fitness|gym|finance|financial|money|career|work|job|hobby|hobbies|fun|entertainment|study|coding|personal)\b/.test(n)
     && /\breminders?\b/.test(n)
     && !/\b(today|tonight|tomorrow|overdue|missed|upcoming|all|pending|done)\b/.test(n)
   ) return null;
@@ -486,6 +500,11 @@ export function inferListScopeFromMessage(message: string): ReminderListScope | 
   }
 
   if (/\b(overdue|missed)\b/.test(n) && /\b(reminder|reminders)\b/.test(n)) return "missed";
+  // Done/completed reminders — must be checked before the generic "tomorrow" path
+  if (
+    /\b(done|completed?|finished|checked\s*off|marked\s*done)\b/.test(n)
+    && /\b(reminder|reminders)\b/.test(n)
+  ) return "done";
   if (/\btomorrow\b/.test(n) && /\b(reminder|reminders|due|scheduled)\b/.test(n)) return "tomorrow";
   if (
     /\b(today|tonight)\b/.test(n)
@@ -518,6 +537,7 @@ export function inferListScopeFromMessage(message: string): ReminderListScope | 
     if (/\b(today|tonight)\b/.test(n)) return "today";
     if (/\btomorrow\b/.test(n)) return "tomorrow";
     if (/\b(missed|overdue)\b/.test(n)) return "missed";
+    if (/\b(done|completed?|finished|checked\s*off)\b/.test(n)) return "done";
     if (/\b(later|after tomorrow)\b/.test(n)) return "later";
     return "future";
   }

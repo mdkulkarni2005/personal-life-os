@@ -58,9 +58,9 @@ interface ReminderAgentAction {
   linkedTaskId?: string;
   targetTitle?: string;
   targetId?: string;
-  scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all";
+  scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all" | "later" | "future";
   /** Only on pending_confirm: the action waiting for user confirmation */
-  pendingType?: "mark_done" | "delete_reminder";
+  pendingType?: "mark_done" | "delete_reminder" | "edit_reminder";
   /** Only on snooze_reminder: minutes to push the due time forward */
   delayMinutes?: number;
   /** Only on edit_reminder: new title or new notes value */
@@ -121,13 +121,21 @@ WHAT YOU CAN DO:
 - Small talk or unrelated topics: politely redirect to reminders and tasks.
 
 ACTIONS (JSON action.type):
-- list_reminders: user wants a simple list or roll-up by period (server may replace reply with a grounded list).
-- mark_done: user wants to complete; set targetTitle or targetId from digest.
-- delete_reminder: user wants to remove; set targetTitle or targetId.
-- reschedule_reminder: user wants a new time; set dueAt as ISO in action only, targetTitle/targetId.
-- create_reminder: only if user clearly wants to create (usually already handled earlier). May include priority (1-5), domain, recurrence.
-- clarify: you need one missing piece (which reminder, which time).
-- unknown: questions you answer in "reply" only (no database change). Use for explanations, reasoning, comparisons, and open-ended Q&A grounded in the digest.
+- list_reminders: user wants a simple list or roll-up by period (server may replace reply with a grounded list). Set scope: today|tomorrow|missed|done|pending|all.
+- mark_done: user wants to complete one reminder; set targetTitle or targetId from digest.
+- delete_reminder: user wants to remove one reminder; set targetTitle or targetId.
+- reschedule_reminder: user wants a new time for one reminder; set dueAt as ISO in action only, plus targetTitle/targetId.
+- snooze_reminder: user wants to delay a reminder by a duration (e.g. "snooze 30 min", "push back 1 hour"). Set targetTitle/targetId and delayMinutes (integer). The server will handle this fast-path so you rarely need to emit it directly.
+- edit_reminder: user wants to change the title or notes of one reminder. Set targetTitle/targetId plus newTitle or newNotes.
+- bulk_action: user wants to act on ALL reminders in a scope (e.g. "mark all today's reminders done", "delete all missed"). Set bulkOperation ("mark_done"|"delete") and scope.
+- create_reminder: only if user clearly wants to create. May include priority (1-5), domain, recurrence, linkedTaskId.
+- clarify: you need exactly one missing piece (which reminder, which time). Ask a single focused question.
+- unknown: questions you answer in "reply" only (no database change). Use for explanations, reasoning, comparisons, counts, and open-ended Q&A grounded in the digest.
+
+IMPORTANT RULES FOR ACTIONS:
+- snooze and edit are handled by fast-path code; prefer snooze_reminder/edit_reminder action types so the server can resolve them deterministically.
+- Never set action.type to "mark_done" or "delete_reminder" for bulk requests; use "bulk_action" instead.
+- Only emit one action per response. If the request is ambiguous, emit clarify.
 
 Keep "reply" helpful and concise but include enough detail (titles, times, notes) when relevant.
 
@@ -135,16 +143,21 @@ Output ONLY valid JSON:
 {
   "reply":"string",
   "action":{
-    "type":"create_reminder|list_reminders|mark_done|delete_reminder|reschedule_reminder|clarify|unknown",
-    "title":"optional",
-    "dueAt":"optional ISO string",
+    "type":"create_reminder|list_reminders|mark_done|delete_reminder|reschedule_reminder|snooze_reminder|edit_reminder|bulk_action|clarify|unknown",
+    "title":"optional – for create",
+    "dueAt":"optional ISO string – for create or reschedule",
     "notes":"optional",
     "priority":"optional 1-5",
     "domain":"optional health|finance|career|hobby|fun",
     "recurrence":"optional none|daily|weekly|monthly",
-    "targetTitle":"optional",
-    "targetId":"optional",
-    "scope":"today|tomorrow|missed|done|pending|all optional"
+    "linkedTaskId":"optional – for create",
+    "targetTitle":"optional – for single-item actions",
+    "targetId":"optional – for single-item actions",
+    "newTitle":"optional – for edit_reminder",
+    "newNotes":"optional – for edit_reminder",
+    "delayMinutes":"optional integer – for snooze_reminder",
+    "bulkOperation":"optional mark_done|delete – for bulk_action",
+    "scope":"optional today|tomorrow|missed|done|pending|all – for list or bulk"
   }
 }`;
 
@@ -167,6 +180,7 @@ function mapAgentScopeToListScope(scope?: string): ReminderListScope | null {
     case "today": return "today";
     case "tomorrow": return "tomorrow";
     case "missed": return "missed";
+    case "done": return "done";
     case "pending":
     case "all": return "all_pending";
     default: return null;
@@ -591,7 +605,16 @@ function safeAgentResponse(text: string): ReminderAgentResponse {
     if (!parsed?.action?.type || !parsed?.reply) throw new Error("Invalid response shape.");
     return parsed;
   } catch {
-    return { reply: text.trim() || "I could not understand that request.", action: { type: "unknown" } };
+    // Fix: never expose raw LLM JSON (may contain all reminder IDs/content) in the chat bubble.
+    // Strip any code fences or JSON blobs and fall back to a safe generic message.
+    const safe = text
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/\{[\s\S]{40,}\}/g, "")
+      .trim();
+    const reply = safe.length > 10 && safe.length < 300
+      ? safe
+      : "I'm having trouble with that request. Could you try rephrasing?";
+    return { reply, action: { type: "unknown" } };
   }
 }
 
@@ -732,7 +755,9 @@ function extractBulkTargets(message: string, reminders: ReminderItem[], timeZone
   for (const [pattern, domain] of DOMAIN_PATTERNS) {
     if (pattern.test(n)) return pending.filter((r) => r.domain === domain).sort(sortByDue);
   }
-  return pending.sort(sortByDue);
+  // Fix: if no scope keyword matched, return [] rather than ALL reminders —
+  // prevents "complete every appointment" from bulk-targeting the entire account.
+  return [];
 }
 
 // ─── Gap 7: multi-turn ordinal resolution ────────────────────────────────────
@@ -1002,7 +1027,7 @@ function saveMessageServerSide(
 
 function looksLikeConfirmation(message: string): boolean {
   const n = message.toLowerCase().trim();
-  return /^(yes|yeah|yep|yup|ok|okay|sure|confirm|confirmed|go ahead|do it|proceed|correct|right|absolutely|definitely)[\s!.,]*$/.test(n);
+  return /^(yes|yeah|yep|yup|ok|okay|sure|confirm|confirmed|go ahead|do it|proceed|correct|right|absolutely|definitely|sounds good|alright|all right|fine|please do it|please do|please proceed|that's right|that is right|affirmative|exactly|perfect|great|sure thing|of course|please|done|let's do it|lets do it)[\s!.,]*$/.test(n);
 }
 
 function findTargetReminder(reminders: ReminderItem[], targetId?: string, targetTitle?: string): ReminderItem | undefined {
@@ -1043,7 +1068,7 @@ export async function POST(request: Request) {
     timeZone?: string;
     replyContext?: ReplyContextPayload;
     pendingAction?: {
-      type: "mark_done" | "delete_reminder" | "create_reminder";
+      type: "mark_done" | "delete_reminder" | "create_reminder" | "edit_reminder";
       targetId?: string;
       targetTitle?: string;
       targetIds?: string[];
@@ -1052,6 +1077,8 @@ export async function POST(request: Request) {
       priority?: number;
       domain?: string;
       recurrence?: string;
+      newTitle?: string;
+      newNotes?: string;
     };
     recentListedIds?: string[];
   };
@@ -1061,6 +1088,8 @@ export async function POST(request: Request) {
   const tasks = await loadTasksForChat(userId, body.tasks ?? []);
   const taskTitleById = Object.fromEntries(tasks.map((t) => [t.id, t.title]));
   const displayOptions = { timeZone, taskTitleById };
+  // Load chat history early — needed for snooze/task-link disambiguation recovery before the LLM path
+  const history = await getChatHistory(userId);
 
   if (!message) return NextResponse.json({ error: "Message is required" }, { status: 400 });
 
@@ -1083,6 +1112,27 @@ export async function POST(request: Request) {
         return NextResponse.json({
           reply,
           action: { type: "create_reminder", title, dueAt: suggestedDueAt, priority, domain, recurrence },
+        } satisfies ReminderAgentResponse);
+      }
+    }
+
+    // Edit confirmation
+    if (pendingType === "edit_reminder" && (body.pendingAction?.newTitle || body.pendingAction?.newNotes !== undefined)) {
+      const { newTitle, newNotes } = body.pendingAction;
+      const editTarget = findTargetReminder(reminders, targetId, targetTitle);
+      if (editTarget) {
+        const field = newTitle !== undefined ? "title" : "notes";
+        const reply = `Done — updated the ${field} of "${editTarget.title}".`;
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", reply);
+        return NextResponse.json({
+          reply,
+          action: {
+            type: "edit_reminder",
+            targetId: editTarget.id,
+            targetTitle: editTarget.title,
+            ...(newTitle !== undefined ? { newTitle } : { newNotes }),
+          },
         } satisfies ReminderAgentResponse);
       }
     }
@@ -1347,10 +1397,12 @@ export async function POST(request: Request) {
 
     const ordinalEditTarget = resolveByOrdinal(effectiveMessage, reminders, body.recentListedIds);
     if (ordinalEditTarget) {
+      const previewValue = newValue.length > 40 ? `${newValue.slice(0, 40)}…` : newValue;
       const r: ReminderAgentResponse = {
-        reply: `Done — updated the ${field} of "${ordinalEditTarget.title}".`,
+        reply: `Change the ${field} of "${ordinalEditTarget.title}" to "${previewValue}"? Reply **yes** to confirm.`,
         action: {
-          type: "edit_reminder",
+          type: "pending_confirm",
+          pendingType: "edit_reminder",
           targetId: ordinalEditTarget.id,
           targetTitle: ordinalEditTarget.title,
           ...(field === "title" ? { newTitle: newValue } : { newNotes: newValue }),
@@ -1370,10 +1422,12 @@ export async function POST(request: Request) {
       );
       if (matches.length === 1) {
         const target = matches[0]!;
+        const previewValue = newValue.length > 40 ? `${newValue.slice(0, 40)}…` : newValue;
         const r: ReminderAgentResponse = {
-          reply: `Done — updated the ${field} of "${target.title}".`,
+          reply: `Change the ${field} of "${target.title}" to "${previewValue}"? Reply **yes** to confirm.`,
           action: {
-            type: "edit_reminder",
+            type: "pending_confirm",
+            pendingType: "edit_reminder",
             targetId: target.id,
             targetTitle: target.title,
             ...(field === "title" ? { newTitle: newValue } : { newNotes: newValue }),
@@ -1396,6 +1450,42 @@ export async function POST(request: Request) {
       // Zero matches — fall through to LLM
     }
     // Pronoun or no target — fall through to LLM for disambiguation
+  }
+
+  // ─── Fix 5: snooze disambiguation recovery ───────────────────────────────────
+  // If the last assistant message was a snooze "which one?" clarify, the user's current
+  // reply is just a reminder name — looksLikeSnoozeIntent won't match. Recover the
+  // delay from the original snooze message (2 turns back) and resolve the target now.
+  {
+    const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
+    const isSnoozeDisambig = lastAssistant?.content?.match(/which one do you mean.*\?/i) !== null;
+    if (isSnoozeDisambig) {
+      // Find the original user snooze message (the one before the clarify)
+      const userMessages = [...history].filter((m) => m.role === "user");
+      const originalSnoozeMsg = userMessages[userMessages.length - 1]?.content ?? "";
+      const recoveredDelay = extractSnoozeDelayMinutes(originalSnoozeMsg);
+      if (recoveredDelay) {
+        const rawTarget = effectiveMessage.trim();
+        const matches = reminders.filter(
+          (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        );
+        const target = matches.length === 1 ? matches[0] : (matches[0] ?? undefined);
+        if (target) {
+          const newDueAt = new Date(Date.now() + recoveredDelay * 60_000).toISOString();
+          const label =
+            recoveredDelay >= 60
+              ? `${Math.round(recoveredDelay / 60)} hour${Math.round(recoveredDelay / 60) !== 1 ? "s" : ""}`
+              : `${recoveredDelay} minute${recoveredDelay !== 1 ? "s" : ""}`;
+          const r: ReminderAgentResponse = {
+            reply: `Snoozed "${target.title}" — I'll remind you again in ${label} (${formatDueInUserZone(newDueAt, timeZone)}).`,
+            action: { type: "snooze_reminder", targetId: target.id, targetTitle: target.title, delayMinutes: recoveredDelay },
+          };
+          void saveMessageServerSide(userId, "user", effectiveMessage);
+          void saveMessageServerSide(userId, "assistant", r.reply);
+          return NextResponse.json(r);
+        }
+      }
+    }
   }
 
   // ─── Gap 4: snooze fast path ───────────────────────────────────────────────
@@ -1510,8 +1600,7 @@ export async function POST(request: Request) {
     const digest = buildLifeOsContextBlock(llmReminders, tasks, new Date(), displayOptions);
     const behaviorCtx = await buildBehaviorContext(userId);
 
-    // BUG-1 / MISSING-1 fix: inject recent conversation history
-    const history = await getChatHistory(userId);
+    // BUG-1 / MISSING-1 fix: inject recent conversation history (already loaded above)
     const recentHistory = history
       .filter((m) => m.role === "user" || m.role === "assistant")
       .slice(-MAX_HISTORY_TURNS);
@@ -1595,14 +1684,32 @@ export async function POST(request: Request) {
       if (tasks && tasks.length > 0 && !parsed.action.linkedTaskId) {
         const pendingTasks = tasks.filter((t) => (t as unknown as Record<string, unknown>).status === "pending");
         if (pendingTasks.length > 0) {
-          const taskList = pendingTasks.slice(0, 5).map((t, idx) => `${idx + 1}. ${t.title}`).join("\n");
-          const r: ReminderAgentResponse = {
-            reply: `Got it. Should this reminder be linked to a task?\n\n${taskList}\n\nOr just say "no" if it's standalone.`,
-            action: { type: "clarify", title: parsed.action.title, dueAt: parsed.action.dueAt },
-          };
-          void saveMessageServerSide(userId, "user", effectiveMessage);
-          void saveMessageServerSide(userId, "assistant", r.reply);
-          return NextResponse.json(r);
+          // Fix 3: check if the last assistant message was already the task-link question.
+          // If so, resolve the user's answer here instead of asking again (prevents infinite loop).
+          const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
+          const wasAskingTaskLink = lastAssistant?.content?.includes("Should this reminder be linked to a task?");
+
+          if (wasAskingTaskLink) {
+            // User answered: a number picks a task; anything else → standalone
+            const numMatch = effectiveMessage.trim().match(/^(\d+)/);
+            if (numMatch?.[1]) {
+              const idx = parseInt(numMatch[1], 10) - 1;
+              if (idx >= 0 && idx < pendingTasks.length) {
+                const chosen = pendingTasks[idx] as unknown as Record<string, unknown>;
+                parsed.action.linkedTaskId = chosen.id as string;
+              }
+            }
+            // else: no number → standalone (no linkedTaskId), fall through to create
+          } else {
+            const taskList = pendingTasks.slice(0, 5).map((t, idx) => `${idx + 1}. ${t.title}`).join("\n");
+            const r: ReminderAgentResponse = {
+              reply: `Got it. Should this reminder be linked to a task?\n\n${taskList}\n\nOr just say "no" if it's standalone.`,
+              action: { type: "clarify", title: parsed.action.title, dueAt: parsed.action.dueAt },
+            };
+            void saveMessageServerSide(userId, "user", effectiveMessage);
+            void saveMessageServerSide(userId, "assistant", r.reply);
+            return NextResponse.json(r);
+          }
         }
       }
     }

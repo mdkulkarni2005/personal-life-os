@@ -67,6 +67,37 @@ const reminderShareInbox = defineTable({
   .index("by_to_reminder", ["toUserId", "reminderId"])
   .index("by_to_user_batch", ["toUserId", "shareBatchId"]);
 
+/**
+ * Deduplication log for server-side push notifications.
+ * Prevents the cron from sending the same notification type twice for the same reminder.
+ */
+const pushNotificationLogs = defineTable({
+  userId: v.string(),
+  reminderId: v.optional(v.string()),   // null for account-level notifs (morning briefing, etc.)
+  /** due_reminder | pre_due_reminder | overdue_nudge | morning_briefing */
+  type: v.string(),
+  sentAt: v.number(),
+})
+  .index("by_user_type_reminder", ["userId", "type", "reminderId"])
+  .index("by_user_type_sentAt", ["userId", "type", "sentAt"]);
+
+/**
+ * In-app notification center — persisted history shown in the bell dropdown.
+ * Separate from push logs: every push also inserts one notification row so
+ * the user can see a full history even if they missed the push.
+ */
+const notifications = defineTable({
+  userId: v.string(),
+  type: v.string(),          // same enum as pushNotificationLogs.type
+  title: v.string(),         // notification heading (e.g. reminder title)
+  body: v.string(),          // full notification text
+  reminderId: v.optional(v.string()),
+  read: v.boolean(),
+  createdAt: v.number(),
+})
+  .index("by_user_created", ["userId", "createdAt"])
+  .index("by_user_read", ["userId", "read"]);
+
 /** Web Push subscriptions for PWA (one row per endpoint / device). */
 const pushSubscriptions = defineTable({
   userId: v.string(),
@@ -137,6 +168,8 @@ export default defineSchema({
   reminderParticipants,
   reminderShareInbox,
   pushSubscriptions,
+  pushNotificationLogs,
+  notifications,
   tasks,
   chatMessages,
   userProfiles,
