@@ -1067,6 +1067,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [reminderListTab, setReminderListTab] = useState<ReminderListTab>(
     "all",
   );
+  const [reminderListTabDesktop, setReminderListTabDesktop] = useState<ReminderListTab>("missed");
   const [reminderSearchQuery, setReminderSearchQuery] = useState("");
   const [sharedFromFilter, setSharedFromFilter] = useState<"all" | string>(
     "all",
@@ -4475,142 +4476,309 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   return (
     <>
-      <section className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-transparent px-0 pb-0 pt-0 sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pt-4">
-        <div className="pointer-events-none absolute inset-x-8 top-0 -z-10 h-48 rounded-full bg-[radial-gradient(circle_at_center,rgba(109,94,252,0.12),transparent_68%)] blur-3xl" />
-        <div className="mx-auto flex min-h-0 w-full max-w-[88rem] flex-1 gap-3 lg:gap-6">
-          <aside className="hidden w-20 shrink-0 lg:flex lg:flex-col lg:items-center lg:gap-3 lg:pt-6">
-            <button
-              type="button"
-              onClick={openNextTwoHoursFromSnapshot}
-              className="relative flex h-14 w-14 items-center justify-center rounded-[22px] bg-[linear-gradient(135deg,#f59e0b_0%,#f97316_100%)] text-white shadow-[0_24px_45px_-22px_rgba(249,115,22,0.65)] transition hover:-translate-y-0.5"
-              aria-label="Next 2 Hours"
-              title="Next 2 Hours"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-5 w-5"
-                aria-hidden="true"
+      <section className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-[#fafaf9]">
+        <div className="flex min-h-0 w-full flex-1">
+          {/* LEFT SIDEBAR — desktop only */}
+          <aside className="hidden w-[220px] shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
+            {/* Date */}
+            <div className="border-b border-slate-100 px-4 py-4">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Today</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-700">
+                {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+              </p>
+            </div>
+            {/* New Reminder button */}
+            <div className="px-3 py-3">
+              <button
+                type="button"
+                onClick={() => showCreateOverlay({})}
+                className="flex w-full items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500"
               >
-                <path d="M12 7v5l3 2" />
-                <circle cx="12" cy="12" r="8" />
-              </svg>
-              {nextTwoHoursReminders.length > 0 ? (
-                <span className="absolute -bottom-1 -right-1 inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
-                  {nextTwoHoursReminders.length > 99
-                    ? "99+"
-                    : nextTwoHoursReminders.length}
-                </span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              onClick={() => showReminderListOverlay()}
-              className="relative flex h-14 w-14 items-center justify-center rounded-[22px] bg-[linear-gradient(135deg,#79d8c2_0%,#7568ff_100%)] text-white shadow-[0_24px_45px_-22px_rgba(117,104,255,0.75)] transition hover:-translate-y-0.5"
-              aria-label="All reminders"
-              title="All reminders"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-5 w-5"
-                aria-hidden="true"
+                <span className="text-lg leading-none">+</span>
+                New Reminder
+              </button>
+            </div>
+            {/* Reminders section */}
+            <div className="px-2 pb-2">
+              <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reminders</p>
+              {(
+                [
+                  { key: "missed" as ReminderListTab, label: "Missed", count: snapshot.missed, dot: "#f43f5e" },
+                  { key: "today" as ReminderListTab, label: "Today", count: snapshot.today, dot: "#f59e0b" },
+                  { key: "tomorrow" as ReminderListTab, label: "Tomorrow", count: snapshot.tomorrow, dot: "#7c3aed" },
+                  { key: "upcoming" as ReminderListTab, label: "Later", count: grouped.upcoming.length, dot: "#06b6d4" },
+                  { key: "done" as ReminderListTab, label: "Done", count: snapshot.done ?? 0, dot: "#10b981" },
+                ] as { key: ReminderListTab; label: string; count: number; dot: string }[]
+              ).map((b) => (
+                <button
+                  key={b.key}
+                  type="button"
+                  onClick={() => setReminderListTabDesktop(b.key)}
+                  className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition ${
+                    reminderListTabDesktop === b.key
+                      ? "bg-violet-50 text-violet-700"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: b.dot }} />
+                  <span className="flex-1 text-sm font-medium">{b.label}</span>
+                  {b.count > 0 && (
+                    <span className={`text-xs font-semibold ${reminderListTabDesktop === b.key ? "text-violet-600" : "text-slate-400"}`}>
+                      {b.count}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <div className="mx-3 h-px bg-slate-100" />
+            {/* Tasks section */}
+            <div className="px-2 py-2">
+              <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Tasks</p>
+              <button
+                type="button"
+                onClick={openAllTasksFromSnapshot}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-slate-700 transition hover:bg-slate-50"
               >
-                <path d="M7 7h10" />
-                <path d="M7 12h10" />
-                <path d="M7 17h6" />
-              </svg>
-              {snapshot.missed > 0 ? (
-                <span className="absolute -bottom-1 -right-1 inline-flex min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
-                  {snapshot.missed > 99 ? "99+" : snapshot.missed}
-                </span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              onClick={openAllTasksFromSnapshot}
-              data-walkthrough="all-tasks-trigger"
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-teal-200 bg-teal-50 text-teal-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-teal-100"
-              aria-label="All tasks"
-              title="All tasks"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-4 w-4"
-                aria-hidden="true"
+                <span className="h-2 w-2 flex-shrink-0 rounded-full bg-indigo-500" />
+                <span className="flex-1 text-sm font-medium">Upcoming</span>
+              </button>
+              <button
+                type="button"
+                onClick={openAllTasksFromSnapshot}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-slate-700 transition hover:bg-slate-50"
               >
-                <path d="M9 6h11" />
-                <path d="M9 12h11" />
-                <path d="M9 18h11" />
-                <path d="M4.5 6h.01" />
-                <path d="M4.5 12h.01" />
-                <path d="M4.5 18h.01" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={() => showSnapshotOverlay()}
-              data-walkthrough="snapshot-trigger"
-              className="relative flex h-14 w-14 items-center justify-center rounded-[22px] bg-violet-600 text-white shadow-[0_24px_45px_-22px_rgba(124,58,237,0.7)] transition hover:-translate-y-0.5"
-              aria-label="Open workspace menu"
-              title="Open workspace menu"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-5 w-5"
-                aria-hidden="true"
+                <span className="h-2 w-2 flex-shrink-0 rounded-full bg-emerald-500" />
+                <span className="flex-1 text-sm font-medium">Done</span>
+              </button>
+            </div>
+            <div className="mx-3 h-px bg-slate-100" />
+            {/* Shared */}
+            <div className="px-2 py-2">
+              <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Collaboration</p>
+              <button
+                type="button"
+                onClick={() => setReminderListTabDesktop("shared")}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-slate-700 transition hover:bg-slate-50"
               >
-                <circle cx="12" cy="12" r="2.5" />
-                <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a1 1 0 0 1 0 1.4l-1.3 1.3a1 1 0 0 1-1.4 0l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a1 1 0 0 1-1 1h-1.8a1 1 0 0 1-1-1v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a1 1 0 0 1-1.4 0l-1.3-1.3a1 1 0 0 1 0-1.4l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a1 1 0 0 1-1-1v-1.8a1 1 0 0 1 1-1h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a1 1 0 0 1 0-1.4l1.3-1.3a1 1 0 0 1 1.4 0l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a1 1 0 0 1 1-1h1.8a1 1 0 0 1 1 1v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1 1 0 0 1 1.4 0l1.3 1.3a1 1 0 0 1 0 1.4l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6H20a1 1 0 0 1 1 1v1.8a1 1 0 0 1-1 1h-.2a1 1 0 0 0-.9.6Z" />
-              </svg>
-              {shareInbox.length > 0 ? (
-                <span className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-white bg-rose-500" />
-              ) : null}
-            </button>
-            <button
-              type="button"
-              onClick={() => runBriefingStream()}
-              data-walkthrough="briefing-trigger"
-              disabled={!isHistoryLoaded || briefingStreaming || isLoading}
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Run briefing"
-              title="Run briefing"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-4 w-4"
-                aria-hidden="true"
+                <span className="h-2 w-2 flex-shrink-0 rounded-full bg-cyan-500" />
+                <span className="flex-1 text-sm font-medium">Shared with me</span>
+                {shareInbox.length > 0 && (
+                  <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                    {shareInbox.length}
+                  </span>
+                )}
+              </button>
+            </div>
+            <div className="flex-1" />
+            {/* Bottom actions */}
+            <div className="border-t border-slate-100 px-2 py-2">
+              <button
+                type="button"
+                onClick={() => runBriefingStream()}
+                disabled={!isHistoryLoaded || briefingStreaming || isLoading}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
               >
-                <path d="M6 12h12" />
-                <path d="M12 6v12" />
-              </svg>
-            </button>
+                <span className="text-sm">✦</span>
+                <span className="text-sm font-medium">Run Briefing</span>
+              </button>
+              <div className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2">
+                <NotificationBell pollIntervalMs={30_000} />
+              </div>
+            </div>
           </aside>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-0 sm:gap-3">
+          {/* MAIN CONTENT — desktop only inline reminders */}
+          <div className="hidden min-h-0 flex-1 flex-col bg-[#fafaf9] lg:flex">
+            {/* Panel header */}
+            <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-5 py-3.5">
+              <h2 className="flex-1 text-base font-bold text-slate-900">Reminders</h2>
+              <button
+                type="button"
+                onClick={() => showCreateOverlay({})}
+                className="rounded-full bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500"
+              >
+                + New Reminder
+              </button>
+              <button
+                type="button"
+                onClick={openAllTasksFromSnapshot}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                + Task
+              </button>
+            </div>
+            {/* Bucket tabs */}
+            <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-slate-200 bg-white px-4 py-2.5 scrollbar-none">
+              {(
+                [
+                  { key: "missed", label: "Missed", count: snapshot.missed, activeClass: "bg-rose-600 text-white", inactiveClass: "bg-rose-50 text-rose-700 border border-rose-200" },
+                  { key: "today", label: "Today", count: snapshot.today, activeClass: "bg-amber-500 text-white", inactiveClass: "bg-amber-50 text-amber-700 border border-amber-200" },
+                  { key: "tomorrow", label: "Tomorrow", count: snapshot.tomorrow, activeClass: "bg-violet-600 text-white", inactiveClass: "bg-violet-50 text-violet-700 border border-violet-200" },
+                  { key: "upcoming", label: "Later", count: grouped.upcoming.length, activeClass: "bg-cyan-600 text-white", inactiveClass: "bg-cyan-50 text-cyan-700 border border-cyan-200" },
+                  { key: "shared", label: "Shared", count: shareInbox.length, activeClass: "bg-cyan-600 text-white", inactiveClass: "bg-slate-100 text-slate-600 border border-slate-200" },
+                  { key: "done", label: "Done", count: snapshot.done ?? 0, activeClass: "bg-emerald-600 text-white", inactiveClass: "bg-slate-100 text-slate-600 border border-slate-200" },
+                ] as { key: ReminderListTab; label: string; count: number; activeClass: string; inactiveClass: string }[]
+              ).map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setReminderListTabDesktop(tab.key)}
+                  className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition ${
+                    reminderListTabDesktop === tab.key ? tab.activeClass : tab.inactiveClass
+                  }`}
+                >
+                  {tab.label}{tab.count > 0 ? ` (${tab.count})` : ""}
+                </button>
+              ))}
+            </div>
+            {/* Missed banner */}
+            {snapshot.missed > 0 && (
+              <div className="mx-4 mt-3 flex shrink-0 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5">
+                <span className="h-2 w-2 rounded-full bg-rose-500" />
+                <span className="flex-1 text-xs font-semibold text-rose-800">
+                  {snapshot.missed} overdue reminder{snapshot.missed > 1 ? "s" : ""} need attention
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setReminderListTabDesktop("missed")}
+                  className="rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-rose-500"
+                >
+                  View
+                </button>
+              </div>
+            )}
+            {/* Reminders list */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 scrollbar-none">
+              <div className="grid gap-3">
+                {(() => {
+                  const desktopRows =
+                    reminderListTabDesktop === "shared"
+                      ? grouped.missed /* placeholder — share inbox shown below */
+                      : reminderListTabDesktop === "done"
+                      ? grouped.done
+                      : reminderListTabDesktop === "upcoming"
+                      ? grouped.upcoming
+                      : reminderListTabDesktop === "missed"
+                      ? grouped.missed
+                      : reminderListTabDesktop === "today"
+                      ? grouped.today
+                      : reminderListTabDesktop === "tomorrow"
+                      ? grouped.tomorrow
+                      : [];
+
+                  if (reminderListTabDesktop === "shared") {
+                    return shareInbox.length === 0 ? (
+                      <p className="py-8 text-center text-sm text-slate-400">No shared reminders.</p>
+                    ) : (
+                      groupShareInboxRows(shareInbox).map(({ batchKey, rows }) => {
+                        const first = rows[0]!;
+                        const n = rows.length;
+                        return (
+                          <div key={batchKey} className="rounded-xl border border-violet-200 bg-white px-4 py-3 shadow-sm">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="font-semibold text-slate-900">
+                                  {first.fromDisplayName}
+                                  {n > 1 ? ` · ${n} reminders` : ` · ${first.title}`}
+                                </p>
+                              </div>
+                              <span className="flex shrink-0 gap-1">
+                                <button
+                                  type="button"
+                                  className="rounded-full bg-violet-600 px-2.5 py-1 text-[10px] font-semibold text-white"
+                                  onClick={() => void joinShareBatch(batchKey)}
+                                >
+                                  Accept all
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-full border border-slate-300 px-2.5 py-1 text-[10px] font-semibold text-slate-700"
+                                  onClick={() => void dismissShareBatch(batchKey)}
+                                >
+                                  Deny
+                                </button>
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    );
+                  }
+
+                  if (desktopRows.length === 0) {
+                    return <p className="py-8 text-center text-sm text-slate-400">Nothing here yet.</p>;
+                  }
+
+                  return desktopRows.map((reminder) => {
+                    const bucket = reminderListTabDesktop;
+                    return (
+                      <article
+                        key={reminder.id}
+                        className={`overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm ${
+                          bucket === "missed"
+                            ? "border-l-[3px] border-l-rose-500"
+                            : bucket === "today"
+                            ? "border-l-[3px] border-l-amber-500"
+                            : bucket === "tomorrow"
+                            ? "border-l-[3px] border-l-violet-500"
+                            : bucket === "done"
+                            ? "border-l-[3px] border-l-emerald-500"
+                            : "border-l-[3px] border-l-cyan-500"
+                        }`}
+                      >
+                        <div className="p-3">
+                          <p className="font-semibold text-slate-900">{reminder.title}</p>
+                          <p className="mt-0.5 text-xs text-slate-500">Due: {formatDisplayDateTime(reminder.dueAt)}</p>
+                          {reminder.notes ? (
+                            <p className="mt-1 text-xs text-slate-600">{reminder.notes}</p>
+                          ) : null}
+                          {reminder.status !== "done" && reminder.status !== "archived" ? (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void refreshAfterReminderMutation(
+                                    fetch(`/api/reminders/${reminder.id}`, {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ status: "done" }),
+                                    }),
+                                  );
+                                }}
+                                className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold text-white"
+                              >
+                                Done
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openEditModal(reminder)}
+                                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700"
+                              >
+                                Edit
+                              </button>
+                              {reminder.access !== "shared" ? (
+                                <button
+                                  type="button"
+                                  onClick={() => showShareOverlay([reminder.id])}
+                                  className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700"
+                                >
+                                  Share
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          </div>
+
+          {/* MOBILE + DESKTOP CHAT — right panel on desktop, full screen on mobile */}
+          <div className="flex min-h-0 w-full flex-1 flex-col lg:w-[320px] lg:flex-none lg:border-l lg:border-slate-200" style={{ background: "#1a1625" }}>
+          <div className="flex min-h-0 flex-1 flex-col gap-0">
             {mounted &&
             typeof Notification !== "undefined" &&
             Notification.permission === "default" &&
@@ -4639,54 +4807,39 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </div>
             ) : null}
 
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-slate-200/80 bg-white sm:rounded-[32px] sm:border sm:shadow-[0_32px_90px_-56px_rgba(15,23,42,0.35)]">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: "#1a1625" }}>
               {/* Inner toolbar — hidden on mobile to save vertical space; shown sm+ */}
-              <div className="hidden shrink-0 items-center justify-end gap-2 border-b border-slate-100 px-4 py-3 sm:flex sm:px-6">
+              <div className="hidden shrink-0 items-center justify-end gap-2 border-b border-[rgba(255,255,255,0.08)] px-4 py-3 sm:flex sm:px-4">
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={openNextTwoHoursFromSnapshot}
-                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:bg-amber-100 sm:inline-flex lg:hidden"
+                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-amber-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
                   >
-                    <span
-                      aria-hidden
-                      className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-100 text-amber-700"
-                    >
-                      ⏱
-                    </span>
-                    Next 2 hours
+                    <span aria-hidden className="text-base">⏱</span>
+                    Next 2 hrs
                   </button>
                   <button
                     type="button"
                     onClick={() => showReminderListOverlay()}
-                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 sm:inline-flex lg:hidden"
+                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-slate-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
                   >
-                    <span
-                      aria-hidden
-                      className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-slate-600"
-                    >
-                      ☰
-                    </span>
-                    All reminders
+                    <span aria-hidden>☰</span>
+                    Reminders
                   </button>
                   <button
                     type="button"
                     onClick={openAllTasksFromSnapshot}
                     data-walkthrough="all-tasks-trigger"
-                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 text-xs font-semibold text-teal-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-100 sm:inline-flex lg:hidden"
+                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-teal-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
                   >
-                    <span
-                      aria-hidden
-                      className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-teal-700"
-                    >
-                      ≣
-                    </span>
-                    All tasks
+                    <span aria-hidden>≣</span>
+                    Tasks
                   </button>
                   <button
                     type="button"
                     onClick={() => showSnapshotOverlay()}
-                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 sm:inline-flex lg:hidden"
+                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-slate-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
                   >
                     Menu
                   </button>
@@ -4701,7 +4854,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   disabled={
                     !isHistoryLoaded || briefingStreaming || isLoading
                   }
-                  className="inline-flex h-9 items-center justify-center rounded-full border border-violet-200 bg-violet-50 px-3 text-[11px] font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:px-4 sm:text-xs"
+                  className="inline-flex h-9 items-center justify-center rounded-full border border-violet-500/40 bg-violet-600/20 px-3 text-[11px] font-semibold text-violet-300 shadow-sm transition hover:bg-violet-600/30 disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:px-4 sm:text-xs"
                 >
                   Briefing
                 </button>
@@ -4711,7 +4864,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               {(snapshot.missed > 0 ||
                 snapshot.today > 0 ||
                 snapshot.tomorrow > 0) && (
-                <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-slate-100 bg-slate-50/70 px-4 py-2 scrollbar-none">
+                <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.04)] px-4 py-2 scrollbar-none">
                   {snapshot.missed > 0 && (
                     <button
                       type="button"
@@ -4764,7 +4917,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               <div
                 ref={chatScrollRef}
                 onScroll={onChatScroll}
-                className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-[radial-gradient(circle_at_top,rgba(121,216,194,0.12),transparent_32%),linear-gradient(180deg,#ffffff_0%,#fafaf7_100%)] px-4 py-5 scrollbar-none sm:px-6 sm:py-6"
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-[#1a1625] px-4 py-5 scrollbar-none sm:px-6 sm:py-6"
               >
                 <div className="mx-auto grid min-w-0 max-w-4xl gap-4">
                   {messages.map((message) => {
@@ -4822,7 +4975,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     const bubbleClass =
                       message.role === "user"
                         ? "relative ml-auto min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-br-[12px] bg-[linear-gradient(135deg,#7c3aed_0%,#5b7bff_100%)] px-4 py-3 text-sm text-white shadow-[0_24px_45px_-28px_rgba(91,123,255,0.9)]"
-                        : "min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-bl-[12px] border border-slate-200 bg-[#f6f7fb] px-4 py-3 text-sm text-slate-800 shadow-[0_20px_40px_-36px_rgba(15,23,42,0.55)]";
+                        : "min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-bl-[12px] border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.08)] px-4 py-3 text-sm text-[rgba(255,255,255,0.88)] shadow-none";
 
                     const inner = (
                       <div
@@ -4835,14 +4988,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             className={`mb-2 rounded-2xl border-l-4 border-amber-400 pl-3 ${
                               message.role === "user"
                                 ? "bg-white/12"
-                                : "bg-white/70"
+                                : "bg-white/10"
                             }`}
                           >
                             <p
                               className={`pt-2 text-[10px] font-semibold ${
                                 message.role === "user"
                                   ? "text-amber-100"
-                                  : "text-amber-700"
+                                  : "text-amber-300"
                               }`}
                             >
                               {chatReplyLabel(replyQuote.role)}
@@ -4851,7 +5004,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                               className={`line-clamp-5 whitespace-pre-wrap pb-2 text-[11px] leading-snug ${
                                 message.role === "user"
                                   ? "text-violet-50/95"
-                                  : "text-slate-700"
+                                  : "text-slate-300"
                               }`}
                             >
                               {replyQuote.content}
@@ -4860,24 +5013,24 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         ) : null}
                         {dueMeta?.reminderId ? (
                           <>
-                            <p className="font-semibold text-slate-900">
+                            <p className="font-semibold text-[rgba(255,255,255,0.9)]">
                               Reminder due
                             </p>
-                            <p className="mt-1 min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed text-slate-800 [overflow-wrap:anywhere]">
+                            <p className="mt-1 min-w-0 max-w-full whitespace-pre-wrap break-words leading-relaxed text-[rgba(255,255,255,0.88)] [overflow-wrap:anywhere]">
                               {dueMeta.title}
                             </p>
-                            <p className="mt-1 text-xs text-slate-600">
+                            <p className="mt-1 text-xs text-[rgba(255,255,255,0.55)]">
                               {new Date(
                                 dueMeta.dueAt ?? Date.now(),
                               ).toLocaleString()}
                             </p>
                             {dueMeta.notes ? (
-                              <p className="mt-1 text-xs text-slate-500">
+                              <p className="mt-1 text-xs text-[rgba(255,255,255,0.45)]">
                                 {dueMeta.notes}
                               </p>
                             ) : null}
                             {dueReminderResolved ? (
-                              <p className="mt-3 text-xs font-medium text-slate-600">
+                              <p className="mt-3 text-xs font-medium text-[rgba(255,255,255,0.55)]">
                                 {dueReminder?.status === "done"
                                   ? "Already marked done."
                                   : "This reminder was already updated from another action."}
@@ -4963,7 +5116,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             className={`flex min-w-0 flex-wrap items-center gap-2 text-[10px] ${
                               message.role === "user"
                                 ? "text-violet-100"
-                                : "text-slate-500"
+                                : "text-[rgba(255,255,255,0.3)]"
                             }`}
                           >
                             <span>
@@ -5010,7 +5163,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     );
                   })}
                   {isLoading ? (
-                    <div className="min-w-0 max-w-[42rem] rounded-[28px] rounded-bl-[12px] border border-slate-200 bg-[#f6f7fb] px-4 py-3 text-sm text-slate-700 shadow-[0_20px_40px_-36px_rgba(15,23,42,0.55)]">
+                    <div className="min-w-0 max-w-[42rem] rounded-[28px] rounded-bl-[12px] border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.08)] px-4 py-3 text-sm text-[rgba(255,255,255,0.7)]">
                       <p className="min-w-0 break-words [overflow-wrap:anywhere]">
                         {loadingTexts[loadingTextIndex]}
                       </p>
@@ -5020,9 +5173,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </div>
 
               {showSuggestedQuestions && followUpQuestions.length > 0 ? (
-                <div className="shrink-0 border-t border-slate-100 px-4 pb-3 pt-3 sm:px-6">
+                <div className="shrink-0 border-t border-[rgba(255,255,255,0.06)] px-4 pb-3 pt-3 sm:px-4">
                   <div className="mx-auto max-w-4xl">
-                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-[rgba(255,255,255,0.3)]">
                       Suggested
                     </p>
                     <div className="flex flex-wrap gap-2">
@@ -5056,8 +5209,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           }}
                           className={`min-h-[2.75rem] rounded-full border px-4 py-2 text-left text-xs font-medium leading-snug transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:px-3 sm:py-2 ${
                             q.kind === "action"
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+                              ? "border-emerald-500/30 bg-emerald-600/15 text-emerald-300 hover:bg-emerald-600/25"
+                              : "border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.7)] hover:bg-[rgba(255,255,255,0.1)]"
                           }`}
                         >
                           {q.text}
@@ -5072,9 +5225,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 ref={chatFormRef}
                 onSubmit={handleChatSubmit}
                 data-testid="chat-form"
-                className={`shrink-0 border-t border-slate-100 bg-white px-3 pb-[max(0.875rem,env(safe-area-inset-bottom))] pt-3 sm:px-6 sm:pb-4 ${
+                className={`shrink-0 border-t border-[rgba(255,255,255,0.06)] px-3 pb-[max(0.875rem,env(safe-area-inset-bottom))] pt-3 sm:px-4 sm:pb-4 ${
                   briefingComposerLocked ? "opacity-90" : ""
                 }`}
+                style={{ background: "#1a1625" }}
               >
                 <div className="mx-auto max-w-4xl">
                   {pendingCreateDraft?.step === "task" ? (
@@ -5154,14 +5308,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     <button
                       type="button"
                       onClick={openNextTwoHoursFromSnapshot}
-                      className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700"
+                      className="inline-flex items-center gap-1 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 py-1.5 text-[11px] font-semibold text-amber-300"
                     >
                       ⏱ Next 2 Hours
                     </button>
                     <button
                       type="button"
                       onClick={() => showReminderListOverlay()}
-                      className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700"
+                      className="inline-flex items-center gap-1 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 py-1.5 text-[11px] font-semibold text-violet-300"
                     >
                       ☰ All reminders
                     </button>
@@ -5169,12 +5323,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       type="button"
                       onClick={openAllTasksFromSnapshot}
                       data-walkthrough="all-tasks-trigger"
-                      className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-[11px] font-semibold text-teal-700"
+                      className="inline-flex items-center gap-1 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 py-1.5 text-[11px] font-semibold text-teal-300"
                     >
                       ≣ All tasks
                     </button>
                   </div>
-                  <div className="flex w-full min-w-0 items-end gap-2 rounded-[28px] border border-slate-200 bg-[#f5f6fa] py-2 pl-2 pr-2 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.45)]">
+                  <div className="flex w-full min-w-0 items-end gap-2 rounded-[28px] border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] py-2 pl-2 pr-2">
                     {/* + Create reminder — visible on mobile, hidden on sm+ */}
                     <button
                       type="button"
@@ -5213,7 +5367,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                             : "Message"
                         }
                         data-testid="chat-input"
-                        className={`scrollbar-none relative z-10 min-h-10 w-full resize-none overflow-y-hidden rounded-2xl bg-transparent px-2 py-1.5 text-sm leading-6 text-slate-800 [overflow-wrap:anywhere] outline-none placeholder:text-slate-400 ${
+                        className={`scrollbar-none relative z-10 min-h-10 w-full resize-none overflow-y-hidden rounded-2xl bg-transparent px-2 py-1.5 text-sm leading-6 text-[rgba(255,255,255,0.88)] [overflow-wrap:anywhere] outline-none placeholder:text-[rgba(255,255,255,0.35)] ${
                           briefingComposerLocked && !editingMessageId
                             ? "cursor-wait caret-transparent"
                             : ""
@@ -5246,9 +5400,37 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 </div>
               </form>
             </div>
-          </div>
-        </div>
+          </div>{/* end inner wrap */}
+          </div>{/* end dark chat panel */}
+        </div>{/* end 3-panel container */}
       </section>
+
+      {/* Mobile bottom nav */}
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-800 bg-[#1a1625] lg:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        {[
+          { label: "Chat", icon: "💬", active: !isListOpen && !isTasksOpen },
+          { label: "Reminders", icon: "🔔", active: isListOpen, badge: snapshot.missed + snapshot.today, onClick: () => showReminderListOverlay() },
+          { label: "Tasks", icon: "✓", active: isTasksOpen, onClick: openAllTasksFromSnapshot },
+          { label: "Menu", icon: "☰", active: false, onClick: () => showSnapshotOverlay() },
+        ].map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            onClick={item.onClick ?? undefined}
+            className={`relative flex flex-1 flex-col items-center gap-0.5 py-3 text-[10px] font-semibold transition ${
+              item.active ? "text-violet-400" : "text-slate-500"
+            }`}
+          >
+            <span className="text-lg leading-none">{item.icon}</span>
+            <span>{item.label}</span>
+            {item.badge && item.badge > 0 ? (
+              <span className="absolute right-3 top-2 min-w-[16px] rounded-full bg-rose-500 px-1 py-0.5 text-[8px] font-bold text-white">
+                {item.badge > 99 ? "99+" : item.badge}
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </nav>
 
       {isSnapshotOpen && (
         <div
@@ -6060,7 +6242,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       key={reminder.id}
                       data-testid="reminder-card"
                       data-reminder-id={reminder.id}
-                      className={`flex gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700 sm:p-4 ${
+                      className={`flex gap-3 overflow-hidden rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 sm:p-4 ${
+                        reminderListTab === "missed"
+                          ? "border-l-[3px] border-l-rose-500"
+                          : reminderListTab === "today"
+                          ? "border-l-[3px] border-l-amber-500"
+                          : reminderListTab === "tomorrow"
+                          ? "border-l-[3px] border-l-violet-500"
+                          : reminderListTab === "done"
+                          ? "border-l-[3px] border-l-emerald-500"
+                          : reminderListTab === "shared" || reminderListTab === "sent"
+                          ? "border-l-[3px] border-l-cyan-500"
+                          : ""
+                      } ${
                         reminderSelectionMode &&
                         selectedReminderIds.has(reminder.id)
                           ? "ring-2 ring-violet-500/55"
@@ -6184,7 +6378,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                 type="button"
                                 onClick={() => showShareOverlay([reminder.id])}
                                 data-testid="reminder-share-button"
-                                className="rounded-full border border-violet-400 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-900 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100"
+                                className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700"
                               >
                                 Share
                               </button>
@@ -6193,7 +6387,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                               type="button"
                               onClick={() => openEditModal(reminder)}
                               data-testid="reminder-edit-button"
-                              className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
+                              className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700"
                             >
                               Edit
                             </button>
@@ -6215,7 +6409,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                 );
                               }}
                               data-testid="reminder-status-button"
-                              className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
+                              className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold text-white"
                             >
                               Mark done
                             </button>
@@ -6233,7 +6427,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                 );
                               }}
                               data-testid="reminder-delete-button"
-                              className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
+                              className="rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-semibold text-white"
                             >
                               Delete
                             </button>
