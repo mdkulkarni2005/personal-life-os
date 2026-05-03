@@ -1004,6 +1004,238 @@ function extractInviteToken(text: string): string | null {
   return null;
 }
 
+// ─────────────────────────────────────────────────────────────
+// ReminderCard – extracted so the list JSX stays readable
+// ─────────────────────────────────────────────────────────────
+interface ReminderCardProps {
+  reminder: ReminderItem;
+  tab: string;
+  selectionMode: boolean;
+  selected: boolean;
+  taskTitleById: Record<string, string | undefined>;
+  onSelect: (id: string) => void;
+  onLongPressStart: (id: string) => void;
+  onLongPressEnd: () => void;
+  onMarkDone: () => void;
+  onDelete: () => void;
+  onEdit: () => void;
+  onShare: () => void;
+  onSnooze: () => void;
+}
+
+function ReminderCard({
+  reminder,
+  tab,
+  selectionMode,
+  selected,
+  taskTitleById,
+  onSelect,
+  onLongPressStart,
+  onLongPressEnd,
+  onMarkDone,
+  onDelete,
+  onEdit,
+  onShare,
+  onSnooze,
+}: ReminderCardProps) {
+  const isDone = reminder.status === "done" || reminder.status === "archived";
+  const linkedTaskTitle = reminder.linkedTaskId ? taskTitleById[reminder.linkedTaskId] : undefined;
+  const isAdhoc = isAdhocReminder(reminder) || !linkedTaskTitle;
+
+  const circleColor =
+    tab === "done"      ? "#10b981" :
+    tab === "missed"    ? "#f43f5e" :
+    tab === "today"     ? "#f59e0b" :
+    tab === "tomorrow"  ? "#7c3aed" :
+    tab === "shared" || tab === "sent" ? "#06b6d4" :
+    "#94a3b8";
+
+  // Compute overdue label for missed tab
+  let overdueLabel = "";
+  if (tab === "missed") {
+    const diffMs = Date.now() - new Date(reminder.dueAt).getTime();
+    const diffH = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffM = Math.floor(diffMs / (1000 * 60));
+    overdueLabel = diffH > 0 ? `${diffH}h overdue` : diffM > 0 ? `${diffM}m overdue` : "Just missed";
+  }
+
+  // Friendly time label
+  let timeLabel = "";
+  try {
+    timeLabel = new Date(reminder.dueAt).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch { /* ignore */ }
+
+  const domainColors: Record<string, string> = {
+    health:  "#10b981",
+    finance: "#06b6d4",
+    career:  "#6366f1",
+    hobby:   "#7c3aed",
+    fun:     "#f59e0b",
+  };
+  const domainColor = reminder.domain ? (domainColors[reminder.domain] ?? "#94a3b8") : "#94a3b8";
+
+  return (
+    <article
+      data-testid="reminder-card"
+      data-reminder-id={reminder.id}
+      className={`mb-2 flex gap-3 rounded-2xl border bg-white px-3.5 py-3 shadow-sm transition ${
+        selected ? "border-violet-400 ring-2 ring-violet-400/25" : "border-slate-100"
+      }`}
+      onTouchStart={() => onLongPressStart(reminder.id)}
+      onTouchEnd={onLongPressEnd}
+      onTouchMove={onLongPressEnd}
+    >
+      {/* Left indicator */}
+      <div className="flex shrink-0 flex-col items-center pt-0.5">
+        {selectionMode && !isDone && reminder.access !== "shared" ? (
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-400 text-violet-600"
+            checked={selected}
+            onChange={() => onSelect(reminder.id)}
+            aria-label={`Select ${reminder.title}`}
+          />
+        ) : isDone ? (
+          /* Green checkmark circle for done */
+          <span className="flex h-5 w-5 items-center justify-center rounded-full" style={{ background: "#10b981" }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+              <path d="m5 12 4 4 10-10" />
+            </svg>
+          </span>
+        ) : (
+          <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: circleColor }} />
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="min-w-0 flex-1">
+        {/* Title row */}
+        <div className="flex items-start justify-between gap-1">
+          <p className={`text-[14px] font-semibold leading-snug ${isDone ? "text-slate-400 line-through" : "text-slate-900"}`}>
+            {reminder.title}
+            {(reminder.priority ?? 0) > 0 && (
+              <span className="ml-1 text-amber-400">{"★".repeat(reminder.priority ?? 0)}</span>
+            )}
+          </p>
+        </div>
+
+        {/* Time row */}
+        <p className={`mt-0.5 text-[11px] font-medium ${
+          tab === "missed" ? "text-rose-500" :
+          tab === "today"  ? "text-amber-500" :
+          isDone           ? "text-emerald-500" :
+          "text-slate-400"
+        }`}>
+          {tab === "missed"
+            ? `Due at ${new Date(reminder.dueAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · ${overdueLabel}`
+            : timeLabel}
+        </p>
+
+        {/* Tags row */}
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {/* Status tag */}
+          {tab !== "done" && (
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                tab === "missed" ? "bg-rose-50 text-rose-600" :
+                tab === "today"  ? "bg-amber-50 text-amber-600" :
+                tab === "tomorrow" ? "bg-violet-50 text-violet-600" :
+                "bg-slate-100 text-slate-500"
+              }`}
+              data-testid="reminder-state-label"
+            >
+              {reminderStateLabel(reminder)}
+            </span>
+          )}
+          {/* Shared tag */}
+          {reminder.access === "shared" && (
+            <span className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-sky-600">
+              Shared
+            </span>
+          )}
+          {/* ADHOC / Task tag */}
+          {isAdhoc ? (
+            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-slate-500">ADHOC</span>
+          ) : (
+            <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-600">
+              {linkedTaskTitle}
+            </span>
+          )}
+          {/* Domain tag */}
+          {reminder.domain && (
+            <span
+              className="rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase"
+              style={{ background: `${domainColor}18`, color: domainColor }}
+            >
+              {reminder.domain}
+            </span>
+          )}
+        </div>
+
+        {/* Notes */}
+        {reminder.notes && !isDone && (
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{reminder.notes}</p>
+        )}
+
+        {/* Action buttons */}
+        {!isDone && (
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={onMarkDone}
+              data-testid="reminder-status-button"
+              className="flex items-center gap-1 rounded-full bg-emerald-500 px-2.5 py-1 text-[10px] font-bold text-white"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5"><path d="m5 12 4 4 10-10"/></svg>
+              Done
+            </button>
+            <button
+              type="button"
+              onClick={onEdit}
+              data-testid="reminder-edit-button"
+              className="rounded-full border border-slate-200 px-2.5 py-1 text-[10px] font-bold text-slate-600"
+            >
+              Edit
+            </button>
+            {reminder.access !== "shared" && (
+              <button
+                type="button"
+                onClick={onShare}
+                data-testid="reminder-share-button"
+                className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[10px] font-bold text-violet-700"
+              >
+                Share
+              </button>
+            )}
+            {tab !== "done" && (
+              <button
+                type="button"
+                onClick={onSnooze}
+                className="rounded-full border border-slate-200 px-2.5 py-1 text-[10px] font-bold text-slate-500"
+              >
+                +1h
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onDelete}
+              data-testid="reminder-delete-button"
+              className="rounded-full border border-rose-100 bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-600"
+            >
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
 export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const { user } = useUser();
   const searchParams = useSearchParams();
@@ -5989,499 +6221,348 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       {isListOpen && (
         <div
           data-testid="reminder-list-overlay"
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4"
-          onClick={closeReminderListOverlay}
+          className="fixed inset-0 z-50 flex flex-col bg-[#fafaf9] sm:items-center sm:justify-center sm:bg-black/50 sm:p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) closeReminderListOverlay(); }}
         >
           <div
-            className="mt-auto flex max-h-[min(92vh,720px)] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:my-auto sm:rounded-2xl"
+            className="flex h-full w-full flex-col overflow-hidden bg-[#fafaf9] sm:h-auto sm:max-h-[min(92vh,760px)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-slate-200 sm:shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-              <h3 className="text-base font-semibold sm:text-lg">Reminders</h3>
+            {/* ── Top bar ── */}
+            <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 pb-3 pt-[max(0.875rem,env(safe-area-inset-top))] sm:pt-3">
+              <button type="button" onClick={closeReminderListOverlay} className="mr-1 sm:hidden">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-5 w-5 text-slate-500"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+              <h2 className="flex-1 text-[18px] font-extrabold text-slate-900">Reminders</h2>
               <button
                 type="button"
-                onClick={closeReminderListOverlay}
-                data-testid="reminder-list-close"
-                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+                onClick={openCreateReminderFromRemindersList}
+                data-testid="reminder-create-button"
+                className="flex items-center gap-1 rounded-full bg-violet-600 px-4 py-2 text-[13px] font-bold text-white shadow-sm transition hover:bg-violet-500"
               >
-                Close
+                <span className="text-base leading-none">+</span> New
               </button>
+              <button type="button" className="hidden sm:block rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold" onClick={closeReminderListOverlay} data-testid="reminder-list-close">Close</button>
             </div>
-            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 px-2 py-2 dark:border-slate-800">
+
+            {/* ── Tabs ── */}
+            <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2.5 scrollbar-none">
               {(
                 [
-                  ["all", "All"],
-                  ["next2hours", "Next 2 Hours"],
-                  ["missed", "Missed"],
-                  ["today", "Today"],
-                  ["tomorrow", "Tomorrow"],
-                  ["upcoming", "Later"],
-                  ["shared", "Shared"],
-                  ["sent", "Sent"],
-                  ["done", "Done"],
+                  ["missed",    "Missed",   "#f43f5e", grouped.missed.length],
+                  ["today",     "Today",    "#f59e0b", grouped.today.length],
+                  ["tomorrow",  "Tmrw",     "#7c3aed", grouped.tomorrow.length],
+                  ["upcoming",  "Later",    "#06b6d4", grouped.upcoming.length],
+                  ["shared",    "Shared",   "#06b6d4", sharedTabCount],
+                  ["sent",      "Sent",     "#6366f1", sentTabCount],
+                  ["done",      "Done",     "#10b981", grouped.done.length],
                 ] as const
-              ).map(([key, label]) => {
-                const count =
-                  key === "all"
-                    ? reminders.length
-                    : key === "next2hours"
-                      ? nextTwoHoursReminders.length
-                      : key === "shared"
-                        ? sharedTabCount
-                        : key === "sent"
-                          ? sentTabCount
-                          : grouped[key].length;
+              ).map(([key, label, dotColor, count]) => {
+                const active = reminderListTab === key;
                 return (
                   <button
                     key={key}
                     type="button"
                     onClick={() => setReminderListTab(key)}
                     data-testid={`reminder-tab-${key}`}
-                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                      reminderListTab === key
-                        ? "bg-violet-600 text-white"
-                        : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    className={`shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition ${
+                      active ? "bg-violet-600 text-white" : "text-slate-600 hover:bg-slate-100"
                     }`}
                   >
-                    {label} <span className="opacity-80">({count})</span>
+                    {!active && <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: dotColor }} />}
+                    {label}
+                    {count > 0 && (
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-extrabold leading-none ${
+                        active ? "bg-white/25 text-white" : "bg-slate-100 text-slate-500"
+                      }`}>{count}</span>
+                    )}
                   </button>
                 );
               })}
             </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
-              {reminderListTab !== "shared" ? (
-                !reminderSelectionMode ? (
-                  <button
-                    type="button"
-                    className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-                    data-testid="reminder-selection-start"
-                    onClick={() => {
-                      setReminderSelectionMode(true);
-                      setSelectedReminderIds(new Set());
-                    }}
-                  >
-                    Select
-                  </button>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
-                      data-testid="reminder-selection-cancel"
-                      onClick={() => {
-                        setReminderSelectionMode(false);
-                        setSelectedReminderIds(new Set());
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={selectedReminderIds.size === 0}
-                      data-testid="reminder-selection-share"
-                      className="rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-                      onClick={() => showShareOverlay([...selectedReminderIds])}
-                    >
-                      Share ({selectedReminderIds.size})
-                    </button>
-                  </div>
-                )
-              ) : (
-                <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                  Invites you joined appear here; pending invites stay above.
+
+            {/* ── Missed alert banner ── */}
+            {reminderListTab === "missed" && snapshot.missed > 0 && (
+              <div className="mx-3 mt-3 flex shrink-0 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5">
+                <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0" />
+                <span className="flex-1 text-[12px] font-semibold text-rose-800">
+                  {snapshot.missed} reminder{snapshot.missed > 1 ? "s" : ""} need{snapshot.missed === 1 ? "s" : ""} immediate action
                 </span>
-              )}
-            </div>
-            {shareInbox.length > 0 ? (
-              <div className="max-h-48 shrink-0 space-y-2 overflow-y-auto border-b border-violet-200/50 bg-violet-50/60 px-4 py-2 dark:border-violet-900/50 dark:bg-violet-950/35">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
-                    Shared with you
-                  </p>
-                  <button
-                    type="button"
-                    className="rounded-full border border-violet-400 px-2.5 py-0.5 text-[10px] font-semibold text-violet-900 dark:border-violet-600 dark:text-violet-100"
-                    onClick={() => {
-                      void Notification.requestPermission().then((p) => {
-                        if (p === "granted")
-                          void syncReminderPushSubscription();
-                      });
-                    }}
-                  >
-                    Enable invite alerts
-                  </button>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4 text-rose-400"><path d="m9 18 6-6-6-6"/></svg>
+              </div>
+            )}
+
+            {/* ── Today filter bar ── */}
+            {(reminderListTab === "today" || reminderListTab === "all") && (
+              <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-white px-3 py-2">
+                <div className="flex flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5 shrink-0 text-slate-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                  <input
+                    value={reminderSearchQuery}
+                    onChange={(e) => setReminderSearchQuery(e.target.value)}
+                    placeholder="Filter..."
+                    className="flex-1 bg-transparent text-[12px] text-slate-700 outline-none placeholder:text-slate-400"
+                  />
                 </div>
-                {groupShareInboxRows(shareInbox).map(({ batchKey, rows }) => {
-                  const first = rows[0]!;
-                  const n = rows.length;
-                  return (
-                    <div
-                      key={batchKey}
-                      className="rounded-lg border border-violet-200/90 bg-white/95 px-2.5 py-2 text-xs dark:border-violet-800 dark:bg-slate-900"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-slate-900 dark:text-slate-100">
+                <select
+                  value={reminderTaskFilter}
+                  onChange={(e) => setReminderTaskFilter(e.target.value as "all" | "adhoc" | string)}
+                  className="rounded-xl border border-slate-200 bg-white px-2 py-2 text-[11px] text-slate-600 font-medium"
+                >
+                  <option value="all">All types</option>
+                  <option value="adhoc">ADHOC only</option>
+                  {tasks.map((t) => <option key={t.id} value={t.id}>Task: {t.title}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* ── Bulk selection bar (non-shared tabs) ── */}
+            {reminderListTab !== "shared" && reminderSelectionMode && (
+              <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-white px-4 py-2">
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700"
+                  data-testid="reminder-selection-cancel"
+                  onClick={() => { setReminderSelectionMode(false); setSelectedReminderIds(new Set()); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedReminderIds.size === 0}
+                  data-testid="reminder-selection-share"
+                  className="rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => showShareOverlay([...selectedReminderIds])}
+                >
+                  Share ({selectedReminderIds.size})
+                </button>
+              </div>
+            )}
+
+            {/* ── Shared tab: pending invites ── */}
+            {reminderListTab === "shared" && shareInbox.length > 0 && (
+              <div className="shrink-0 border-b border-violet-100 bg-violet-50/60 px-4 py-3">
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-violet-700">Pending Invites</p>
+                <div className="space-y-2">
+                  {groupShareInboxRows(shareInbox).map(({ batchKey, rows }) => {
+                    const first = rows[0]!;
+                    const n = rows.length;
+                    return (
+                      <div key={batchKey} className="flex items-center justify-between gap-3 rounded-xl border border-violet-200 bg-white px-3 py-2.5">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13px] font-semibold text-slate-900">
                             {first.fromDisplayName}
                             {n > 1 ? ` · ${n} reminders` : ` · ${first.title}`}
                           </p>
-                          {n > 1 ? (
-                            <ul className="mt-1 max-h-20 list-inside list-disc overflow-y-auto text-[11px] text-slate-600 dark:text-slate-300">
-                              {rows.map((r) => (
-                                <li key={r._id}>{r.title}</li>
-                              ))}
-                            </ul>
-                          ) : null}
+                          {n > 1 && (
+                            <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                              {rows.map((r) => r.title).join(", ")}
+                            </p>
+                          )}
                         </div>
-                        <span className="flex shrink-0 flex-col gap-1 sm:flex-row">
+                        <div className="flex shrink-0 gap-2">
                           <button
                             type="button"
-                            className="rounded-full bg-violet-600 px-2.5 py-0.5 text-[11px] font-semibold text-white"
+                            className="rounded-full bg-violet-600 px-3 py-1 text-[11px] font-bold text-white"
                             onClick={() => void joinShareBatch(batchKey)}
                           >
-                            Accept all
+                            Accept
                           </button>
                           <button
                             type="button"
-                            className="rounded-full border border-slate-300 px-2.5 py-0.5 text-[11px] font-semibold dark:border-slate-600"
+                            className="rounded-full border border-slate-300 px-3 py-1 text-[11px] font-bold text-slate-600"
                             onClick={() => void dismissShareBatch(batchKey)}
                           >
-                            Deny all
+                            Deny
                           </button>
-                        </span>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-            <div className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="grid min-w-0 flex-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
-                    {reminderListTab === "all" ? (
-                      <label className="flex w-full flex-col gap-1 text-xs text-slate-600 dark:text-slate-400 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
-                        <span className="font-medium">Search</span>
-                        <input
-                          value={reminderSearchQuery}
-                          onChange={(e) => setReminderSearchQuery(e.target.value)}
-                          placeholder="Search reminders..."
-                          data-testid="reminder-search-input"
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950 sm:w-64"
-                        />
-                      </label>
-                    ) : null}
-                    <label className="flex w-full flex-col gap-1 text-xs text-slate-600 dark:text-slate-400 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
-                      <span className="font-medium">Filter</span>
-                      <select
-                        value={reminderTaskFilter}
-                        onChange={(e) =>
-                          setReminderTaskFilter(
-                            e.target.value as "all" | "adhoc" | string,
-                          )
-                        }
-                        className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950 sm:w-56"
-                      >
-                        <option value="all">All in this tab</option>
-                        <option value="adhoc">ADHOC only</option>
-                        {tasks.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            Task: {t.title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {reminderListTab === "shared" ? (
-                      <label className="flex w-full flex-col gap-1 text-xs text-slate-600 dark:text-slate-400 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
-                        <span className="font-medium">From</span>
-                        <select
-                          value={sharedFromFilter}
-                          onChange={(e) =>
-                            setSharedFromFilter(
-                              e.target.value as "all" | string,
-                            )
-                          }
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950 sm:w-64"
-                        >
-                          <option value="all">Everyone</option>
-                          {sharedFromOptions.map((id) => (
-                            <option key={id} value={id}>
-                              …{id.slice(-8)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
-                    {reminderListTab === "sent" ? (
-                      <label className="flex w-full flex-col gap-1 text-xs text-slate-600 dark:text-slate-400 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
-                        <span className="font-medium">Sent to</span>
-                        <select
-                          value={sentToFilter}
-                          onChange={(e) =>
-                            setSentToFilter(e.target.value as "all" | string)
-                          }
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950 sm:w-64"
-                        >
-                          <option value="all">Everyone</option>
-                          {sentRecipientOptions.map(([id, name]) => (
-                            <option key={id} value={id}>
-                              {name || `…${id.slice(-8)}`}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={openCreateReminderFromRemindersList}
-                      data-testid="reminder-create-button"
-                      className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1.5 text-xs font-semibold text-violet-900 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100"
-                      title="Create reminder"
-                      aria-label="Create reminder"
-                    >
-                      <span aria-hidden className="text-base leading-none">
-                        +
-                      </span>
-                      Reminder
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openCreateTaskFromRemindersList}
-                      data-testid="reminder-list-create-task-button"
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                      title="Create task"
-                      aria-label="Create task"
-                    >
-                      <span aria-hidden className="text-base leading-none">
-                        +
-                      </span>
-                      Task
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openAllTasksFromSnapshot}
-                      data-testid="reminder-list-open-tasks-button"
-                      className="inline-flex items-center gap-1 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-900 dark:border-teal-700 dark:bg-teal-950/50 dark:text-teal-100"
-                      title="All tasks"
-                      aria-label="All tasks"
-                    >
-                      <span aria-hidden className="text-base leading-none">
-                        ≣
-                      </span>
-                      Tasks
-                    </button>
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <div className="grid gap-3">
-                {reminderListRows.length === 0 ? (
-                  <p className="text-sm text-slate-500">Nothing in this tab.</p>
-                ) : (
-                  reminderListRows.map((reminder) => (
-                    <article
-                      key={reminder.id}
-                      data-testid="reminder-card"
-                      data-reminder-id={reminder.id}
-                      className={`flex gap-3 overflow-hidden rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 sm:p-4 ${
-                        reminderListTab === "missed"
-                          ? "border-l-[3px] border-l-rose-500"
-                          : reminderListTab === "today"
-                          ? "border-l-[3px] border-l-amber-500"
-                          : reminderListTab === "tomorrow"
-                          ? "border-l-[3px] border-l-violet-500"
-                          : reminderListTab === "done"
-                          ? "border-l-[3px] border-l-emerald-500"
-                          : reminderListTab === "shared" || reminderListTab === "sent"
-                          ? "border-l-[3px] border-l-cyan-500"
-                          : ""
-                      } ${
-                        reminderSelectionMode &&
-                        selectedReminderIds.has(reminder.id)
-                          ? "ring-2 ring-violet-500/55"
-                          : ""
-                      }`}
-                      onTouchStart={() => {
-                        if (
-                          reminder.access === "shared" ||
-                          reminder.status === "done" ||
-                          reminder.status === "archived"
-                        ) {
-                          return;
-                        }
-                        reminderLongPressTimerRef.current = window.setTimeout(
-                          () => {
+            )}
+
+            {/* ── Card list ── */}
+            <div className="relative min-h-0 flex-1 overflow-y-auto">
+              {reminderListRows.length === 0 && !(reminderListTab === "shared" && shareInbox.length > 0) ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <span className="mb-3 text-4xl">{reminderListTab === "done" ? "✅" : reminderListTab === "missed" ? "🎉" : "🔔"}</span>
+                  <p className="text-[14px] font-semibold text-slate-700">
+                    {reminderListTab === "done" ? "No completed reminders yet" :
+                     reminderListTab === "missed" ? "You're all caught up!" :
+                     reminderListTab === "shared" ? "No joined reminders yet" :
+                     "Nothing scheduled here"}
+                  </p>
+                  <p className="mt-1 text-[12px] text-slate-400">
+                    {reminderListTab === "missed" ? "Great job staying on top of things." : "Tap + New to add one."}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-0 px-3 py-3">
+                  {(() => {
+                    /* For "today" tab: group by MORNING / AFTERNOON / EVENING */
+                    if (reminderListTab === "today" && reminderListRows.length > 0) {
+                      const periods: { label: string; color: string; items: typeof reminderListRows }[] = [
+                        { label: "MORNING", color: "#f59e0b", items: [] },
+                        { label: "AFTERNOON", color: "#f59e0b", items: [] },
+                        { label: "EVENING", color: "#f59e0b", items: [] },
+                      ];
+                      for (const r of reminderListRows) {
+                        const h = new Date(r.dueAt).getHours();
+                        if (h < 12) periods[0]!.items.push(r);
+                        else if (h < 17) periods[1]!.items.push(r);
+                        else periods[2]!.items.push(r);
+                      }
+                      return periods
+                        .filter((p) => p.items.length > 0)
+                        .map((period) => (
+                          <div key={period.label} className="mb-1">
+                            <p
+                              className="mb-1.5 px-1 pt-2 text-[9px] font-extrabold uppercase tracking-widest"
+                              style={{ color: period.color }}
+                            >
+                              {period.label}
+                            </p>
+                            <div className="space-y-2">
+                              {period.items.map((reminder) => (
+                                <ReminderCard
+                                  key={reminder.id}
+                                  reminder={reminder}
+                                  tab={reminderListTab}
+                                  selectionMode={reminderSelectionMode}
+                                  selected={selectedReminderIds.has(reminder.id)}
+                                  taskTitleById={taskTitleById}
+                                  onSelect={toggleReminderSelect}
+                                  onLongPressStart={(id) => {
+                                    if (reminder.access === "shared" || reminder.status === "done" || reminder.status === "archived") return;
+                                    reminderLongPressTimerRef.current = window.setTimeout(() => {
+                                      reminderLongPressTimerRef.current = null;
+                                      setReminderSelectionMode(true);
+                                      toggleReminderSelect(id);
+                                      if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(35);
+                                    }, 450);
+                                  }}
+                                  onLongPressEnd={() => {
+                                    const t = reminderLongPressTimerRef.current;
+                                    if (t != null) { window.clearTimeout(t); reminderLongPressTimerRef.current = null; }
+                                  }}
+                                  onMarkDone={() => void refreshAfterReminderMutation(
+                                    fetch(`/api/reminders/${reminder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "done" }) })
+                                  ).catch(() => showShareToast("Could not update reminder. Try again."))}
+                                  onDelete={() => setPendingReminderCardDelete({ id: reminder.id, title: reminder.title })}
+                                  onEdit={() => openEditModal(reminder)}
+                                  onShare={() => showShareOverlay([reminder.id])}
+                                  onSnooze={() => void refreshAfterReminderMutation(
+                                    fetch(`/api/reminders/${reminder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: new Date(new Date(reminder.dueAt).getTime() + 60 * 60 * 1000).toISOString() }) })
+                                  ).catch(() => showShareToast("Could not snooze reminder."))}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ));
+                    }
+
+                    /* For "done" tab: group by TODAY / YESTERDAY / EARLIER */
+                    if (reminderListTab === "done" && reminderListRows.length > 0) {
+                      const now = new Date();
+                      const startToday = new Date(now); startToday.setHours(0, 0, 0, 0);
+                      const startYesterday = new Date(startToday); startYesterday.setDate(startYesterday.getDate() - 1);
+                      const groups: { label: string; items: typeof reminderListRows }[] = [
+                        { label: "TODAY", items: [] },
+                        { label: "YESTERDAY", items: [] },
+                        { label: "EARLIER", items: [] },
+                      ];
+                      for (const r of reminderListRows) {
+                        const d = new Date(r.dueAt);
+                        if (d >= startToday) groups[0]!.items.push(r);
+                        else if (d >= startYesterday) groups[1]!.items.push(r);
+                        else groups[2]!.items.push(r);
+                      }
+                      return groups
+                        .filter((g) => g.items.length > 0)
+                        .map((group) => (
+                          <div key={group.label} className="mb-1">
+                            <p className="mb-1.5 px-1 pt-2 text-[9px] font-extrabold uppercase tracking-widest text-emerald-600">
+                              {group.label}
+                            </p>
+                            <div className="space-y-2">
+                              {group.items.map((reminder) => (
+                                <ReminderCard
+                                  key={reminder.id}
+                                  reminder={reminder}
+                                  tab={reminderListTab}
+                                  selectionMode={reminderSelectionMode}
+                                  selected={selectedReminderIds.has(reminder.id)}
+                                  taskTitleById={taskTitleById}
+                                  onSelect={toggleReminderSelect}
+                                  onLongPressStart={() => {}}
+                                  onLongPressEnd={() => {
+                                    const t = reminderLongPressTimerRef.current;
+                                    if (t != null) { window.clearTimeout(t); reminderLongPressTimerRef.current = null; }
+                                  }}
+                                  onMarkDone={() => {}}
+                                  onDelete={() => setPendingReminderCardDelete({ id: reminder.id, title: reminder.title })}
+                                  onEdit={() => openEditModal(reminder)}
+                                  onShare={() => showShareOverlay([reminder.id])}
+                                  onSnooze={() => {}}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ));
+                    }
+
+                    /* All other tabs: flat list */
+                    return reminderListRows.map((reminder) => (
+                      <ReminderCard
+                        key={reminder.id}
+                        reminder={reminder}
+                        tab={reminderListTab}
+                        selectionMode={reminderSelectionMode}
+                        selected={selectedReminderIds.has(reminder.id)}
+                        taskTitleById={taskTitleById}
+                        onSelect={toggleReminderSelect}
+                        onLongPressStart={(id) => {
+                          if (reminder.access === "shared" || reminder.status === "done" || reminder.status === "archived") return;
+                          reminderLongPressTimerRef.current = window.setTimeout(() => {
                             reminderLongPressTimerRef.current = null;
                             setReminderSelectionMode(true);
-                            toggleReminderSelect(reminder.id);
-                            if (
-                              typeof navigator !== "undefined" &&
-                              navigator.vibrate
-                            ) {
-                              navigator.vibrate(35);
-                            }
-                          },
-                          450,
-                        );
-                      }}
-                      onTouchEnd={() => {
-                        const id = reminderLongPressTimerRef.current;
-                        if (id != null) {
-                          window.clearTimeout(id);
-                          reminderLongPressTimerRef.current = null;
-                        }
-                      }}
-                      onTouchMove={() => {
-                        const id = reminderLongPressTimerRef.current;
-                        if (id != null) {
-                          window.clearTimeout(id);
-                          reminderLongPressTimerRef.current = null;
-                        }
-                      }}
-                    >
-                      {reminderSelectionMode &&
-                      reminder.access !== "shared" &&
-                      reminder.status !== "done" &&
-                      reminder.status !== "archived" ? (
-                        <div className="flex shrink-0 items-start pt-0.5">
-                          <input
-                            type="checkbox"
-                            className="mt-0.5 h-4 w-4 rounded border-slate-400 text-violet-600"
-                            checked={selectedReminderIds.has(reminder.id)}
-                            onChange={() => toggleReminderSelect(reminder.id)}
-                            aria-label={`Select ${reminder.title}`}
-                          />
-                        </div>
-                      ) : null}
-                      <div className="min-w-0 flex-1">
-                        {(() => {
-                          const linkedTaskTitle = reminder.linkedTaskId
-                            ? taskTitleById[reminder.linkedTaskId]
-                            : undefined;
-                          const showAsAdhoc =
-                            isAdhocReminder(reminder) || !linkedTaskTitle;
+                            toggleReminderSelect(id);
+                            if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(35);
+                          }, 450);
+                        }}
+                        onLongPressEnd={() => {
+                          const t = reminderLongPressTimerRef.current;
+                          if (t != null) { window.clearTimeout(t); reminderLongPressTimerRef.current = null; }
+                        }}
+                        onMarkDone={() => void refreshAfterReminderMutation(
+                          fetch(`/api/reminders/${reminder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "done" }) })
+                        ).catch(() => showShareToast("Could not update reminder. Try again."))}
+                        onDelete={() => setPendingReminderCardDelete({ id: reminder.id, title: reminder.title })}
+                        onEdit={() => openEditModal(reminder)}
+                        onShare={() => showShareOverlay([reminder.id])}
+                        onSnooze={() => void refreshAfterReminderMutation(
+                          fetch(`/api/reminders/${reminder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: new Date(new Date(reminder.dueAt).getTime() + 60 * 60 * 1000).toISOString() }) })
+                        ).catch(() => showShareToast("Could not snooze reminder."))}
+                      />
+                    ));
+                  })()}
+                </div>
+              )}
 
-                          return (
-                        <p className="font-semibold">
-                          {reminder.title}
-                          <span className="text-amber-500">
-                            {priorityStarsLabel(reminder.priority)}
-                          </span>
-                          <span
-                            className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase ${
-                              reminderStateLabel(reminder) === "Done"
-                                ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100"
-                                : reminderStateLabel(reminder) === "Missed"
-                                  ? "bg-rose-100 text-rose-900 dark:bg-rose-900/50 dark:text-rose-100"
-                                  : "bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-100"
-                            }`}
-                            data-testid="reminder-state-label"
-                          >
-                            {reminderStateLabel(reminder)}
-                          </span>
-                          {reminder.access === "shared" ? (
-                            <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
-                              Shared
-                            </span>
-                          ) : null}
-                          {showAsAdhoc ? (
-                            <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium uppercase text-slate-800 dark:bg-slate-700 dark:text-slate-100">
-                              ADHOC
-                            </span>
-                          ) : (
-                            <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-900 dark:bg-indigo-950/80 dark:text-indigo-100">
-                              Task: {linkedTaskTitle}
-                            </span>
-                          )}
-                          {reminder.domain ? (
-                            <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100">
-                              {reminder.domain}
-                            </span>
-                          ) : null}
-                        </p>
-                          );
-                        })()}
-                        <p className="text-sm text-slate-500">
-                          Due: {formatDisplayDateTime(reminder.dueAt)}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          Repeat: {reminder.recurrence ?? "none"}
-                        </p>
-                        {reminder.notes ? (
-                          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                            {reminder.notes}
-                          </p>
-                        ) : null}
-                        {reminder.status === "done" || reminder.status === "archived" ? null : (
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {reminder.access !== "shared" ? (
-                              <button
-                                type="button"
-                                onClick={() => showShareOverlay([reminder.id])}
-                                data-testid="reminder-share-button"
-                                className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700"
-                              >
-                                Share
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(reminder)}
-                              data-testid="reminder-edit-button"
-                              className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void refreshAfterReminderMutation(
-                                  fetch(`/api/reminders/${reminder.id}`, {
-                                    method: "PATCH",
-                                    headers: {
-                                      "Content-Type": "application/json",
-                                    },
-                                    body: JSON.stringify({ status: "done" }),
-                                  }),
-                                ).catch(() =>
-                                  showShareToast(
-                                    "Could not update reminder. Try again.",
-                                  ),
-                                );
-                              }}
-                              data-testid="reminder-status-button"
-                              className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold text-white"
-                            >
-                              Mark done
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void refreshAfterReminderMutation(
-                                  fetch(`/api/reminders/${reminder.id}`, {
-                                    method: "DELETE",
-                                  }),
-                                ).catch(() =>
-                                  showShareToast(
-                                    "Could not delete reminder. Try again.",
-                                  ),
-                                );
-                              }}
-                              data-testid="reminder-delete-button"
-                              className="rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-semibold text-white"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </article>
-                  ))
-                )}
-              </div>
+              {/* ── FAB new reminder ── */}
+              <button
+                type="button"
+                onClick={openCreateReminderFromRemindersList}
+                data-testid="reminder-fab-button"
+                className="fixed bottom-20 right-4 z-10 flex h-14 w-14 items-center justify-center rounded-full bg-violet-600 text-white shadow-lg shadow-violet-500/40 transition hover:bg-violet-500 active:scale-95 lg:hidden"
+                aria-label="New reminder"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
             </div>
           </div>
         </div>
