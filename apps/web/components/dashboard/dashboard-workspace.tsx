@@ -1290,6 +1290,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   } | null>(null);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [showReminderSuccess, setShowReminderSuccess] = useState(false);
+  const [reminderSuccessInfo, setReminderSuccessInfo] = useState<{ title: string; time: string } | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [followUpQuestions, setFollowUpQuestions] = useState<
@@ -1554,14 +1555,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     [refreshReminders],
   );
 
-  const playReminderSuccessAnimation = useCallback(() => {
+  const playReminderSuccessAnimation = useCallback((info?: { title: string; time: string }) => {
     setShowReminderSuccess(true);
+    if (info) setReminderSuccessInfo(info);
     if (reminderSuccessTimerRef.current)
       clearTimeout(reminderSuccessTimerRef.current);
     reminderSuccessTimerRef.current = setTimeout(() => {
       setShowReminderSuccess(false);
+      setReminderSuccessInfo(null);
       reminderSuccessTimerRef.current = null;
-    }, 900);
+    }, 2200);
   }, []);
 
   const loadShareInbox = useCallback(async () => {
@@ -4453,7 +4456,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           return;
         }
         await refreshReminders();
-        playReminderSuccessAnimation();
+        playReminderSuccessAnimation({
+          title: newTitle.trim(),
+          time: new Date(`${newDate}T${newTime}`).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+        });
         resetReminderForm();
         setCreateFormError(null);
         closeCreateOverlay();
@@ -5972,188 +5978,267 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       {isCreateOpen && (
         <div
           data-testid="reminder-form-overlay"
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
           onClick={closeCreateOverlay}
         >
           <div
-            className="my-auto flex max-h-[min(94vh,860px)] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            className="flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-              <div>
-                <h3 className="text-lg font-semibold">
-                  {editingReminderId ? "Edit reminder" : "Create reminder"}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={openReminderListFromCreateModal}
-                className="shrink-0 rounded-full border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-900 transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
-              >
-                View reminders
-              </button>
+            {/* ── Handle bar (mobile) ── */}
+            <div className="flex shrink-0 justify-center pt-2.5 pb-1 sm:hidden">
+              <div className="h-1 w-10 rounded-full bg-slate-200" />
             </div>
+
+            {/* ── Header ── */}
+            <div className="flex shrink-0 items-center justify-between px-5 py-3">
+              {editingReminderId ? (
+                <button
+                  type="button"
+                  onClick={closeCreateOverlay}
+                  className="flex items-center gap-1 text-slate-500"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4"><path d="m15 18-6-6 6-6"/></svg>
+                  <span className="text-[15px] font-semibold text-slate-700">Edit Reminder</span>
+                </button>
+              ) : (
+                <h3 className="text-[17px] font-extrabold text-slate-900">New Reminder</h3>
+              )}
+              {editingReminderId ? (
+                <button
+                  type="button"
+                  form="reminder-form"
+                  className="rounded-full bg-violet-600 px-5 py-2 text-[13px] font-bold text-white shadow-sm"
+                  onClick={(e) => { e.preventDefault(); void (document.getElementById("reminder-form") as HTMLFormElement | null)?.requestSubmit(); }}
+                  data-testid="reminder-save-button"
+                >
+                  Update
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { resetReminderForm(); setCreateFormError(null); closeCreateOverlay(); }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+              )}
+            </div>
+
             <form
-              className="min-h-0 overflow-y-auto"
+              id="reminder-form"
+              className="min-h-0 flex-1 overflow-y-auto"
               onSubmit={handleManualCreate}
             >
-              <div className="grid gap-4 px-5 py-5">
-                <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Title
-                  <input
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="Reminder title (e.g. Pay electricity bill)"
-                    data-testid="reminder-title-input"
-                    className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
-                  />
-                </label>
+              <div className="grid gap-5 px-5 pb-6 pt-1">
+
+                {/* Title input */}
+                <input
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder="What do you need to remember?"
+                  data-testid="reminder-title-input"
+                  className="w-full border-0 border-b border-slate-200 pb-2 text-[15px] font-medium text-slate-900 outline-none placeholder:text-slate-400 focus:border-violet-400"
+                  autoFocus
+                />
+
+                {/* Date + Time chips */}
                 <div className="grid grid-cols-2 gap-3">
-                  <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Date
-                    <input
-                      type="date"
-                      min={getMinDate()}
-                      value={newDate}
-                      onChange={(e) => setNewDate(e.target.value)}
-                      data-testid="reminder-date-input"
-                      className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:[color-scheme:dark]"
-                    />
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">DATE</span>
+                    <div className="relative">
+                      <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] font-semibold text-slate-700">
+                        <span>📅</span>
+                        <span>{newDate ? new Date(`${newDate}T12:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Pick date"}</span>
+                      </div>
+                      <input
+                        type="date"
+                        min={getMinDate()}
+                        value={newDate}
+                        onChange={(e) => setNewDate(e.target.value)}
+                        data-testid="reminder-date-input"
+                        className="absolute inset-0 cursor-pointer opacity-0"
+                      />
+                    </div>
                   </label>
-                  <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Time
-                    <input
-                      type="time"
-                      min={newDate === getMinDate() ? new Date().toTimeString().slice(0, 5) : undefined}
-                      value={newTime}
-                      onChange={(e) => setNewTime(e.target.value)}
-                      data-testid="reminder-time-input"
-                      className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:[color-scheme:dark]"
-                    />
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">TIME</span>
+                    <div className="relative">
+                      <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] font-semibold text-slate-700">
+                        <span>🕐</span>
+                        <span>{newTime ? new Date(`1970-01-01T${newTime}`).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "Pick time"}</span>
+                      </div>
+                      <input
+                        type="time"
+                        value={newTime}
+                        onChange={(e) => setNewTime(e.target.value)}
+                        data-testid="reminder-time-input"
+                        className="absolute inset-0 cursor-pointer opacity-0"
+                      />
+                    </div>
                   </label>
                 </div>
-                <StarRating
-                  value={reminderStars}
-                  onChange={setReminderStars}
-                  label="Priority (required)"
-                />
-                <div className="-mt-1 flex gap-2">
-                  <button
-                    type="submit"
-                    data-testid="reminder-save-button"
-                    className="flex-1 rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white"
-                  >
-                    {editingReminderId ? "Update" : "Save"}
-                  </button>
+
+                {/* Priority stars */}
+                <div>
+                  <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">PRIORITY <span className="text-rose-400">*</span></p>
+                  <div className="flex gap-2">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setReminderStars(n)}
+                        className={`flex h-11 w-11 items-center justify-center rounded-2xl border text-xl transition ${
+                          n <= reminderStars
+                            ? "border-amber-300 bg-amber-50 text-amber-400"
+                            : "border-slate-200 bg-slate-50 text-slate-300"
+                        }`}
+                        aria-label={`${n} star${n > 1 ? "s" : ""}`}
+                      >
+                        ★
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Repeat chips */}
+                <div>
+                  <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">REPEAT</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(["none", "daily", "weekly", "monthly"] as const).map((r) => {
+                      const label = r === "none" ? "None" : r[0]!.toUpperCase() + r.slice(1);
+                      return (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => setNewRecurrence(r)}
+                          data-testid={r === "none" ? "reminder-recurrence-select" : undefined}
+                          className={`rounded-full px-4 py-1.5 text-[12px] font-bold transition ${
+                            newRecurrence === r
+                              ? "bg-violet-600 text-white"
+                              : "border border-slate-200 bg-white text-slate-600"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Domain chips */}
+                {(() => {
+                  const editingRem = editingReminderId ? reminders.find((r) => r.id === editingReminderId) : undefined;
+                  const canEditLinks = !editingRem || editingRem.access !== "shared";
+                  const domainChipColors: Record<string, { active: string; text: string }> = {
+                    health:  { active: "#10b981", text: "#065f46" },
+                    finance: { active: "#06b6d4", text: "#155e75" },
+                    career:  { active: "#6366f1", text: "#312e81" },
+                    hobby:   { active: "#7c3aed", text: "#4c1d95" },
+                    fun:     { active: "#f59e0b", text: "#78350f" },
+                  };
+                  return (
+                    <div className={canEditLinks ? "" : "pointer-events-none opacity-60"}>
+                      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">DOMAIN</p>
+                      <div className="flex flex-wrap gap-2">
+                        {(["health", "finance", "career", "hobby", "fun"] as const).map((d) => {
+                          const active = reminderDomain === d;
+                          const c = domainChipColors[d]!;
+                          return (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => setReminderDomain(active ? "" : d)}
+                              data-testid="reminder-domain-select"
+                              className="rounded-full px-4 py-1.5 text-[12px] font-bold transition"
+                              style={active
+                                ? { background: `${c.active}22`, color: c.active, border: `1.5px solid ${c.active}` }
+                                : { background: "#f8fafc", color: "#64748b", border: "1.5px solid #e2e8f0" }
+                              }
+                            >
+                              {d}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* More options expandable */}
+                <div>
                   <button
                     type="button"
-                    onClick={() => {
-                      resetReminderForm();
-                      setCreateFormError(null);
-                      closeCreateOverlay();
-                    }}
-                    data-testid="reminder-cancel-button"
-                    className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold"
+                    onClick={() => setShowReminderInlineTask((v) => !v)}
+                    data-testid="reminder-inline-task-toggle"
+                    className="flex items-center gap-1.5 text-[12px] font-medium text-slate-400"
                   >
-                    Cancel
+                    <span className={`text-base transition-transform ${showReminderInlineTask ? "rotate-90" : ""}`}>›</span>
+                    More options (link task, notes…)
                   </button>
-                </div>
-                {(() => {
-                  const editingRem = editingReminderId
-                    ? reminders.find((r) => r.id === editingReminderId)
-                    : undefined;
-                  const canEditLinks =
-                    !editingRem || editingRem.access !== "shared";
-                  return (
-                    <>
-                      <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-                        Repeat (optional)
-                        <select
-                          value={newRecurrence}
-                          onChange={(e) =>
-                            setNewRecurrence(e.target.value as ReminderRecurrence)
-                          }
-                          data-testid="reminder-recurrence-select"
-                          className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
-                        >
-                          <option value="none">Does not repeat</option>
-                          <option value="daily">Daily</option>
-                          <option value="weekly">Weekly</option>
-                          <option value="monthly">Monthly</option>
-                        </select>
-                      </label>
-                      <label className="grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
-                        Notes (optional)
-                        <textarea
-                          rows={3}
-                          value={newNotes}
-                          onChange={(e) => setNewNotes(e.target.value)}
-                          placeholder="Optional notes"
-                          data-testid="reminder-notes-input"
-                          className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
-                        />
-                      </label>
-                      <label
-                        className={`grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 ${
-                          !canEditLinks ? "opacity-60" : ""
-                        }`}
-                      >
-                        Related task (optional)
-                        <select
-                          value={reminderLinkedTaskId}
-                          onChange={(e) =>
-                            setReminderLinkedTaskId(e.target.value)
-                          }
-                          disabled={!canEditLinks}
-                          data-testid="reminder-task-select"
-                          className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 disabled:cursor-not-allowed"
-                        >
-                          <option value="">None — counts as ADHOC</option>
-                          {tasks.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.title}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="text-[11px] font-normal text-slate-500">
-                          No task selected → reminder is ADHOC (standalone).
-                        </span>
-                      </label>
-                      {canEditLinks ? (
-                        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/90 px-3 py-2 dark:border-slate-600 dark:bg-slate-900/50">
-                          <button
-                            type="button"
-                            onClick={() => setShowReminderInlineTask((v) => !v)}
-                            data-testid="reminder-inline-task-toggle"
-                            className="text-xs font-semibold text-violet-700 hover:underline dark:text-violet-300"
-                          >
-                            {showReminderInlineTask
-                              ? "Hide quick task creator"
-                              : "+ Create new task & link it"}
-                          </button>
-                          {showReminderInlineTask ? (
-                            <div className="mt-2 grid gap-2">
+
+                  {showReminderInlineTask && (() => {
+                    const editingRem = editingReminderId ? reminders.find((r) => r.id === editingReminderId) : undefined;
+                    const canEditLinks = !editingRem || editingRem.access !== "shared";
+                    return (
+                      <div className="mt-3 grid gap-4">
+                        {/* Linked task */}
+                        <div className={!canEditLinks ? "pointer-events-none opacity-60" : ""}>
+                          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">LINKED TASK</p>
+                          {reminderLinkedTaskId ? (
+                            <div className="flex items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-2.5">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" className="h-4 w-4 shrink-0"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m9 12 2 2 4-4"/></svg>
+                              <span className="flex-1 text-[13px] font-semibold text-indigo-700">
+                                {tasks.find((t) => t.id === reminderLinkedTaskId)?.title ?? "Task"}
+                              </span>
+                              <button type="button" onClick={() => setReminderLinkedTaskId("")} className="text-[11px] font-bold text-indigo-500">Change</button>
+                            </div>
+                          ) : (
+                            <select
+                              value={reminderLinkedTaskId}
+                              onChange={(e) => setReminderLinkedTaskId(e.target.value)}
+                              disabled={!canEditLinks}
+                              data-testid="reminder-task-select"
+                              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] text-slate-700 outline-none focus:border-violet-400"
+                            >
+                              <option value="">None — counts as ADHOC</option>
+                              {tasks.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+                            </select>
+                          )}
+                        </div>
+
+                        {/* Notes textarea */}
+                        <div>
+                          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">NOTES</p>
+                          <textarea
+                            rows={3}
+                            value={newNotes}
+                            onChange={(e) => setNewNotes(e.target.value)}
+                            placeholder="Add notes…"
+                            data-testid="reminder-notes-input"
+                            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] text-slate-700 outline-none focus:border-violet-400"
+                          />
+                        </div>
+
+                        {/* Inline task creator */}
+                        {!editingReminderId && canEditLinks && (
+                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/90 px-3 py-3">
+                            <p className="mb-2 text-[11px] font-bold text-violet-700">+ Create new task &amp; link it</p>
+                            <div className="grid gap-2">
                               <input
                                 value={reminderInlineTaskTitle}
-                                onChange={(e) =>
-                                  setReminderInlineTaskTitle(e.target.value)
-                                }
+                                onChange={(e) => setReminderInlineTaskTitle(e.target.value)}
                                 placeholder="New task title"
                                 data-testid="reminder-inline-task-title-input"
-                                className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+                                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
                               />
-                              <label className="grid gap-1 text-[11px] font-medium text-slate-600 dark:text-slate-400">
-                                Due (optional)
-                                <input
-                                  type="datetime-local"
-                                  value={reminderInlineTaskDue}
-                                  onChange={(e) =>
-                                    setReminderInlineTaskDue(e.target.value)
-                                  }
-                                  data-testid="reminder-inline-task-due-input"
-                                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
-                                />
-                              </label>
+                              <input
+                                type="datetime-local"
+                                value={reminderInlineTaskDue}
+                                onChange={(e) => setReminderInlineTaskDue(e.target.value)}
+                                data-testid="reminder-inline-task-due-input"
+                                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                              />
                               <button
                                 type="button"
                                 disabled={reminderInlineTaskSaving}
@@ -6161,57 +6246,47 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                 data-testid="reminder-inline-task-save-button"
                                 className="rounded-full bg-violet-600 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                               >
-                                {reminderInlineTaskSaving
-                                  ? "Creating…"
-                                  : "Create task & link"}
+                                {reminderInlineTaskSaving ? "Creating…" : "Create task & link"}
                               </button>
                             </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      <label
-                        className={`grid gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 ${
-                          !canEditLinks ? "opacity-60" : ""
-                        }`}
-                      >
-                        Domain (optional)
-                        <select
-                          value={reminderDomain}
-                          onChange={(e) =>
-                            setReminderDomain(e.target.value as "" | LifeDomain)
-                          }
-                          disabled={!canEditLinks}
-                          data-testid="reminder-domain-select"
-                          className="rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 disabled:cursor-not-allowed"
-                        >
-                          <option value="">No domain</option>
-                          {(
-                            [
-                              "health",
-                              "finance",
-                              "career",
-                              "hobby",
-                              "fun",
-                            ] as const
-                          ).map((d) => (
-                            <option key={d} value={d}>
-                              {d}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </>
-                  );
-                })()}
-                {createFormError ? (
-                  <p
-                    className="text-sm text-rose-600 dark:text-rose-400"
-                    role="alert"
-                    data-testid="reminder-form-error"
-                  >
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Error */}
+                {createFormError && (
+                  <p className="rounded-xl bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-600" role="alert" data-testid="reminder-form-error">
                     {createFormError}
                   </p>
-                ) : null}
+                )}
+
+                {/* Delete button (edit mode only) */}
+                {editingReminderId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rem = reminders.find((r) => r.id === editingReminderId);
+                      if (rem) { closeCreateOverlay(); setPendingReminderCardDelete({ id: rem.id, title: rem.title }); }
+                    }}
+                    className="w-full rounded-2xl bg-rose-500 py-3.5 text-[14px] font-bold text-white"
+                  >
+                    Delete Reminder
+                  </button>
+                )}
+
+                {/* Save button (create mode) */}
+                {!editingReminderId && (
+                  <button
+                    type="submit"
+                    data-testid="reminder-save-button"
+                    className="w-full rounded-2xl bg-violet-600 py-3.5 text-[15px] font-bold text-white shadow-md shadow-violet-500/30"
+                  >
+                    Save Reminder
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -6632,47 +6707,49 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
       {pendingReminderCardDelete ? (
         <div
-          className="fixed inset-0 z-[54] flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-4"
+          className="fixed inset-0 z-[54] flex items-end justify-center bg-black/50 p-4 sm:items-center"
           onClick={() => setPendingReminderCardDelete(null)}
         >
           <div
-            className="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+            className="w-full max-w-sm overflow-hidden rounded-[28px] bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-rose-600 dark:text-rose-400">
-                Confirm delete
-              </p>
-              <h3 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                Delete reminder?
-              </h3>
-            </div>
-            <div className="grid gap-4 px-5 py-5">
-              <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
+            <div className="flex flex-col items-center gap-3 px-6 pt-8 pb-5 text-center">
+              {/* Rose trash icon */}
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-rose-100">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#f43f5e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-7 w-7">
+                  <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>
+                  <path d="M10 11v6M14 11v6"/>
+                </svg>
+              </div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-rose-500">CONFIRM DELETE</p>
+              <h3 className="text-[18px] font-extrabold text-slate-900">Delete reminder?</h3>
+              <p className="text-[13px] leading-relaxed text-slate-500">
                 &ldquo;{pendingReminderCardDelete.title}&rdquo; will be permanently deleted. This cannot be undone.
               </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const { id } = pendingReminderCardDelete;
-                    setPendingReminderCardDelete(null);
-                    await refreshAfterReminderMutation(
-                      fetch(`/api/reminders/${id}`, { method: "DELETE" }),
-                    );
-                  }}
-                  className="flex-1 rounded-full bg-rose-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-rose-500"
-                >
-                  Delete reminder
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPendingReminderCardDelete(null)}
-                  className="rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
-                >
-                  Cancel
-                </button>
-              </div>
+            </div>
+            <div className="grid gap-2 px-5 pb-8">
+              <button
+                type="button"
+                onClick={async () => {
+                  const { id } = pendingReminderCardDelete;
+                  setPendingReminderCardDelete(null);
+                  await refreshAfterReminderMutation(
+                    fetch(`/api/reminders/${id}`, { method: "DELETE" }),
+                  );
+                }}
+                className="w-full rounded-2xl bg-rose-500 py-3.5 text-[14px] font-bold text-white transition hover:bg-rose-400"
+                data-testid="reminder-delete-confirm"
+              >
+                Delete Reminder
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingReminderCardDelete(null)}
+                className="w-full py-3 text-[14px] font-semibold text-slate-500"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
@@ -6918,105 +6995,141 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         </div>
       ) : null}
 
-      {rescheduleReminder ? (
-        <div
-          data-testid="reschedule-reminder-modal"
-          className="fixed inset-0 z-[66] flex items-end justify-center bg-black/45 p-3 sm:items-center sm:p-4"
-          onClick={() => setRescheduleReminder(null)}
-        >
+      {rescheduleReminder ? (() => {
+        /* Compute which preset matches current value */
+        const now = new Date();
+        const presets = [
+          { label: "+15 min", sub: "tonight", minutes: 15, testId: "reschedule-preset--15m" },
+          { label: "+1 hour", sub: "in 1h",   minutes: 60, testId: "reschedule-preset--1h" },
+          { label: "Tomorrow", sub: "morning", minutes: 24 * 60, testId: "reschedule-preset-tomorrow" },
+        ];
+        const activePresetIdx = presets.findIndex((p) => {
+          const target = new Date(now.getTime() + p.minutes * 60 * 1000);
+          return rescheduleReminder.value === toDateTimeLocalValue(target.toISOString());
+        });
+        return (
           <div
-            className="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
-            onClick={(event) => event.stopPropagation()}
+            data-testid="reschedule-reminder-modal"
+            className="fixed inset-0 z-[66] flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
+            onClick={() => setRescheduleReminder(null)}
           >
-            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-violet-600 dark:text-violet-300">
-                Reschedule reminder
-              </p>
-              <h3 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                {rescheduleReminder.title}
-              </h3>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                Choose a new date and time.
-              </p>
-            </div>
-            <div className="grid gap-4 px-5 py-5">
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { label: "+15m", minutes: 15 },
-                  { label: "+1h", minutes: 60 },
-                  { label: "Tomorrow", minutes: 24 * 60 },
-                ].map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    data-testid={`reschedule-preset-${preset.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
-                    className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
-                    onClick={() => {
-                      const next = new Date();
-                      next.setMinutes(next.getMinutes() + preset.minutes);
-                      setRescheduleReminder((prev) =>
-                        prev ? { ...prev, value: toDateTimeLocalValue(next.toISOString()), error: null } : prev,
-                      );
-                    }}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
+            <div
+              className="w-full max-w-md overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:rounded-[28px]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {/* Handle */}
+              <div className="flex justify-center pt-2.5 pb-1 sm:hidden">
+                <div className="h-1 w-10 rounded-full bg-slate-200" />
               </div>
-              <label className="grid gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
-                Date &amp; time
-                <input
-                  type="datetime-local"
-                  min={currentDateTimeLocalValue()}
-                  value={rescheduleReminder.value}
-                  onChange={(event) =>
-                    setRescheduleReminder((prev) =>
-                      prev ? { ...prev, value: event.target.value, error: null } : prev,
-                    )
-                  }
-                  data-testid="reschedule-datetime-input"
-                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:[color-scheme:dark]"
-                />
-              </label>
-              {rescheduleReminder.error ? (
-                <p
-                  className="text-sm text-rose-600 dark:text-rose-400"
-                  role="alert"
-                  data-testid="reschedule-error"
-                >
-                  {rescheduleReminder.error}
-                </p>
-              ) : null}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => void commitRescheduleReminder()}
-                  data-testid="reschedule-save-button"
-                  className="flex-1 rounded-full bg-violet-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-violet-500"
-                >
-                  Save new time
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRescheduleReminder(null)}
-                  data-testid="reschedule-cancel-button"
-                  className="rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
-                >
-                  Cancel
-                </button>
+
+              <div className="px-6 pb-8 pt-4">
+                {/* Header */}
+                <p className="text-[10px] font-bold uppercase tracking-widest text-cyan-500">RESCHEDULE</p>
+                <h3 className="mt-0.5 text-[20px] font-extrabold text-slate-900">{rescheduleReminder.title}</h3>
+                <p className="mt-0.5 text-[13px] text-slate-400">Choose a new date and time</p>
+
+                {/* Quick preset chips */}
+                <div className="mt-5 grid grid-cols-3 gap-3">
+                  {presets.map((preset, idx) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      data-testid={preset.testId}
+                      className={`flex flex-col items-center gap-0.5 rounded-2xl border px-3 py-3 text-center transition ${
+                        activePresetIdx === idx
+                          ? "border-violet-500 bg-violet-600 text-white"
+                          : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                      }`}
+                      onClick={() => {
+                        const next = new Date();
+                        next.setMinutes(next.getMinutes() + preset.minutes);
+                        setRescheduleReminder((prev) =>
+                          prev ? { ...prev, value: toDateTimeLocalValue(next.toISOString()), error: null } : prev,
+                        );
+                      }}
+                    >
+                      <span className="text-[13px] font-extrabold">{preset.label}</span>
+                      <span className={`text-[10px] font-medium ${activePresetIdx === idx ? "text-violet-200" : "text-slate-400"}`}>{preset.sub}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom date/time input */}
+                <div className="mt-4">
+                  <div className="relative flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5">
+                    <div className="flex-1">
+                      <p className="text-[14px] font-semibold text-slate-700">
+                        {rescheduleReminder.value
+                          ? new Date(rescheduleReminder.value.replace("T", " ")).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+                          : "Custom date & time"}
+                      </p>
+                    </div>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" className="h-5 w-5 shrink-0">
+                      <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
+                    </svg>
+                    <input
+                      type="datetime-local"
+                      min={currentDateTimeLocalValue()}
+                      value={rescheduleReminder.value}
+                      onChange={(event) =>
+                        setRescheduleReminder((prev) =>
+                          prev ? { ...prev, value: event.target.value, error: null } : prev,
+                        )
+                      }
+                      data-testid="reschedule-datetime-input"
+                      className="absolute inset-0 cursor-pointer opacity-0"
+                    />
+                  </div>
+                </div>
+
+                {rescheduleReminder.error && (
+                  <p className="mt-2 text-[12px] font-semibold text-rose-600" role="alert" data-testid="reschedule-error">
+                    {rescheduleReminder.error}
+                  </p>
+                )}
+
+                {/* Action buttons */}
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setRescheduleReminder(null)}
+                    data-testid="reschedule-cancel-button"
+                    className="rounded-2xl border border-slate-200 py-3.5 text-[14px] font-bold text-slate-600"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void commitRescheduleReminder()}
+                    data-testid="reschedule-save-button"
+                    className="rounded-2xl bg-violet-600 py-3.5 text-[14px] font-bold text-white"
+                  >
+                    Save New Time
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        );
+      })() : null}
 
       {showReminderSuccess ? (
-        <div className="pointer-events-none fixed inset-0 z-[65] flex items-center justify-center">
+        <div className="pointer-events-none fixed inset-0 z-[65] flex flex-col items-center justify-center gap-3">
           <div className="relative">
-            <span className="absolute inset-0 rounded-full bg-emerald-400/35 animate-ping" />
-            <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-3xl text-white shadow-2xl ring-4 ring-emerald-200 dark:ring-emerald-900 animate-pulse">
-              ✓
+            <span className="absolute inset-0 rounded-full bg-emerald-400/30 animate-ping" />
+            <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 shadow-2xl shadow-emerald-500/40 ring-4 ring-emerald-200">
+              <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-10 w-10">
+                <path d="m5 12 4 4 10-10" />
+              </svg>
             </div>
+          </div>
+          <div className="text-center">
+            <p className="text-[20px] font-extrabold text-slate-900">Reminder saved!</p>
+            {reminderSuccessInfo && (
+              <p className="mt-0.5 text-[13px] text-slate-500">
+                {reminderSuccessInfo.title} · {reminderSuccessInfo.time}
+              </p>
+            )}
           </div>
         </div>
       ) : null}
