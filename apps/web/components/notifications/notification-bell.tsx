@@ -25,6 +25,7 @@ function typeIcon(type: string) {
   if (type === "share_invite" || type === "share_accepted") return "🤝";
   if (type === "admin_broadcast") return "📣";
   if (type === "smart_nudge") return "🤖";
+  if (type === "smart_nugget") return "✨";
   return "📌";
 }
 
